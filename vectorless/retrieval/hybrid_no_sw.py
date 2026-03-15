@@ -402,33 +402,19 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(description="Hybrid BM25+LLM retrieval for Indonesian legal QA")
-    ap.add_argument("query", nargs="?", help="Legal question in Indonesian")
+    ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--bm25_top_k", type=int, default=10,
                     help="Max BM25 candidates for LLM reranking (default: 10)")
-    ap.add_argument("--interactive", action="store_true", help="Interactive query loop")
     args = ap.parse_args()
 
-    if args.interactive:
-        print("Interactive mode (hybrid). Type 'quit' to exit.\n")
-        while True:
-            query = input("[hybrid] Query: ").strip()
-            if not query:
-                continue
-            if query.lower() in ("quit", "exit", "q"):
-                break
-            retrieve(query, bm25_top_k=args.bm25_top_k)
-            print()
-    elif args.query:
-        result = retrieve(args.query, bm25_top_k=args.bm25_top_k)
-        print(f"\n{'-'*60}")
-        print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-        print(f"\nDASAR HUKUM:")
-        for src in result.get("sources", []):
-            score = src.get("bm25_score", "N/A")
-            print(f"  > {src['navigation_path']} (BM25: {score})")
-        print(f"{'-'*60}")
-    else:
-        ap.print_help()
+    result = retrieve(args.query, bm25_top_k=args.bm25_top_k)
+    print(f"\n{'-'*60}")
+    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
+    print(f"\nDASAR HUKUM:")
+    for src in result.get("sources", []):
+        score = src.get("bm25_score", "N/A")
+        print(f"  > {src['navigation_path']} (BM25: {score})")
+    print(f"{'-'*60}")
 
 
 if __name__ == "__main__":

@@ -351,37 +351,18 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
 
 def main():
     ap = argparse.ArgumentParser(description="Pure LLM retrieval for Indonesian legal QA")
-    ap.add_argument("query", nargs="?", help="Legal question in Indonesian")
+    ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--strategy", choices=["full", "stepwise"], default="stepwise",
                     help="Tree search strategy (default: stepwise)")
-    ap.add_argument("--interactive", action="store_true", help="Interactive query loop")
     args = ap.parse_args()
 
-    if args.interactive:
-        print("Interactive mode (pure LLM). Type 'quit' to exit, 'full'/'stepwise' to change.\n")
-        strategy = "stepwise"
-        while True:
-            query = input(f"[llm-{strategy}] Query: ").strip()
-            if not query:
-                continue
-            if query.lower() in ("quit", "exit", "q"):
-                break
-            if query.lower() in ("full", "stepwise"):
-                strategy = query.lower()
-                print(f"  Strategy changed to: {strategy}")
-                continue
-            retrieve(query, strategy=strategy)
-            print()
-    elif args.query:
-        result = retrieve(args.query, strategy=args.strategy)
-        print(f"\n{'-'*60}")
-        print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-        print(f"\nDASAR HUKUM:")
-        for src in result.get("sources", []):
-            print(f"  > {src['navigation_path']}")
-        print(f"{'-'*60}")
-    else:
-        ap.print_help()
+    result = retrieve(args.query, strategy=args.strategy)
+    print(f"\n{'-'*60}")
+    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
+    print(f"\nDASAR HUKUM:")
+    for src in result.get("sources", []):
+        print(f"  > {src['navigation_path']}")
+    print(f"{'-'*60}")
 
 
 if __name__ == "__main__":

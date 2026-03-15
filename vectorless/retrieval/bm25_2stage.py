@@ -260,33 +260,19 @@ def retrieve(query: str, top_k_docs: int = 3, top_k_nodes: int = 5,
 
 def main():
     ap = argparse.ArgumentParser(description="BM25 retrieval for Indonesian legal QA")
-    ap.add_argument("query", nargs="?", help="Legal question in Indonesian")
+    ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--top_k_docs", type=int, default=3, help="Max docs from doc search")
     ap.add_argument("--top_k_nodes", type=int, default=5, help="Max nodes from node search")
-    ap.add_argument("--interactive", action="store_true", help="Interactive query loop")
     args = ap.parse_args()
 
-    if args.interactive:
-        print("Interactive mode (BM25). Type 'quit' to exit.\n")
-        while True:
-            query = input("[bm25] Query: ").strip()
-            if not query:
-                continue
-            if query.lower() in ("quit", "exit", "q"):
-                break
-            retrieve(query, top_k_docs=args.top_k_docs, top_k_nodes=args.top_k_nodes)
-            print()
-    elif args.query:
-        result = retrieve(args.query, top_k_docs=args.top_k_docs,
-                          top_k_nodes=args.top_k_nodes)
-        print(f"\n{'-'*60}")
-        print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-        print(f"\nDASAR HUKUM:")
-        for src in result.get("sources", []):
-            print(f"  > {src['navigation_path']} (BM25: {src.get('bm25_score', 'N/A')})")
-        print(f"{'-'*60}")
-    else:
-        ap.print_help()
+    result = retrieve(args.query, top_k_docs=args.top_k_docs,
+                      top_k_nodes=args.top_k_nodes)
+    print(f"\n{'-'*60}")
+    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
+    print(f"\nDASAR HUKUM:")
+    for src in result.get("sources", []):
+        print(f"  > {src['navigation_path']} (BM25: {src.get('bm25_score', 'N/A')})")
+    print(f"{'-'*60}")
 
 
 if __name__ == "__main__":

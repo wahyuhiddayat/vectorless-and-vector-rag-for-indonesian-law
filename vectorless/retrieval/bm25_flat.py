@@ -176,36 +176,17 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
 def main():
     ap = argparse.ArgumentParser(
         description="BM25 flat (single-stage) retrieval for Indonesian legal QA")
-    ap.add_argument("query", nargs="?", help="Legal question in Indonesian")
+    ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--top_k", type=int, default=5, help="Number of results (default: 5)")
-    ap.add_argument("--interactive", action="store_true", help="Interactive query loop")
     args = ap.parse_args()
 
-    if args.interactive:
-        print("Interactive mode (bm25-flat). Type 'quit' to exit.\n")
-        while True:
-            query = input("[bm25-flat] Query: ").strip()
-            if not query:
-                continue
-            if query.lower() in ("quit", "exit", "q"):
-                break
-            result = retrieve(query, top_k=args.top_k)
-            print(f"\n{'-'*60}")
-            print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-            print(f"\nDASAR HUKUM:")
-            for src in result.get("sources", []):
-                print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {src['bm25_score']})")
-            print(f"{'-'*60}\n")
-    elif args.query:
-        result = retrieve(args.query, top_k=args.top_k)
-        print(f"\n{'-'*60}")
-        print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-        print(f"\nDASAR HUKUM:")
-        for src in result.get("sources", []):
-            print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {src['bm25_score']})")
-        print(f"{'-'*60}")
-    else:
-        ap.print_help()
+    result = retrieve(args.query, top_k=args.top_k)
+    print(f"\n{'-'*60}")
+    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
+    print(f"\nDASAR HUKUM:")
+    for src in result.get("sources", []):
+        print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {src['bm25_score']})")
+    print(f"{'-'*60}")
 
 
 if __name__ == "__main__":
