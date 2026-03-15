@@ -39,19 +39,23 @@ python scraper/bpk_scraper.py --jenis 8 --resume
 
 ## 2. Indexing (Vectorless)
 
-Parses scraped PDFs into hierarchical tree indices. Three granularity levels:
+Parses scraped PDFs into hierarchical tree indices. Single command with `--granularity` flag:
 
-| Command | Granularity | Leaf node = | Output |
-|---------|-------------|-------------|--------|
-| `python -m vectorless.indexing.build_pasal` | Coarsest | Pasal | `data/index_pasal/` |
-| `python -m vectorless.indexing.build_ayat` | Mid | Ayat | `data/index_ayat/` |
-| `python -m vectorless.indexing.build_full_split` | Finest | Huruf/Angka | `data/index_full_split/` |
+```bash
+python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
+```
+
+| Granularity | Leaf node = | Output |
+|-------------|-------------|--------|
+| `pasal` | Pasal (coarsest) | `data/index_pasal/` |
+| `ayat` | Ayat (mid) | `data/index_ayat/` |
+| `full_split` | Huruf/Angka (finest) | `data/index_full_split/` |
 
 ### Flags
 
 | Flag | Default | What it does |
 |------|---------|--------------|
-| *(no flags)* | - | Index ALL documents with Gemini LLM cleanup |
+| `--granularity` | *(required)* | Leaf node granularity: `pasal`, `ayat`, or `full_split` |
 | `--doc-id ID` | all docs | Index only one document, e.g. `--doc-id uu-20-2025` |
 | `--no-llm` | LLM on | Skip Gemini text cleanup. Faster but lower quality. Use only for quick testing |
 | `--force` | skip existing | Re-index documents that already have output files |
@@ -59,19 +63,19 @@ Parses scraped PDFs into hierarchical tree indices. Three granularity levels:
 ### Examples
 
 ```bash
-# Index everything (default, recommended for final data)
-python -m vectorless.indexing.build_pasal
+# Index everything at Pasal level (default, recommended for final data)
+python -m vectorless.indexing.build --granularity pasal
 
 # Quick test: index one doc without LLM cleanup
-python -m vectorless.indexing.build_pasal --doc-id uu-20-2025 --no-llm
+python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --no-llm
 
 # Re-index a doc after fixing parser bugs
-python -m vectorless.indexing.build_pasal --doc-id uu-20-2025 --force
+python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --force
 
 # Build all three granularities
-python -m vectorless.indexing.build_pasal
-python -m vectorless.indexing.build_ayat
-python -m vectorless.indexing.build_full_split
+python -m vectorless.indexing.build --granularity pasal
+python -m vectorless.indexing.build --granularity ayat
+python -m vectorless.indexing.build --granularity full_split
 ```
 
 ---

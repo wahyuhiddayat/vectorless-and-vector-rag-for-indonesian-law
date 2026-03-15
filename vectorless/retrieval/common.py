@@ -1,12 +1,13 @@
 """
 Shared utilities for retrieval pipelines.
 
-Contains: LLM client, data loading, tree helpers, answer generation, logging.
-These are used by all retrieval strategies (retrieve_llm, retrieve_bm25, retrieve_hybrid).
+Contains: tokenizer, LLM client, data loading, tree helpers, answer generation, logging.
+These are used by all retrieval strategies (bm25_flat, llm, hybrid, ablations).
 """
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -18,6 +19,35 @@ load_dotenv()
 
 DATA_INDEX = Path(os.environ.get("DATA_INDEX", "data/index_pasal"))
 LOG_DIR = Path("data/retrieval_logs")
+
+
+# ============================================================
+# TOKENIZER
+# ============================================================
+
+STOPWORDS = {
+    "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
+    "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
+    "tidak", "akan", "telah", "dapat", "harus", "setiap", "suatu",
+    "antara", "atas", "secara", "serta", "bahwa", "tentang",
+    "berdasarkan", "sebagaimana", "dimaksud", "tersebut",
+    "ayat", "huruf", "angka",
+}
+
+
+def tokenize(text: str) -> list[str]:
+    """Indonesian tokenizer: lowercase, split on non-alphanumeric, remove stopwords."""
+    text = text.lower()
+    tokens = re.findall(r'[a-z0-9]+', text)
+    return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
+
+
+def tokenize_no_sw(text: str) -> list[str]:
+    """Indonesian tokenizer without stopword removal (ablation variant)."""
+    text = text.lower()
+    tokens = re.findall(r'[a-z0-9]+', text)
+    return [t for t in tokens if len(t) > 1]
+
 
 # ============================================================
 # LLM CLIENT

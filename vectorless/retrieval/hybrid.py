@@ -14,42 +14,20 @@ This addresses weaknesses of both pure approaches:
 Usage:
     python -m vectorless.retrieval.hybrid "Apa syarat penyadapan?"
     python -m vectorless.retrieval.hybrid "Apa definisi penyadapan?" --bm25_top_k 10
-    python -m vectorless.retrieval.hybrid --interactive
+    python -m vectorless.retrieval.hybrid "Apa definisi penyadapan?" --bm25_top_k 15
 """
 
 import argparse
 import json
-import re
 import time
 
 from rank_bm25 import BM25Okapi
 
 from .common import (
-    llm_call, reset_token_counters, get_token_stats,
+    tokenize, llm_call, reset_token_counters, get_token_stats,
     load_catalog, load_doc, find_node, extract_nodes,
     generate_answer, save_log, DATA_INDEX,
 )
-
-
-# ============================================================
-# TOKENIZER (shared with retrieve_bm25)
-# ============================================================
-
-_STOPWORDS = {
-    "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
-    "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
-    "tidak", "akan", "telah", "dapat", "harus", "setiap", "suatu",
-    "antara", "atas", "secara", "serta", "bahwa", "tentang",
-    "berdasarkan", "sebagaimana", "dimaksud", "tersebut",
-    "ayat", "huruf", "angka",
-}
-
-
-def tokenize(text: str) -> list[str]:
-    """Simple Indonesian tokenizer: lowercase, split on non-alphanumeric, remove stopwords."""
-    text = text.lower()
-    tokens = re.findall(r'[a-z0-9]+', text)
-    return [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
 
 
 # ============================================================

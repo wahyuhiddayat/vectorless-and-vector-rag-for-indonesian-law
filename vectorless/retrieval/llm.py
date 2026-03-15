@@ -11,7 +11,7 @@ Two tree search modes:
 Usage:
     python -m vectorless.retrieval.llm "Apa syarat penyadapan?"
     python -m vectorless.retrieval.llm "Apa syarat penyadapan?" --strategy full
-    python -m vectorless.retrieval.llm --interactive
+    python -m vectorless.retrieval.llm "query" --strategy stepwise
 """
 
 import argparse

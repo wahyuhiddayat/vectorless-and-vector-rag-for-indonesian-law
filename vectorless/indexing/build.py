@@ -1,19 +1,15 @@
 """
-build_full_split.py — Build full-split structural index from scraped Indonesian legal PDFs.
+build.py — Build structural index from scraped Indonesian legal PDFs.
 
-Identical to build_pasal.py but uses parser_full_split instead of parser_pasal.
-The full-split parser recursively splits Pasal leaf nodes into the smallest
-structural unit present (Ayat → Huruf → Angka), producing the finest-grained
-tree indices for comparison against Pasal-level and Ayat-level indices.
-
-Output goes to data/index_full_split/ (not data/index_pasal/) to avoid overwriting
-the pasal-level index.
+Parses PDFs into hierarchical trees at a chosen granularity level:
+  - pasal:      leaf = Pasal (coarsest)        → data/index_pasal/
+  - ayat:       leaf = Ayat (mid)              → data/index_ayat/
+  - full_split: leaf = Huruf/Angka (finest)    → data/index_full_split/
 
 Usage:
-    python -m vectorless.indexing.build_full_split                          # index all documents (with LLM cleanup)
-    python -m vectorless.indexing.build_full_split --no-llm                 # skip LLM cleanup (dev/testing only)
-    python -m vectorless.indexing.build_full_split --doc-id uu-20-2025      # index single document
-    python -m vectorless.indexing.build_full_split --force                  # re-index even if exists
+    python -m vectorless.indexing.build --granularity pasal
+    python -m vectorless.indexing.build --granularity ayat --doc-id uu-20-2025
+    python -m vectorless.indexing.build --granularity full_split --no-llm --force
 """
 
 import argparse
@@ -31,8 +27,8 @@ from .parser import (parse_legal_pdf, parse_penjelasan, _attach_penjelasan,
                      _iter_leaves)
 
 DATA_RAW = Path("data/raw")
-DATA_INDEX = Path("data/index_full_split")
 REGISTRY_PATH = DATA_RAW / "registry.json"
+
 
 def load_registry() -> dict:
     """Load data/raw/registry.json produced by the scraper.
@@ -42,6 +38,7 @@ def load_registry() -> dict:
     """
     with open(REGISTRY_PATH, encoding="utf-8") as f:
         return json.load(f)
+
 
 def load_metadata(doc_id: str, detail_id: str, jenis_folder: str) -> dict | None:
     """Load detailed metadata for a document from scraper output.
@@ -56,6 +53,7 @@ def load_metadata(doc_id: str, detail_id: str, jenis_folder: str) -> dict | None
         return None
     with open(meta_path, encoding="utf-8") as f:
         return json.load(f)
+
 
 def pick_main_pdf(metadata: dict) -> str | None:
     """Select the main PDF filename from metadata['pdf_files'].
@@ -88,6 +86,7 @@ def pick_main_pdf(metadata: dict) -> str | None:
 
     return min(candidates, key=len)
 
+
 def pick_penjelasan_pdf(metadata: dict) -> str | None:
     """Find a separate Penjelasan PDF if one exists.
 
@@ -99,6 +98,7 @@ def pick_penjelasan_pdf(metadata: dict) -> str | None:
         if "Penjelasan" in p["filename"] or "penjelasan" in p["filename"]:
             return p["filename"]
     return None
+
 
 def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None):
     """Add 'navigation_path' field to each node in-place, recursively.
@@ -117,10 +117,11 @@ def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None):
         if "nodes" in node:
             add_navigation_paths(node["nodes"], path)
 
+
 def enrich_doc(parse_result: dict, registry_entry: dict, metadata: dict | None) -> dict:
     """Combine parser output with registry/metadata into the final index document.
 
-    The final document is what gets saved to data/index_full_split/{doc_id}.json and contains:
+    The final document contains:
     - Document metadata: doc_id, judul, bidang, subjek, materi_pokok, relasi, etc.
     - Parser stats: total_pages, element_counts, warnings
     - Tree structure: BAB > Bagian > Paragraf > Pasal, with navigation_path on each node
@@ -162,6 +163,7 @@ def enrich_doc(parse_result: dict, registry_entry: dict, metadata: dict | None) 
 
     return doc
 
+
 def build_catalog(index_dir: Path) -> list[dict]:
     """Scan all indexed docs and produce catalog.json — a lightweight summary for document discovery.
 
@@ -195,23 +197,28 @@ def build_catalog(index_dir: Path) -> list[dict]:
         })
     return catalog
 
+
+GRANULARITY_INDEX_MAP = {
+    "pasal": Path("data/index_pasal"),
+    "ayat": Path("data/index_ayat"),
+    "full_split": Path("data/index_full_split"),
+}
+
+
 def main():
-    """Entry point. Reads registry, parses each PDF, and saves enriched index JSONs.
-
-    Flow per document:
-      registry.json -> load metadata -> pick main PDF -> parse (+ LLM cleanup)
-      -> add navigation_paths -> merge metadata -> save data/index_full_split/{doc_id}.json
-
-    After all documents: rebuild catalog.json from all saved index files.
-    """
+    """Entry point. Parses CLI args and runs the indexing pipeline."""
     ap = argparse.ArgumentParser(description="Build structural index from scraped legal PDFs")
+    ap.add_argument("--granularity", choices=["pasal", "ayat", "full_split"], required=True,
+                    help="Leaf node granularity: pasal (coarsest), ayat (mid), full_split (finest)")
     ap.add_argument("--no-llm", action="store_true", help="Skip Gemini LLM cleanup (dev/testing only, reduces index quality)")
     ap.add_argument("--doc-id", type=str, help="Index a single document by doc_id")
     ap.add_argument("--force", action="store_true", help="Re-index even if output exists")
     args = ap.parse_args()
 
+    granularity = args.granularity
+    data_index = GRANULARITY_INDEX_MAP[granularity]
     use_llm = not args.no_llm
-    print(f"Mode: LLM cleanup {'ON' if use_llm else 'OFF (--no-llm)'}  |  Force: {'ON' if args.force else 'OFF'}")
+    print(f"Granularity: {granularity}  |  Output: {data_index}  |  LLM cleanup {'ON' if use_llm else 'OFF (--no-llm)'}  |  Force: {'ON' if args.force else 'OFF'}")
 
     # Load registry
     registry = load_registry()
@@ -225,14 +232,14 @@ def main():
             sys.exit(1)
         docs = {args.doc_id: docs[args.doc_id]}
 
-    DATA_INDEX.mkdir(parents=True, exist_ok=True)
+    data_index.mkdir(parents=True, exist_ok=True)
 
     success, skipped, failed = 0, 0, 0
     t_total = time.time()
 
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
         category = doc_id.split("-")[0].upper()
-        category_dir = DATA_INDEX / category
+        category_dir = data_index / category
         category_dir.mkdir(parents=True, exist_ok=True)
         output_path = category_dir / f"{doc_id}.json"
 
@@ -273,7 +280,7 @@ def main():
         t0 = time.time()
         try:
             parse_result = parse_legal_pdf(str(pdf_path), verbose=False, use_llm_cleanup=use_llm,
-                                               granularity="full_split")
+                                               granularity=granularity)
         except Exception as e:
             print(f"  ERROR Parse failed: {e}")
             failed += 1
@@ -320,14 +327,15 @@ def main():
 
     # Rebuild catalog
     print(f"\nBuilding catalog...")
-    catalog = build_catalog(DATA_INDEX)
-    catalog_path = DATA_INDEX / "catalog.json"
+    catalog = build_catalog(data_index)
+    catalog_path = data_index / "catalog.json"
     with open(catalog_path, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
     print(f"Catalog: {len(catalog)} documents -> {catalog_path}")
 
     total_elapsed = time.time() - t_total
     print(f"\nDone: {success} indexed, {skipped} skipped, {failed} failed  |  {total_elapsed:.1f}s total")
+
 
 if __name__ == "__main__":
     main()

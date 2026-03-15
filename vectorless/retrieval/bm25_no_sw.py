@@ -8,32 +8,21 @@ on formal Indonesian legal documents.
 Usage:
     python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?"
     python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?" --top_k 5
-    python -m vectorless.retrieval.bm25_no_sw --interactive
+    python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?" --top_k_nodes 10
 """
 
 import argparse
 import json
-import re
 import time
 
 from rank_bm25 import BM25Okapi
 
 from .common import (
+    tokenize_no_sw as tokenize,
     reset_token_counters, get_token_stats,
     load_catalog, load_doc, extract_nodes,
     generate_answer, save_log, DATA_INDEX,
 )
-
-
-# ============================================================
-# TOKENIZER (no stopword removal)
-# ============================================================
-
-def tokenize(text: str) -> list[str]:
-    """Simple Indonesian tokenizer: lowercase, split on non-alphanumeric. No stopword removal."""
-    text = text.lower()
-    tokens = re.findall(r'[a-z0-9]+', text)
-    return [t for t in tokens if len(t) > 1]
 
 
 # ============================================================

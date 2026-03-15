@@ -7,7 +7,7 @@ LLM generates answer from retrieved chunks.
 Usage:
     python -m vector.retrieve_vector "Apa syarat penyadapan?"
     python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
-    python -m vector.retrieve_vector --interactive
+    python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
 """
 
 import argparse

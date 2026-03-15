@@ -11,43 +11,20 @@ Indonesian legal documents (Granularity-aware Legal QA, 2024).
 Usage:
     python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?"
     python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?" --top_k 5
-    python -m vectorless.retrieval.bm25_2stage --interactive
+    python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?" --top_k_nodes 10
 """
 
 import argparse
 import json
-import re
 import time
 
 from rank_bm25 import BM25Okapi
 
 from .common import (
-    reset_token_counters, get_token_stats,
+    tokenize, reset_token_counters, get_token_stats,
     load_catalog, load_doc, extract_nodes,
     generate_answer, save_log, DATA_INDEX,
 )
-
-
-# ============================================================
-# TOKENIZER
-# ============================================================
-
-# Indonesian stopwords (common legal/general terms that add noise)
-_STOPWORDS = {
-    "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
-    "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
-    "tidak", "akan", "telah", "dapat", "harus", "setiap", "suatu",
-    "antara", "atas", "secara", "serta", "bahwa", "tentang",
-    "berdasarkan", "sebagaimana", "dimaksud", "tersebut",
-    "ayat", "huruf", "angka",
-}
-
-
-def tokenize(text: str) -> list[str]:
-    """Simple Indonesian tokenizer: lowercase, split on non-alphanumeric, remove stopwords."""
-    text = text.lower()
-    tokens = re.findall(r'[a-z0-9]+', text)
-    return [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
 
 
 # ============================================================

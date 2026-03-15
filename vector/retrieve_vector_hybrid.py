@@ -8,7 +8,7 @@ Merge: concatenate dense + sparse results, deduplicate
 Usage:
     python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?"
     python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?" --top_k 5
-    python -m vector.retrieve_vector_hybrid --interactive
+    python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?" --top_k 10
 """
 
 import argparse
