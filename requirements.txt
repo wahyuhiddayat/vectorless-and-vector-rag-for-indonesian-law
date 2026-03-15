@@ -1,0 +1,10 @@
+# Shared
+python-dotenv>=1.0.0
+google-genai>=1.0.0
+
+# Vectorless RAG (indexing + retrieval)
+pymupdf>=1.26.0
+
+# Vector RAG (retrieval)
+qdrant-client
+rank-bm25

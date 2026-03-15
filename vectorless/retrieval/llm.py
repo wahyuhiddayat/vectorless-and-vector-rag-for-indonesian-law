@@ -1,0 +1,388 @@
+"""
+Pure LLM retrieval strategy for Indonesian legal QA.
+
+All retrieval decisions (doc selection, tree navigation) are made by LLM prompting.
+No algorithmic scoring — the LLM is the sole searcher.
+
+Two tree search modes:
+  - "full"     — show entire tree skeleton, LLM picks nodes in one shot
+  - "stepwise" — navigate level-by-level (BAB → Bagian → Pasal) with reasoning
+
+Usage:
+    python -m vectorless.retrieval.llm "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.llm "Apa syarat penyadapan?" --strategy full
+    python -m vectorless.retrieval.llm --interactive
+"""
+
+import argparse
+import json
+import time
+
+from .common import (
+    llm_call, reset_token_counters, get_token_stats,
+    load_catalog, load_doc, find_node, extract_nodes,
+    generate_answer, save_log,
+)
+
+
+# ============================================================
+# DOC SEARCH (pure LLM)
+# ============================================================
+
+def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
+    """Select relevant doc_ids from catalog using LLM.
+
+    Sends full catalog metadata to LLM — it's small (~3KB for 10 docs).
+    """
+    docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
+
+    prompt = f"""\
+Kamu diberi daftar Undang-Undang Indonesia beserta metadata-nya.
+Pilih UU yang relevan untuk menjawab pertanyaan hukum berikut.
+
+Pertanyaan: {query}
+
+Daftar UU:
+{docs_text}
+
+Balas dalam format JSON:
+{{
+  "thinking": "<penalaran singkat mengapa UU tersebut relevan>",
+  "doc_ids": ["doc_id_1", "doc_id_2"]
+}}
+
+Aturan:
+- Pilih hanya UU yang benar-benar relevan (biasanya 1-2 saja)
+- Jika tidak ada yang relevan, kembalikan doc_ids kosong: []
+- Perhatikan bidang, subjek, dan materi_pokok untuk menentukan relevansi
+- Kembalikan HANYA JSON, tanpa teks lain
+"""
+
+    result = llm_call(prompt)
+
+    if verbose:
+        print(f"\n[Doc Search] Selected: {result.get('doc_ids', [])}")
+        print(f"  Reasoning: {result.get('thinking', '')[:200]}")
+
+    return result
+
+
+# ============================================================
+# TREE SEARCH — FULL (one-shot)
+# ============================================================
+
+def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
+    """Build a compact text representation of tree structure (titles + node_ids only)."""
+    lines = []
+    for node in nodes:
+        indent = "  " * depth
+        lines.append(f"{indent}{node['node_id']} {node['title']}")
+        if "nodes" in node:
+            lines.append(_build_tree_skeleton(node["nodes"], depth + 1))
+    return "\n".join(lines)
+
+
+def tree_search_full(query: str, doc: dict, verbose: bool = True) -> dict:
+    """Strategy A: Send full tree skeleton, LLM picks nodes in one shot."""
+    skeleton = _build_tree_skeleton(doc["structure"])
+
+    prompt = f"""\
+Kamu diberi pertanyaan hukum dan struktur hierarkis sebuah Undang-Undang Indonesia.
+Navigasi tree untuk menemukan Pasal yang paling relevan.
+
+Pertanyaan: {query}
+
+Undang-Undang: {doc['judul']}
+
+Struktur:
+{skeleton}
+
+Balas dalam format JSON:
+{{
+  "thinking": "<penalaran hierarkis: BAB mana yang relevan, lalu Bagian/Pasal mana>",
+  "node_ids": ["node_id1", "node_id2"]
+}}
+
+Aturan:
+- Pilih node LEAF (Pasal) yang paling relevan, bukan BAB/Bagian
+- Jika ada beberapa Pasal yang relevan, masukkan semuanya
+- Jika query terlalu umum, pilih Pasal definisi (biasanya Pasal 1)
+- Kembalikan HANYA JSON, tanpa teks lain
+"""
+
+    result = llm_call(prompt)
+
+    if verbose:
+        print(f"\n[Tree Search - Full] Selected: {result.get('node_ids', [])}")
+        print(f"  Reasoning: {result.get('thinking', '')[:200]}")
+
+    return result
+
+
+# ============================================================
+# TREE SEARCH — STEPWISE (level-by-level)
+# ============================================================
+
+def _get_top_level_nodes(structure: list[dict]) -> list[dict]:
+    """Get top-level nodes (BABs + Pembukaan) from structure."""
+    return [{"node_id": n["node_id"], "title": n["title"]} for n in structure]
+
+
+def _get_children_summary(node: dict) -> list[dict]:
+    """Get children summaries (node_id + title) of a node."""
+    if "nodes" not in node:
+        return []
+    return [{"node_id": c["node_id"], "title": c["title"]} for c in node["nodes"]]
+
+
+def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
+    """Navigate tree level by level with reasoning at each step.
+
+    Round 1: Show top-level nodes → pick BAB(s)
+    Round 2+: Keep drilling into children until we reach leaf nodes.
+    Stops when selected nodes have no more children (= leaf).
+    """
+    steps = []
+    structure = doc["structure"]
+    doc_title = doc["judul"]
+    max_rounds = 8  # safety cap
+
+    # Round 1: Select top-level node (BAB / Pembukaan / Pasal I, etc.)
+    top_nodes = _get_top_level_nodes(structure)
+    top_text = json.dumps(top_nodes, ensure_ascii=False, indent=2)
+
+    prompt = f"""\
+Kamu sedang menavigasi struktur hierarkis UU "{doc_title}" untuk menjawab pertanyaan hukum.
+
+Pertanyaan: {query}
+
+Ini adalah bagian-bagian utama dalam UU tersebut:
+{top_text}
+
+Pilih 1-2 bagian yang paling relevan untuk menjawab pertanyaan.
+
+Balas dalam format JSON:
+{{
+  "thinking": "<penalaran mengapa bagian ini relevan>",
+  "selected_ids": ["node_id1"]
+}}
+
+Kembalikan HANYA JSON.
+"""
+
+    r1 = llm_call(prompt)
+    steps.append({
+        "round": 1, "level": "top",
+        "options_shown": [n["title"] for n in top_nodes],
+        "selected": r1.get("selected_ids", []),
+        "thinking": r1.get("thinking", ""),
+    })
+
+    if verbose:
+        print(f"\n[Tree Search - Round 1] Selected: {r1.get('selected_ids', [])}")
+        print(f"  Reasoning: {r1.get('thinking', '')[:200]}")
+
+    # Iterative drill-down: keep going until all selected nodes are leaves
+    current_ids = r1.get("selected_ids", [])
+    round_num = 2
+
+    while round_num <= max_rounds:
+        # Separate leaves from nodes that need further drilling
+        final_ids = []
+        need_drill = []
+        for nid in current_ids:
+            node = find_node(structure, nid)
+            if node and "nodes" in node and node["nodes"]:
+                need_drill.append(node)
+            else:
+                final_ids.append(nid)
+
+        if not need_drill:
+            # All selected nodes are leaves — done
+            return {"steps": steps, "node_ids": final_ids}
+
+        # Collect children of nodes that need drilling
+        drill_candidates = []
+        for node in need_drill:
+            drill_candidates.extend(_get_children_summary(node))
+
+        if not drill_candidates:
+            # No children found — use current selections
+            final_ids.extend([n["node_id"] for n in need_drill])
+            return {"steps": steps, "node_ids": final_ids}
+
+        drill_text = json.dumps(drill_candidates, ensure_ascii=False, indent=2)
+
+        prompt = f"""\
+Kamu sedang menavigasi UU "{doc_title}" ke level lebih dalam.
+
+Pertanyaan: {query}
+
+Ini adalah sub-bagian di dalam bagian yang kamu pilih:
+{drill_text}
+
+Pilih bagian yang paling relevan untuk menjawab pertanyaan.
+
+Balas dalam format JSON:
+{{
+  "thinking": "<penalaran mengapa bagian ini relevan>",
+  "selected_ids": ["node_id1", "node_id2"]
+}}
+
+Aturan:
+- Jika ada yang sudah spesifik (Ayat/Huruf), pilih langsung
+- Jika masih umum (Bagian/Paragraf), pilih yang relevan (kita akan drill down lagi)
+- Kembalikan HANYA JSON
+"""
+
+        result = llm_call(prompt)
+        steps.append({
+            "round": round_num,
+            "level": f"drill-{round_num}",
+            "options_shown": [n["title"] for n in drill_candidates],
+            "selected": result.get("selected_ids", []),
+            "thinking": result.get("thinking", ""),
+        })
+
+        if verbose:
+            print(f"\n[Tree Search - Round {round_num}] Selected: {result.get('selected_ids', [])}")
+            print(f"  Reasoning: {result.get('thinking', '')[:200]}")
+
+        new_ids = result.get("selected_ids", [])
+        if not new_ids:
+            # LLM returned nothing — fall back to what we had from leaves
+            final_ids.extend([n["node_id"] for n in need_drill])
+            return {"steps": steps, "node_ids": final_ids}
+
+        # Merge: leaves from this round + new selections to drill further
+        current_ids = final_ids + new_ids
+        round_num += 1
+
+    # Reached max rounds — return whatever we have
+    return {"steps": steps, "node_ids": current_ids}
+
+
+# ============================================================
+# MAIN PIPELINE
+# ============================================================
+
+def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> dict:
+    """Full LLM retrieval pipeline: doc search → tree search → answer."""
+    reset_token_counters()
+    t_start = time.time()
+
+    if verbose:
+        print(f"{'='*60}")
+        print(f"Query: {query}")
+        print(f"Strategy: llm-{strategy}")
+        print(f"{'='*60}")
+
+    # Step 1: Doc search
+    catalog = load_catalog()
+    doc_result = doc_search(query, catalog, verbose=verbose)
+    doc_ids = doc_result.get("doc_ids", [])
+
+    if not doc_ids:
+        return {"query": query, "strategy": f"llm-{strategy}", "error": "No relevant documents found"}
+
+    # Step 2: Tree search
+    doc_id = doc_ids[0]
+    doc = load_doc(doc_id)
+
+    if strategy == "full":
+        tree_result = tree_search_full(query, doc, verbose=verbose)
+    else:
+        tree_result = tree_search_stepwise(query, doc, verbose=verbose)
+
+    node_ids = tree_result.get("node_ids", [])
+
+    if not node_ids:
+        return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
+                "error": "No relevant nodes found"}
+
+    # Step 3: Extract text and generate answer
+    nodes = extract_nodes(doc, node_ids)
+
+    if not nodes:
+        return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
+                "node_ids": node_ids, "error": "Selected nodes not found in tree"}
+
+    doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
+    answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
+
+    # Build sources
+    sources = []
+    for node in nodes:
+        sources.append({
+            "doc_id": doc_id,
+            "node_id": node["node_id"],
+            "title": node["title"],
+            "navigation_path": node["navigation_path"],
+        })
+
+    elapsed = time.time() - t_start
+    stats = get_token_stats()
+
+    result = {
+        "query": query,
+        "strategy": f"llm-{strategy}",
+        "doc_search": doc_result,
+        "tree_search": tree_result,
+        "answer": answer_result.get("answer", ""),
+        "citations": answer_result.get("citations", []),
+        "sources": sources,
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
+    }
+
+    save_log(result)
+
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"Done in {elapsed:.1f}s  |  {stats['llm_calls']} LLM calls  |  "
+              f"{stats['total_tokens']:,} tokens")
+        print(f"{'='*60}")
+
+    return result
+
+
+# ============================================================
+# CLI
+# ============================================================
+
+def main():
+    ap = argparse.ArgumentParser(description="Pure LLM retrieval for Indonesian legal QA")
+    ap.add_argument("query", nargs="?", help="Legal question in Indonesian")
+    ap.add_argument("--strategy", choices=["full", "stepwise"], default="stepwise",
+                    help="Tree search strategy (default: stepwise)")
+    ap.add_argument("--interactive", action="store_true", help="Interactive query loop")
+    args = ap.parse_args()
+
+    if args.interactive:
+        print("Interactive mode (pure LLM). Type 'quit' to exit, 'full'/'stepwise' to change.\n")
+        strategy = "stepwise"
+        while True:
+            query = input(f"[llm-{strategy}] Query: ").strip()
+            if not query:
+                continue
+            if query.lower() in ("quit", "exit", "q"):
+                break
+            if query.lower() in ("full", "stepwise"):
+                strategy = query.lower()
+                print(f"  Strategy changed to: {strategy}")
+                continue
+            retrieve(query, strategy=strategy)
+            print()
+    elif args.query:
+        result = retrieve(args.query, strategy=args.strategy)
+        print(f"\n{'-'*60}")
+        print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
+        print(f"\nDASAR HUKUM:")
+        for src in result.get("sources", []):
+            print(f"  > {src['navigation_path']}")
+        print(f"{'-'*60}")
+    else:
+        ap.print_help()
+
+
+if __name__ == "__main__":
+    main()
