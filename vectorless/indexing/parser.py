@@ -1106,25 +1106,24 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
     return result
 
 def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | None:
-    """Split preamble text into Menimbang and Mengingat sub-nodes.
+    """Split preamble text into Menimbang, Mengingat, and Menetapkan sub-nodes.
 
     Indonesian legal documents have a standard preamble structure:
-      [Header] → Menimbang (a. bahwa...; b. bahwa...; ...) → Mengingat (Pasal refs) → MEMUTUSKAN
+      [Header] → Menimbang (a. bahwa...; b. bahwa...; ...)
+               → Mengingat (Pasal/UU references)
+               → MEMUTUSKAN: Menetapkan: ...
 
-    The keywords "Mengingat" and "Menetapkan" often appear as OCR header bleed
-    (margin text), not as actual section boundaries. So instead of splitting on
-    keywords, we clean all noise first, then split on content transition:
-    last "bahwa" item's semicolon → Pasal reference line = Mengingat start.
+    Strategy: find section boundaries BEFORE stripping keywords, then use
+    "Mengingat" keyword as primary boundary (fallback to content transition).
 
     Returns list of child nodes, or None if splitting fails (fallback to blob).
     """
-    # Step 1: Clean OCR noise from the whole preamble text
+    # Step 1: Clean OCR noise — but preserve Mengingat/Menetapkan keywords
+    # so they can be used as section boundaries first.
     _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
     noise_patterns = [
-        # "Mengingat\nMenetapkan" header bleed (always OCR noise in preamble)
-        re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*\n', re.MULTILINE),
-        re.compile(r'^\s*Mengingat\s*:?\s*\n', re.MULTILINE),
-        re.compile(r'^\s*Menetapkan\s*:?\s*\n', re.MULTILINE),
+        # "Mengingat\nMenetapkan" combo = OCR margin bleed (both in margin column)
+        re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*$', re.MULTILINE),
         # PRESIDEN REPUBLIK INDONESIA header bleed
         re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n\s*REP\S*\s+IND\S*\s*\n'),
         re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n'),
@@ -1132,8 +1131,8 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         re.compile(r'^\s*SAL[IT]NAN\s*\n', re.MULTILINE),
         # Page numbers like "-2-", "-3-"
         re.compile(r'^\s*-\d+-\s*\n', re.MULTILINE),
-        # Random OCR garbage (short all-caps nonsense)
-        re.compile(r'^\s*[A-Z]{3,8}\s*\n', re.MULTILINE),
+        # Random OCR garbage (short all-caps nonsense, but NOT Mengingat/Menetapkan)
+        re.compile(r'^\s*(?!Mengingat|Menetapkan)[A-Z]{3,8}\s*\n', re.MULTILINE),
     ]
     cleaned = text
     for pat in noise_patterns:
@@ -1141,59 +1140,96 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
     # Step 2: Find Menimbang start
-    # Try "Menimbang" keyword first, fall back to "a. bahwa" (keyword is often
-    # removed during OCR cleaning because it appears as side-column header bleed)
     menimbang_m = re.search(r'Menimbang\s*:?\s*(?:\n|(?=a[\.\s]))', cleaned)
     if menimbang_m:
+        before_menimbang = cleaned[:menimbang_m.start()]
         after_menimbang = cleaned[menimbang_m.end():]
     else:
         # Fall back: find first "a. bahwa" or "a bahwa" pattern
-        # Note: some OCR outputs split "a.\nbahwa" across lines
         fallback_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', cleaned)
         if not fallback_m:
             fallback_m = re.search(r'(?:^|\n)\s*a\.\s*\n\s*bahwa\s', cleaned)
         if not fallback_m:
-            # Last resort: single "bahwa" without letter prefix (e.g. APBN laws)
             fallback_m = re.search(r'(?:^|\n)\s*bahwa\s', cleaned)
         if not fallback_m:
             return None
+        before_menimbang = cleaned[:fallback_m.start()]
         after_menimbang = cleaned[fallback_m.start():].lstrip('\n')
 
-    # Step 3: Find MEMUTUSKAN as end boundary
-    # Handle OCR variants: MEMUTUSI(AN, MEMUTUSICAN, etc.
+    # Step 3: Find MEMUTUSKAN as end boundary and extract Menetapkan text
     memutuskan_m = re.search(r'MEMUTUS\S*\s*:', after_menimbang)
-    if not memutuskan_m:
-        # Some docs don't have MEMUTUSKAN in the extracted preamble text
-        # (it's on the same page as BAB I and gets cut). Use end of text.
-        memutuskan_m = None
+    menetapkan_text = None
 
     if memutuskan_m:
         preamble_body = after_menimbang[:memutuskan_m.start()].strip()
+        # Text after "MEMUTUSKAN:" is the Menetapkan content
+        raw_after = after_menimbang[memutuskan_m.end():].strip()
+        # Strip "Menetapkan :" prefix if present
+        menet_m = re.match(r'Menetapkan\s*:\s*', raw_after)
+        if menet_m:
+            menetapkan_text = raw_after[menet_m.end():].strip()
+        elif raw_after:
+            menetapkan_text = raw_after
     else:
         preamble_body = after_menimbang.strip()
 
     # Step 4: Split Menimbang from Mengingat
-    # Mengingat content starts with Pasal references to UUD/existing laws.
-    # Find the first line starting with "Pasal" or a numbered reference
-    # that comes AFTER all "bahwa" items (which end with semicolons).
-    #
-    # Pattern: line starting with "Pasal NN" or "1. Pasal" (not inside bahwa text)
-    mengingat_m = re.search(
-        r'\n((?:\d+\.\s+)?Pasal\s+\d+)',
-        preamble_body,
-    )
+    # Priority: content-based detection first (most reliable), keyword fallback.
+    # OCR margin keywords ("Mengingat") can appear at wrong positions, so we
+    # prefer detecting the content transition after the last "bahwa" item.
+    menimbang_text = None
+    mengingat_text = None
 
-    if mengingat_m:
-        menimbang_text = preamble_body[:mengingat_m.start()].strip()
-        mengingat_text = preamble_body[mengingat_m.start():].strip()
-    else:
-        # Can't find Mengingat boundary — keep all as Menimbang
+    # Strategy A: content transition after last "bahwa" semicolon
+    # Menimbang = "bahwa" items ending with ";", Mengingat = legal references
+    last_bahwa_end = None
+    for m in re.finditer(r'bahwa\s', preamble_body):
+        last_bahwa_end = m.end()
+
+    if last_bahwa_end:
+        after_last = preamble_body[last_bahwa_end:]
+        # Find the LAST semicolon in the final bahwa item (the item may
+        # reference laws with intermediate semicolons, e.g. "(Lembaran...;")
+        # so we need the semicolon that ends the whole bahwa clause.
+        # Search for semicolon followed by newline, then check what comes next.
+        for semi_m in re.finditer(r';\s*\n', after_last):
+            split_pos = last_bahwa_end + semi_m.end()
+            remaining = preamble_body[split_pos:]
+            # Check if remaining starts with legal references (Mengingat content)
+            # or is very short garbage (OCR noise before actual Mengingat)
+            ref_m = re.match(
+                r'\s*(?:\d+[\.\s]+)?(?:Pasal|Undang|Peraturan)',
+                remaining,
+            )
+            if ref_m:
+                menimbang_text = preamble_body[:split_pos].strip()
+                mengingat_text = remaining.strip()
+                break
+
+    # Strategy B: "Mengingat" keyword (only if Strategy A didn't find a split)
+    if menimbang_text is None:
+        mengingat_kw = re.search(r'\n\s*Mengingat\s*:?\s*\n', preamble_body)
+        if mengingat_kw:
+            menimbang_text = preamble_body[:mengingat_kw.start()].strip()
+            mengingat_text = preamble_body[mengingat_kw.end():].strip()
+
+    # Strategy C (legacy fallback): first Pasal ref at start of line
+    if menimbang_text is None:
+        mengingat_m = re.search(
+            r'\n((?:\d+\.\s+)?Pasal\s+\d+)',
+            preamble_body,
+        )
+        if mengingat_m:
+            menimbang_text = preamble_body[:mengingat_m.start()].strip()
+            mengingat_text = preamble_body[mengingat_m.start():].strip()
+
+    # No split found — keep all as Menimbang
+    if menimbang_text is None:
         menimbang_text = preamble_body
         mengingat_text = None
 
-    # Step 5: Clean up Menimbang text (remove trailing noise)
+    # Step 5: Clean up and build children
     menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
-
     if not menimbang_text:
         return None
 
@@ -1208,7 +1244,6 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     ]
 
     if mengingat_text:
-        # Clean up Mengingat: remove "Dengan Persetujuan Bersama..." formal text
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
         children.append({
             "title": "Mengingat",
@@ -1217,6 +1252,17 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             "end_index": end_page,
             "text": mengingat_text,
         })
+
+    if menetapkan_text:
+        menetapkan_text = re.sub(r'\n{3,}', '\n\n', menetapkan_text).strip()
+        if menetapkan_text:
+            children.append({
+                "title": "Menetapkan",
+                "node_id": "P003",
+                "start_index": start_page,
+                "end_index": end_page,
+                "text": menetapkan_text,
+            })
 
     return children
 
@@ -1469,6 +1515,18 @@ _OCR_HEADER_PATTERNS = [
     re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
 ]
 
+# Closing/pengesahan text that leaks into the last Pasal when both share a page.
+# Must be tolerant of OCR noise (broken words, extra whitespace).
+_CLOSING_TEXT_RE = re.compile(
+    r'\n\s*(?:'
+    r'Ditetapkan\s+di\s'
+    r'|Diundangkan\s+di\s'
+    r'|Agar\s+setiap\s+orang'
+    r'|Agar\s+setiap\s*\n'  # OCR line-break variant
+    r')'
+    r'[\s\S]*$',
+)
+
 
 def _strip_ocr_headers(nodes: list[dict]):
     """Strip residual PDF header/footer text from all leaf node texts in-place."""
@@ -1479,6 +1537,8 @@ def _strip_ocr_headers(nodes: list[dict]):
             text = node["text"]
             for pat in _OCR_HEADER_PATTERNS:
                 text = pat.sub('', text)
+            # Strip closing/pengesahan text that leaked into content
+            text = _CLOSING_TEXT_RE.sub('', text)
             # Clean up extra blank lines left behind
             text = re.sub(r'\n{3,}', '\n\n', text).strip()
             node["text"] = text
