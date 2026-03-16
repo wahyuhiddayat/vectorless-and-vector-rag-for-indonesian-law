@@ -59,6 +59,7 @@ python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 | `--doc-id ID` | all docs | Index only one document, e.g. `--doc-id uu-20-2025` |
 | `--no-llm` | LLM on | Skip Gemini text cleanup. Faster but lower quality. Use only for quick testing |
 | `--force` | skip existing | Re-index documents that already have output files |
+| `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`full_split` |
 
 ### Examples
 
@@ -76,6 +77,21 @@ python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --fo
 python -m vectorless.indexing.build --granularity pasal
 python -m vectorless.indexing.build --granularity ayat
 python -m vectorless.indexing.build --granularity full_split
+
+# Fast: re-split ayat/full_split from existing pasal index (no LLM, ~0.2s)
+python -m vectorless.indexing.build --granularity ayat --from-pasal --force
+python -m vectorless.indexing.build --granularity full_split --from-pasal --force
+```
+
+### Verification
+
+Verify structural integrity of indexed documents:
+
+```bash
+python -m vectorless.indexing.verify --granularity pasal
+python -m vectorless.indexing.verify --all                    # all 3 granularities + cross-compare
+python -m vectorless.indexing.verify --granularity pasal --doc-id uu-20-2025
+python -m vectorless.indexing.verify --granularity pasal --json
 ```
 
 ---

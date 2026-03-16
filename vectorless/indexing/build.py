@@ -24,7 +24,8 @@ load_dotenv()
 
 from .parser import (parse_legal_pdf, parse_penjelasan, _attach_penjelasan,
                      extract_pages, clean_page_text, find_penjelasan_page,
-                     _iter_leaves)
+                     _iter_leaves, _ayat_split_leaves, _deep_split_leaves,
+                     _strip_ocr_headers)
 
 DATA_RAW = Path("data/raw")
 REGISTRY_PATH = DATA_RAW / "registry.json"
@@ -205,6 +206,69 @@ GRANULARITY_INDEX_MAP = {
 }
 
 
+def _resplit_from_pasal(granularity: str, doc_id: str | None, force: bool):
+    """Re-split pasal index into finer granularity without re-parsing PDF or calling LLM."""
+    import copy
+
+    pasal_dir = GRANULARITY_INDEX_MAP["pasal"]
+    target_dir = GRANULARITY_INDEX_MAP[granularity]
+    split_fn = _ayat_split_leaves if granularity == "ayat" else _deep_split_leaves
+
+    print(f"Re-splitting from pasal index -> {granularity}  |  Output: {target_dir}  |  Force: {'ON' if force else 'OFF'}")
+
+    pasal_files = sorted(pasal_dir.rglob("*.json"))
+    pasal_files = [f for f in pasal_files if f.name != "catalog.json"]
+
+    if not pasal_files:
+        print(f"ERROR: No pasal index files found in {pasal_dir}")
+        sys.exit(1)
+
+    success, skipped = 0, 0
+    t_start = time.time()
+
+    for pf in pasal_files:
+        with open(pf, encoding="utf-8") as f:
+            doc = json.load(f)
+
+        did = doc["doc_id"]
+        if doc_id and did != doc_id:
+            continue
+
+        # Output path mirrors pasal structure
+        rel = pf.relative_to(pasal_dir)
+        out_path = target_dir / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if out_path.exists() and not force:
+            skipped += 1
+            continue
+
+        # Deep copy structure, re-split, strip headers
+        structure = copy.deepcopy(doc["structure"])
+        structure = split_fn(structure)
+        _strip_ocr_headers(structure)
+
+        doc["structure"] = structure
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+
+        leaves = sum(1 for _ in _iter_leaves(structure))
+        print(f"  {did:30s}  {leaves:5d} leaves -> {out_path}")
+        success += 1
+
+    # Rebuild catalog
+    print(f"\nBuilding catalog...")
+    catalog = build_catalog(target_dir)
+    catalog_path = target_dir / "catalog.json"
+    with open(catalog_path, "w", encoding="utf-8") as f:
+        json.dump(catalog, f, ensure_ascii=False, indent=2)
+    print(f"Catalog: {len(catalog)} documents -> {catalog_path}")
+
+    elapsed = time.time() - t_start
+    print(f"\nDone: {success} re-split, {skipped} skipped  |  {elapsed:.1f}s total (no LLM)")
+
+
 def main():
     """Entry point. Parses CLI args and runs the indexing pipeline."""
     ap = argparse.ArgumentParser(description="Build structural index from scraped legal PDFs")
@@ -213,9 +277,19 @@ def main():
     ap.add_argument("--no-llm", action="store_true", help="Skip Gemini LLM cleanup (dev/testing only, reduces index quality)")
     ap.add_argument("--doc-id", type=str, help="Index a single document by doc_id")
     ap.add_argument("--force", action="store_true", help="Re-index even if output exists")
+    ap.add_argument("--from-pasal", action="store_true",
+                    help="Re-split from existing pasal index (no PDF parsing, no LLM). Only for ayat/full_split.")
     args = ap.parse_args()
 
     granularity = args.granularity
+
+    if args.from_pasal:
+        if granularity == "pasal":
+            print("ERROR: --from-pasal only works with ayat or full_split granularity")
+            sys.exit(1)
+        _resplit_from_pasal(granularity, args.doc_id, args.force)
+        return
+
     data_index = GRANULARITY_INDEX_MAP[granularity]
     use_llm = not args.no_llm
     print(f"Granularity: {granularity}  |  Output: {data_index}  |  LLM cleanup {'ON' if use_llm else 'OFF (--no-llm)'}  |  Force: {'ON' if args.force else 'OFF'}")

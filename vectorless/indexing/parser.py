@@ -1459,6 +1459,31 @@ def _apply_llm_cleanup(output_nodes: list[dict],
     if verbose:
         print(f"       Cleaned {len(cleaned)} nodes.")
 
+_OCR_HEADER_PATTERNS = [
+    # Multi-line "PRESIDEN\nREPUBLIK INDONESIA" (clean version, post-LLM)
+    re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
+    # Single-line variant
+    re.compile(r'^PRESIDEN\s+REPUBLIK\s+INDONESIA\s*$', re.MULTILINE),
+    # Footer patterns
+    re.compile(r'^LEMBARAN\s+NEGARA\s+REPUBLIK\s+INDONESIA.*$', re.MULTILINE),
+    re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
+]
+
+
+def _strip_ocr_headers(nodes: list[dict]):
+    """Strip residual PDF header/footer text from all leaf node texts in-place."""
+    for node in nodes:
+        if "nodes" in node and node["nodes"]:
+            _strip_ocr_headers(node["nodes"])
+        elif "text" in node:
+            text = node["text"]
+            for pat in _OCR_HEADER_PATTERNS:
+                text = pat.sub('', text)
+            # Clean up extra blank lines left behind
+            text = re.sub(r'\n{3,}', '\n\n', text).strip()
+            node["text"] = text
+
+
 # ============================================================
 # 7. MAIN PIPELINE
 # ============================================================
@@ -1634,6 +1659,9 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         output_nodes = _ayat_split_leaves(output_nodes)
     elif granularity == "full_split":
         output_nodes = _deep_split_leaves(output_nodes)
+
+    # Final pass: strip residual OCR header/footer leaks from all leaf texts
+    _strip_ocr_headers(output_nodes)
 
     # Store unmatched penjelasan at doc level for retrieval agent fallback.
     # With perubahan support, amended Pasals are now leaf nodes and should
