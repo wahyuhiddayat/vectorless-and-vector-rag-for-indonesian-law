@@ -24,12 +24,98 @@ from pathlib import Path
 # 1. TEXT EXTRACTION & CLEANING
 # ============================================================
 
+def _detect_two_columns(blocks: list[dict], page_width: float,
+                        is_landscape: bool = False) -> list[dict]:
+    """
+    Detect two-column gazette layout and reorder blocks for correct reading order.
+
+    Indonesian gazette PDFs (Lembaran Negara) use two-column landscape layout.
+    Column detection is restricted to landscape pages (width > height) to avoid
+    false positives on regular portrait PDFs where blocks may incidentally
+    straddle the midpoint. For portrait pages, blocks are sorted by (y, x)
+    which is still an improvement over PyMuPDF's unsorted default.
+
+    Returns blocks in correct reading order.
+    """
+    if len(blocks) < 4 or not is_landscape:
+        return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
+
+    # Two-column detection: only for landscape gazette pages.
+    # Landscape pages (width > height) are gazette (Lembaran Negara) format
+    # with left/right columns that need special handling.
+    midpoint = page_width / 2
+
+    # Classify each block into exactly one column using its center x-coordinate.
+    left = []
+    right = []
+    for b in blocks:
+        center_x = (b["x0"] + b["x1"]) / 2
+        if center_x < midpoint:
+            left.append(b)
+        else:
+            right.append(b)
+
+    # Wide blocks span >60% of page width (e.g. full-width headers/titles)
+    wide_blocks = [b for b in blocks if (b["x1"] - b["x0"]) > page_width * 0.6]
+
+    # Two-column: both sides have content, and most blocks are not full-width
+    if len(left) >= 3 and len(right) >= 3 and len(wide_blocks) < len(blocks) * 0.3:
+        left_sorted = sorted(left, key=lambda b: (b["y0"], b["x0"]))
+        right_sorted = sorted(right, key=lambda b: (b["y0"], b["x0"]))
+        return left_sorted + right_sorted
+
+    # Fallback: sort by position
+    return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
+
+
+def _extract_page_text(page) -> str:
+    """
+    Extract text from a single PyMuPDF page with column-aware ordering.
+
+    Uses get_text("dict") to get bounding box coordinates for each text block,
+    detects two-column gazette layout, and reorders blocks so left column is
+    read fully before right column.
+    """
+    page_dict = page.get_text("dict")
+    page_width = page_dict.get("width", 595)  # A4 default fallback
+    raw_blocks = page_dict.get("blocks", [])
+
+    text_blocks = []
+    for b in raw_blocks:
+        if b.get("type") != 0:  # 0 = text block, 1 = image
+            continue
+        block_text = ""
+        for line in b.get("lines", []):
+            line_text = "".join(span["text"] for span in line.get("spans", []))
+            block_text += line_text + "\n"
+        if block_text.strip():
+            text_blocks.append({
+                "x0": b["bbox"][0], "y0": b["bbox"][1],
+                "x1": b["bbox"][2], "y1": b["bbox"][3],
+                "text": block_text,
+            })
+
+    if not text_blocks:
+        return ""
+
+    page_height = page_dict.get("height", 842)
+    is_landscape = page_width > page_height
+
+    ordered = _detect_two_columns(text_blocks, page_width, is_landscape=is_landscape)
+    return "".join(b["text"] for b in ordered)
+
+
 def extract_pages(pdf_path: str) -> list[dict]:
-    """Extract text from each page of a PDF using PyMuPDF."""
+    """Extract text from each page of a PDF using PyMuPDF.
+
+    Uses column-aware extraction to handle two-column gazette PDFs
+    (Lembaran Negara format) where PyMuPDF's default extraction reads
+    across columns instead of reading each column top-to-bottom.
+    """
     doc = fitz.open(pdf_path)
     pages = []
     for i, page in enumerate(doc):
-        text = page.get_text() or ""
+        text = _extract_page_text(page)
         pages.append({
             "page_num": i + 1,  # 1-indexed
             "raw_text": text,
