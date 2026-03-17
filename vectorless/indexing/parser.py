@@ -246,22 +246,26 @@ def find_penjelasan_page(pages: list[dict]) -> int | None:
 
 def find_closing_page(pages: list[dict]) -> int | None:
     """
-    Detect the closing page (pengesahan) — contains 'Disahkan di Jakarta'
-    or 'Agar setiap orang mengetahuinya'.
+    Detect the closing page (pengesahan).
+    UU uses 'Disahkan di Jakarta', PP/Perpres uses 'Ditetapkan di Jakarta'.
     This marks the end of the main body.
     """
     for page in pages:
         text = page["raw_text"]
-        if re.search(r'Disahkan di Jakarta|Agar setiap orang mengetahuinya', text):
+        if re.search(r'Di(?:sahkan|tetapkan) di Jakarta|Agar setiap orang mengetahuinya', text):
             return page["page_num"]
     return None
 
 def detect_perubahan(pages: list[dict]) -> bool:
     """
-    Detect if a law is a Perubahan (amendment) UU.
+    Detect if a law is a Perubahan (amendment) UU/PP/Perpres.
 
-    Checks the law's title (between TENTANG and DENGAN RAHMAT on page 1)
-    for keywords "PERUBAHAN" or "PENYESUAIAN".
+    Checks the law's title (between TENTANG and DENGAN RAHMAT) for keywords
+    "PERUBAHAN" or "PENYESUAIAN".
+
+    Scans first 3 pages because some PDFs have garbled page ordering or
+    the title spans multiple pages. Uses relaxed whitespace matching to
+    handle OCR that concatenates words (e.g. "TENTANGPENYESUAIAN").
 
     Amendment UUs use Roman numeral articles (Pasal I, Pasal II) per UU 12/2011
     convention. Arabic-numbered Pasals inside are quoted text from the amended law.
@@ -269,29 +273,47 @@ def detect_perubahan(pages: list[dict]) -> bool:
     if not pages:
         return False
 
-    # Extract the title from page 1 (between "TENTANG" and "DENGAN RAHMAT")
-    # Note: We don't use Roman Pasal detection (Signal 2) because PyMuPDF
-    # often renders "Pasal 1" as "Pasal I" due to font encoding, causing
-    # false positives in every UU.
-    p1 = pages[0]["raw_text"]
-    title_m = re.search(r'TENTANG\s+(.+?)DENGAN\s+RAHMAT', p1,
-                        re.DOTALL | re.IGNORECASE)
-    if not title_m:
-        return False
+    # Note: We don't use Roman Pasal detection because PyMuPDF often renders
+    # "Pasal 1" as "Pasal I" due to font encoding, causing false positives.
 
-    title_text = title_m.group(1)
+    # Scan first 3 pages for the title (handles garbled page order)
+    for page in pages[:3]:
+        text = page["raw_text"]
+        # Use \s* after TENTANG to match OCR without spaces
+        title_m = re.search(r'TENTANG\s*(.+?)DENGAN\s+RAHMAT', text,
+                            re.DOTALL | re.IGNORECASE)
+        if not title_m:
+            continue
 
-    # Signal 1: explicit "PERUBAHAN" or "PENYESUAIAN"
-    if re.search(r'PERUBAHAN|YESUAIAN', title_text, re.IGNORECASE):
-        return True
+        title_text = title_m.group(1)
 
-    # Signal 2: "ATAS UNDANG-UNDANG" / "ATAS PERATURAN" pattern.
-    # Catches OCR drops like "TENTANG KETIGA ATAS UNDANG-UNDANG NOMOR 8..."
-    # where "PERUBAHAN" was lost. Regular UU titles never have this pattern.
-    if re.search(r'ATAS\s+UNDANG|ATAS\s+PERATURAN', title_text, re.IGNORECASE):
-        return True
+        # Signal 1: explicit "PERUBAHAN" or "PENYESUAIAN"
+        if re.search(r'PERUBAHAN|YESUAIAN', title_text, re.IGNORECASE):
+            return True
+
+        # Signal 2: "ATAS UNDANG-UNDANG" / "ATAS PERATURAN" pattern.
+        # Catches OCR drops where "PERUBAHAN" was lost.
+        if re.search(r'ATAS\s+UNDANG|ATAS\s+PERATURAN', title_text, re.IGNORECASE):
+            return True
 
     return False
+
+def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
+    """Detect if document is an omnibus law (e.g. Cipta Kerja).
+
+    Omnibus laws amend multiple existing laws, each with independent Pasal
+    numbering. Pasal validation is meaningless for these documents.
+    """
+    # Check title (between TENTANG and DENGAN RAHMAT) for omnibus keywords.
+    # Must be in title, not in preamble references to other laws.
+    for page in pages[:3]:
+        title_m = re.search(r'TENTANG\s*(.+?)DENGAN\s+RAHMAT', page["raw_text"],
+                            re.DOTALL | re.IGNORECASE)
+        if title_m and re.search(r'CIPTA\s*KERJA', title_m.group(1), re.IGNORECASE):
+            return True
+    # Heuristic: >500 Pasals is likely omnibus
+    pasal_count = sum(1 for e in elements if e["type"] == "pasal")
+    return pasal_count > 500
 
 def parse_penjelasan(pages: list[dict], penjelasan_page: int,
                      total_pages: int) -> dict:
@@ -1601,8 +1623,9 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     penjelasan_page = find_penjelasan_page(pages)
 
     # Body ends at whichever comes first: closing or penjelasan
-    if closing_page:
-        body_end = closing_page - 1
+    boundaries = [p for p in [closing_page, penjelasan_page] if p]
+    if boundaries:
+        body_end = min(boundaries) - 1
     else:
         body_end = total_pages
 
@@ -1631,8 +1654,11 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     if verbose:
         print(f"       Found: {type_counts} ({time.time() - t0:.1f}s)")
 
-    # Validate Pasal sequence
-    warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan)
+    # Validate Pasal sequence (skip for Perubahan and omnibus)
+    is_omnibus = detect_omnibus(pages, elements)
+    if verbose and is_omnibus:
+        print(f"       Detected as Omnibus law")
+    warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan or is_omnibus)
     for w in warnings:
         print(f"       {w}")
 
