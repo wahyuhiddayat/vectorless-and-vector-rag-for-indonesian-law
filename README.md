@@ -100,6 +100,28 @@ python -m vectorless.indexing.verify --granularity pasal --json
 
 Six retrieval strategies, each in its own file. All share the same data from `data/index_*/`.
 
+### Switching granularity
+
+All retrieval modules read from `data/index_pasal` by default. Switch granularity with the DATA_INDEX env var:
+
+```bash
+# Default (pasal)
+python -m vectorless.retrieval.bm25_flat "query"
+
+# Ayat-level index
+DATA_INDEX=data/index_ayat python -m vectorless.retrieval.bm25_flat "query"
+
+# Full-split index
+DATA_INDEX=data/index_full_split python -m vectorless.retrieval.hybrid "query"
+```
+
+For Python API usage, set the env var **before** importing:
+```python
+import os
+os.environ["DATA_INDEX"] = "data/index_ayat"
+from vectorless.retrieval.bm25_flat import retrieve  # picks up env var at import time
+```
+
 ### 3.1 BM25 Flat (single-stage keyword search)
 
 Searches ALL leaf nodes from ALL documents at once using BM25 scoring.
@@ -248,8 +270,8 @@ Requires `.env` at project root:
 GEMINI_API_KEY=your_api_key_here
 ```
 
-Install dependencies:
+Optional env vars:
 
-```bash
-pip install -r requirements.txt
-```
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `DATA_INDEX` | `data/index_pasal` | Which granularity index retrieval modules read from. Set to `data/index_ayat` or `data/index_full_split` to switch. |
