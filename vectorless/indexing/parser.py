@@ -1252,6 +1252,19 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     if menimbang_m:
         before_menimbang = cleaned[:menimbang_m.start()]
         after_menimbang = cleaned[menimbang_m.end():]
+        # Fix (Parser Fix 10): In some PDFs (e.g., perpu-2-2022, uu-1-2026), PyMuPDF
+        # block sorting by (y0, x0) places the narrow "Menimbang :" label block AFTER
+        # the bahwa item blocks in the sorted text, so "a. bahwa", "b. bahwa", etc.
+        # appear BEFORE the "Menimbang" keyword.  _split_preamble() then slices from
+        # menimbang_m.end(), silently discarding items a–d.
+        # Recovery: if "a. bahwa" appears in the prefix (before_menimbang), prepend
+        # the orphaned bahwa items to the front of after_menimbang.
+        bahwa_before_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', before_menimbang)
+        if bahwa_before_m:
+            after_menimbang = (
+                before_menimbang[bahwa_before_m.start():].lstrip('\n')
+                + after_menimbang
+            )
     else:
         # Fall back: find first "a. bahwa" or "a bahwa" pattern
         fallback_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', cleaned)
