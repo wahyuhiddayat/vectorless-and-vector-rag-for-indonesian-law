@@ -1197,6 +1197,29 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
         }
         if node.get("nodes"):
             clean["nodes"] = clean_tree_for_output(node["nodes"], pages)
+            # Fix (Parser Fix 11): pasal_roman nodes in perubahan UUs can have
+            # their own substantive text (e.g., ayats) before their first child
+            # element (BAB heading, Arabic Pasal, Angka). The standard leaf-only
+            # text extraction loses this content. Recover it by extracting the
+            # text between the node's start and the first child's start position.
+            if pages is not None and node.get("type") == "pasal_roman":
+                first_child = node["nodes"][0]
+                if first_child["start_index"] == node["start_index"]:
+                    # Child starts on the same page — extract up to child's char_offset
+                    own_end_page = node["start_index"]
+                    own_end_char = first_child.get("start_char_offset") or None
+                else:
+                    # Child starts on a later page — extract pages up to the page before it
+                    own_end_page = first_child["start_index"] - 1
+                    own_end_char = None
+                if own_end_page >= node["start_index"]:
+                    intro = _extract_node_text(
+                        pages, node["start_index"], own_end_page,
+                        start_char_offset=node.get("start_char_offset", 0),
+                        end_char_offset=own_end_char,
+                    )
+                    if intro.strip():
+                        clean["text"] = intro
         elif pages is not None:
             # Leaf node — embed text with intra-page slicing
             clean["text"] = _extract_node_text(
