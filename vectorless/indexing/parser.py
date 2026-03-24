@@ -620,7 +620,7 @@ def _clean_penjelasan_text(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-def _attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
+def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
     """
     Attach per-Pasal penjelasan to leaf nodes in the tree.
 
@@ -629,7 +629,7 @@ def _attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
     """
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            _attach_penjelasan(node["nodes"], pasal_dict)
+            attach_penjelasan(node["nodes"], pasal_dict)
         elif "text" in node:
             # Leaf node — try to match Pasal number
             # Extract number from title: "Pasal 5" → "5", "Pasal 119I" → "119I"
@@ -1174,11 +1174,11 @@ def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
 
     return moved_count
 
-def _iter_leaves(nodes: list[dict]):
+def iter_leaves(nodes: list[dict]):
     """Yield all leaf nodes from a tree (nodes without children)."""
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            yield from _iter_leaves(node["nodes"])
+            yield from iter_leaves(node["nodes"])
         else:
             yield node
 
@@ -1227,7 +1227,7 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
                 start_char_offset=node.get("start_char_offset", 0),
                 end_char_offset=node.get("end_char_offset"),
             )
-        # Propagate penjelasan if attached (set by _attach_penjelasan)
+        # Propagate penjelasan if attached (set by attach_penjelasan)
         if "penjelasan" in node:
             clean["penjelasan"] = node["penjelasan"]
         # Propagate source_angka for Pasals moved by BAB consolidation
@@ -1336,19 +1336,54 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         # reference laws with intermediate semicolons, e.g. "(Lembaran...;")
         # so we need the semicolon that ends the whole bahwa clause.
         # Search for semicolon followed by newline, then check what comes next.
+        def _strip_mengingat_prefix(text: str) -> str:
+            """Strip 'Mengingat :?' prefix — either at the start or within the
+            first 200 chars (handles OCR garbage like 'ban atas\\nMengingat\\n'
+            that can appear between the final bahwa semicolon and the refs).
+            Parser Fix 12 - Bug A (extended)."""
+            stripped = re.sub(r'^\s*Mengingat\s*:?\s*\n?\s*', '', text)
+            if stripped != text:
+                return stripped  # Found at start
+            kw_m = re.search(r'\bMengingat\b', text[:200])
+            if kw_m:
+                after_kw = text[kw_m.end():]
+                return re.sub(r'^\s*:?\s*\n?\s*', '', after_kw)
+            return text  # No keyword found — return unchanged
+
         for semi_m in re.finditer(r';\s*\n', after_last):
             split_pos = last_bahwa_end + semi_m.end()
             remaining = preamble_body[split_pos:]
-            # Check if remaining starts with legal references (Mengingat content)
-            # or is very short garbage (OCR noise before actual Mengingat)
+            remaining_stripped = _strip_mengingat_prefix(remaining)
+            # Skip if remaining starts at item 2+ — means item 1 is still within
+            # Menimbang and we haven't hit the real boundary yet. (Parser Fix 12)
+            if re.match(r'\s*[2-9]\d*[\.\s]+', remaining_stripped):
+                continue
             ref_m = re.match(
                 r'\s*(?:\d+[\.\s]+)?(?:Pasal|Undang|Peraturan)',
-                remaining,
+                remaining_stripped,
             )
             if ref_m:
                 menimbang_text = preamble_body[:split_pos].strip()
-                mengingat_text = remaining.strip()
+                mengingat_text = remaining_stripped.strip()
                 break
+
+        # Also try period-ending bahwa items (e.g. "...APBN 2026.\n1. Pasal 5...")
+        # where the last bahwa closes with "." instead of ";".
+        # Use stricter regex: must start at numbered item "1." to avoid false-
+        # positives from abbreviation periods mid-sentence. (Parser Fix 12 - Bug A)
+        if menimbang_text is None:
+            for period_m in re.finditer(r'\.\s*\n', after_last):
+                split_pos = last_bahwa_end + period_m.end()
+                remaining = preamble_body[split_pos:]
+                remaining_stripped = _strip_mengingat_prefix(remaining)
+                ref_m = re.match(
+                    r'\s*1[\.\s]+(?:Pasal|Undang|Peraturan)',
+                    remaining_stripped,
+                )
+                if ref_m:
+                    menimbang_text = preamble_body[:split_pos].strip()
+                    mengingat_text = remaining_stripped.strip()
+                    break
 
     # Strategy B: "Mengingat" keyword (only if Strategy A didn't find a split)
     if menimbang_text is None:
@@ -1373,6 +1408,10 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         mengingat_text = None
 
     # Step 5: Clean up and build children
+    # Strip trailing ghost "Mengingat" OCR keyword from Menimbang text — margin
+    # bleed can leave a lone "Mengingat" line at the very end of the section.
+    # (Parser Fix 12 - Bug B)
+    menimbang_text = re.sub(r'\s*\bMengingat\b\s*$', '', menimbang_text).strip()
     menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
     if not menimbang_text:
         return None
@@ -1388,14 +1427,29 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     ]
 
     if mengingat_text:
+        # Strip leading colon/whitespace OCR artifact (e.g. ": 1. Pasal..." →
+        # "1. Pasal...") that appears when "Mengingat :" label is on the same
+        # line as the first reference. (Parser Fix 12 - Fix 4)
+        mengingat_text = re.sub(r'^[\s:]+', '', mengingat_text)
+        # Strip trailing "Dengan Persetujuan Bersama..." boilerplate that appears
+        # in UU/Perpu between Mengingat and MEMUTUSKAN — procedural text with no
+        # retrieval value. Use fuzzy OCR match (e.g. "Persetqjuan") since
+        # OCR frequently garbles 'uj' → 'qj'. (Parser Fix 12 - Bug C)
+        dpr_m = re.search(r'\n[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
+        if dpr_m:
+            mengingat_text = mengingat_text[:dpr_m.start()]
+        # Strip ghost "Mengingat" OCR keyword lines from within Mengingat text.
+        # (Parser Fix 12 - Bug B)
+        mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
-        children.append({
-            "title": "Mengingat",
-            "node_id": "P002",
-            "start_index": start_page,
-            "end_index": end_page,
-            "text": mengingat_text,
-        })
+        if mengingat_text:
+            children.append({
+                "title": "Mengingat",
+                "node_id": "P002",
+                "start_index": start_page,
+                "end_index": end_page,
+                "text": mengingat_text,
+            })
 
     if menetapkan_text:
         menetapkan_text = re.sub(r'\n{3,}', '\n\n', menetapkan_text).strip()
@@ -1490,24 +1544,45 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     """
     prompt = LLM_CLEANUP_PROMPT + json.dumps(batch, ensure_ascii=False)
 
-    max_retries = 3
+    max_retries = 5
+    last_err: Exception | None = None
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
             )
+            last_err = None
             break
         except Exception as e:
+            last_err = e
             err_str = str(e).lower()
-            if ("rate" in err_str or "quota" in err_str or "429" in err_str) and attempt < max_retries - 1:
+            is_rate_limit = "rate" in err_str or "quota" in err_str or "429" in err_str
+            is_network = (
+                "timeout" in err_str or "timed out" in err_str
+                or "ssl" in err_str or "handshake" in err_str
+                or "connection" in err_str or "reset" in err_str
+                or "broken pipe" in err_str or "eof" in err_str
+            )
+            if (is_rate_limit or is_network) and attempt < max_retries - 1:
                 wait = 30 * (attempt + 1)
+                reason = "rate limited" if is_rate_limit else "network error"
                 if verbose:
                     _lbl = _label or f"{batch_idx + 1}/{total}"
-                    print(f"\n       Batch {_lbl}: rate limited, retrying in {wait}s...")
+                    print(f"\n       Batch {_lbl}: {reason} ({e.__class__.__name__}), retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                raise
+                # Soft-fail: return original texts so caller can continue with remaining batches
+                _lbl = _label or f"{batch_idx + 1}/{total}"
+                msg = f"batch {_lbl}: {e.__class__.__name__}: {e}"
+                if verbose:
+                    print(f"\n       Batch {_lbl}: failed after {attempt + 1} attempt(s) — keeping raw OCR text")
+                return batch, 0, 0, msg
+
+    if last_err is not None:
+        # Should not reach here, but guard anyway
+        _lbl = _label or f"{batch_idx + 1}/{total}"
+        return batch, 0, 0, f"batch {_lbl}: unexpected retry exit"
 
     # Track token usage
     usage = response.usage_metadata
@@ -1536,7 +1611,8 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
 
     return cleaned, input_tok, output_tok, None
 
-def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> tuple[dict[str, str], list[str]]:
+def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
+                      client=None) -> tuple[dict[str, str], list[str]]:
     """
     Clean OCR artifacts in texts using Gemini 2.5 Flash.
     Batches are processed in parallel for speed.
@@ -1545,6 +1621,9 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> tup
     Args:
         texts: list of (node_id, text) tuples
         verbose: print progress info
+        client: optional pre-built genai.Client (created fresh if not given). Pass a
+            per-doc client from the build loop so laptop-sleep SSL failures only kill
+            the current document, not all subsequent ones.
 
     Returns:
         (cleaned_dict, failures) where cleaned_dict maps node_id to cleaned text
@@ -1554,11 +1633,11 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> tup
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google import genai
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable is not set")
-
-    client = genai.Client(api_key=api_key)
+    if client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable is not set")
+        client = genai.Client(api_key=api_key, http_options={"timeout": 300})
 
     # Split into batches by character count
     batches: list[dict[str, str]] = []
@@ -1633,12 +1712,16 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> tup
 
     return results, failures
 
-def _apply_llm_cleanup(output_nodes: list[dict],
-                       penjelasan_data: dict | None = None,
-                       verbose: bool = True):
+def apply_llm_cleanup(output_nodes: list[dict],
+                      penjelasan_data: dict | None = None,
+                      verbose: bool = True,
+                      client=None):
     """
     Collect leaf node texts and penjelasan from the output tree,
     clean them with LLM, and replace texts in-place.
+
+    client: optional pre-built genai.Client. Passed through to llm_cleanup_texts()
+        so the build loop can provide a fresh per-doc client.
     """
     # Collect all leaf texts (nodes with "text" field)
     # Also collect penjelasan texts (skip trivial "Cukup jelas.")
@@ -1666,7 +1749,7 @@ def _apply_llm_cleanup(output_nodes: list[dict],
         return
 
     # Call LLM cleanup
-    cleaned, llm_failures = llm_cleanup_texts(texts_to_clean, verbose=verbose)
+    cleaned, llm_failures = llm_cleanup_texts(texts_to_clean, verbose=verbose, client=client)
 
     # Check for missing nodes
     expected_ids = {nid for nid, _ in texts_to_clean}
@@ -1697,6 +1780,8 @@ def _apply_llm_cleanup(output_nodes: list[dict],
 
     return llm_failures
 
+    return llm_failures
+
 _OCR_HEADER_PATTERNS = [
     # Multi-line "PRESIDEN\nREPUBLIK INDONESIA" (clean version, post-LLM)
     re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
@@ -1720,11 +1805,11 @@ _CLOSING_TEXT_RE = re.compile(
 )
 
 
-def _strip_ocr_headers(nodes: list[dict]):
+def strip_ocr_headers(nodes: list[dict]):
     """Strip residual PDF header/footer text from all leaf node texts in-place."""
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            _strip_ocr_headers(node["nodes"])
+            strip_ocr_headers(node["nodes"])
         elif "text" in node:
             text = node["text"]
             for pat in _OCR_HEADER_PATTERNS:
@@ -1882,8 +1967,8 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     penjelasan_data = None
     if penjelasan_page:
         penjelasan_data = parse_penjelasan(pages, penjelasan_page, total_pages)
-        _attach_penjelasan(output_nodes, penjelasan_data["pasal"])
-        matched = sum(1 for n in _iter_leaves(output_nodes) if n.get("penjelasan"))
+        attach_penjelasan(output_nodes, penjelasan_data["pasal"])
+        matched = sum(1 for n in iter_leaves(output_nodes) if n.get("penjelasan"))
         if verbose:
             print(f"       PENJELASAN: {len(penjelasan_data['pasal'])} pasal parsed, "
                   f"{matched} matched to tree nodes")
@@ -1897,7 +1982,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         if verbose:
             print(f"[6/{total_steps}] Cleaning text with Gemini 2.5 Flash...")
         t0 = time.time()
-        llm_failures = _apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
+        llm_failures = apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
         warnings.extend(llm_failures)
         llm_time = time.time() - t0
         if verbose:
@@ -1913,12 +1998,12 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
 
     # Sub-Pasal splitting based on requested granularity.
     if granularity == "ayat":
-        output_nodes = _ayat_split_leaves(output_nodes)
+        output_nodes = ayat_split_leaves(output_nodes)
     elif granularity == "full_split":
-        output_nodes = _deep_split_leaves(output_nodes)
+        output_nodes = deep_split_leaves(output_nodes)
 
     # Final pass: strip residual OCR header/footer leaks from all leaf texts
-    _strip_ocr_headers(output_nodes)
+    strip_ocr_headers(output_nodes)
 
     # Store unmatched penjelasan at doc level for retrieval agent fallback.
     # With perubahan support, amended Pasals are now leaf nodes and should
@@ -2114,7 +2199,7 @@ def _try_ayat_split(
     return sub_nodes
 
 
-def _ayat_split_leaves(nodes: list[dict]) -> list[dict]:
+def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
     """Walk the tree and split every leaf node into Ayat sub-nodes only.
 
     Does NOT recurse deeper into Huruf/Angka. If a Pasal has no Ayat markers,
@@ -2123,7 +2208,7 @@ def _ayat_split_leaves(nodes: list[dict]) -> list[dict]:
     result = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            node["nodes"] = _ayat_split_leaves(node["nodes"])
+            node["nodes"] = ayat_split_leaves(node["nodes"])
             result.append(node)
         elif "text" in node:
             sub_nodes = _try_ayat_split(
@@ -2242,7 +2327,7 @@ def _try_deep_split(
     return None
 
 
-def _deep_split_leaves(nodes: list[dict]) -> list[dict]:
+def deep_split_leaves(nodes: list[dict]) -> list[dict]:
     """Walk the tree and recursively split every leaf node to its deepest sub-structure.
 
     Tries Ayat → Huruf → Angka. If no sub-structure found, leaf stays unchanged.
@@ -2250,7 +2335,7 @@ def _deep_split_leaves(nodes: list[dict]) -> list[dict]:
     result = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            node["nodes"] = _deep_split_leaves(node["nodes"])
+            node["nodes"] = deep_split_leaves(node["nodes"])
             result.append(node)
         elif "text" in node:
             sub_nodes = _try_deep_split(
