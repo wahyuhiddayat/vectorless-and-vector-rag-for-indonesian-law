@@ -1475,12 +1475,19 @@ Rules:
 Input (JSON):
 """
 
-# Max chars per batch (~100K chars ≈ ~25K tokens). Smaller batches = more reliable
-# JSON output from Gemini. Speed comes from parallel processing, not larger batches.
-_LLM_BATCH_SIZE = 100_000
+# Max chars per batch (~50K chars ≈ ~12K tokens). Smaller batches = more reliable
+# JSON output from Gemini — large responses cause JSON truncation errors.
+# Speed comes from parallel processing, not larger batches.
+_LLM_BATCH_SIZE = 50_000
 
-def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool):
-    """Process a single batch through Gemini with retry on rate limit."""
+def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool,
+                   _label: str | None = None):
+    """Process a single batch through Gemini with retry on rate limit.
+
+    Returns (cleaned_dict, input_tokens, output_tokens, error_msg_or_None).
+    On JSON parse failure, error_msg_or_None is set and cleaned_dict falls back
+    to the original batch texts so callers can retry with smaller sub-batches.
+    """
     prompt = LLM_CLEANUP_PROMPT + json.dumps(batch, ensure_ascii=False)
 
     max_retries = 3
@@ -1496,7 +1503,8 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
             if ("rate" in err_str or "quota" in err_str or "429" in err_str) and attempt < max_retries - 1:
                 wait = 30 * (attempt + 1)
                 if verbose:
-                    print(f"\n       Batch {batch_idx + 1}: rate limited, retrying in {wait}s...")
+                    _lbl = _label or f"{batch_idx + 1}/{total}"
+                    print(f"\n       Batch {_lbl}: rate limited, retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 raise
@@ -1505,8 +1513,9 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     usage = response.usage_metadata
     input_tok = usage.prompt_token_count or 0
     output_tok = usage.candidates_token_count or 0
+    _lbl = _label or f"{batch_idx + 1}/{total}"
     if verbose:
-        print(f"       Batch {batch_idx + 1}/{total} done: "
+        print(f"       Batch {_lbl} done: "
               f"{input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
 
     # Parse JSON from response
@@ -1519,22 +1528,28 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     try:
         cleaned = json.loads(response_text)
     except json.JSONDecodeError as e:
-        print(f"       WARNING: Failed to parse LLM response for batch {batch_idx + 1}: {e}")
-        cleaned = batch  # Fall back to original texts
+        _lbl = _label or f"{batch_idx + 1}/{total}"
+        msg = f"batch {_lbl}: {e}"
+        if verbose:
+            print(f"       WARNING: Failed to parse LLM response for {msg}")
+        return batch, input_tok, output_tok, msg  # Fall back to original texts
 
-    return cleaned, input_tok, output_tok
+    return cleaned, input_tok, output_tok, None
 
-def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> dict[str, str]:
+def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> tuple[dict[str, str], list[str]]:
     """
     Clean OCR artifacts in texts using Gemini 2.5 Flash.
     Batches are processed in parallel for speed.
+    Failed batches are retried by splitting in half (handles Gemini JSON truncation).
 
     Args:
         texts: list of (node_id, text) tuples
         verbose: print progress info
 
     Returns:
-        dict mapping node_id to cleaned text
+        (cleaned_dict, failures) where cleaned_dict maps node_id to cleaned text
+        and failures is a list of error messages for batches that could not be parsed
+        even after retry — those nodes keep their original OCR text.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google import genai
@@ -1567,6 +1582,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> dic
 
     # Process batches in parallel
     results: dict[str, str] = {}
+    failed_batches: list[tuple[int, dict[str, str]]] = []
     total_input_tokens = 0
     total_output_tokens = 0
 
@@ -1576,16 +1592,46 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True) -> dic
             for i, batch in enumerate(batches)
         }
         for future in as_completed(futures):
-            cleaned, input_tok, output_tok = future.result()
+            batch_i = futures[future]
+            cleaned, input_tok, output_tok, error = future.result()
             results.update(cleaned)
             total_input_tokens += input_tok
             total_output_tokens += output_tok
+            if error:
+                failed_batches.append((batch_i, batches[batch_i]))
+
+    # Retry failed batches by splitting in half (handles Gemini JSON truncation).
+    # When Gemini truncates a large JSON response, a smaller batch is more likely
+    # to complete successfully.
+    failures: list[str] = []
+    if failed_batches:
+        if verbose:
+            print(f"       Retrying {len(failed_batches)} failed batch(es) split in half...")
+        for batch_i, failed_batch in failed_batches:
+            items = list(failed_batch.items())
+            mid = max(1, len(items) // 2)
+            for sub_idx, sub_items in enumerate([items[:mid], items[mid:]]):
+                if not sub_items:
+                    continue
+                sub_batch = dict(sub_items)
+                sub_label = f"{batch_i + 1}{'ab'[sub_idx]}"
+                sub_cleaned, in_tok, out_tok, sub_err = _process_batch(
+                    client, sub_batch, batch_i, len(batches), verbose, _label=sub_label
+                )
+                results.update(sub_cleaned)
+                total_input_tokens += in_tok
+                total_output_tokens += out_tok
+                if sub_err:
+                    failures.append(
+                        f"LLM batch {batch_i + 1}{'ab'[sub_idx]} failed after retry: "
+                        f"{len(sub_batch)} node(s) kept as raw OCR text"
+                    )
 
     if verbose:
         print(f"       Total tokens: {total_input_tokens + total_output_tokens:,} "
               f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
 
-    return results
+    return results, failures
 
 def _apply_llm_cleanup(output_nodes: list[dict],
                        penjelasan_data: dict | None = None,
@@ -1620,7 +1666,7 @@ def _apply_llm_cleanup(output_nodes: list[dict],
         return
 
     # Call LLM cleanup
-    cleaned = llm_cleanup_texts(texts_to_clean, verbose=verbose)
+    cleaned, llm_failures = llm_cleanup_texts(texts_to_clean, verbose=verbose)
 
     # Check for missing nodes
     expected_ids = {nid for nid, _ in texts_to_clean}
@@ -1648,6 +1694,8 @@ def _apply_llm_cleanup(output_nodes: list[dict],
 
     if verbose:
         print(f"       Cleaned {len(cleaned)} nodes.")
+
+    return llm_failures
 
 _OCR_HEADER_PATTERNS = [
     # Multi-line "PRESIDEN\nREPUBLIK INDONESIA" (clean version, post-LLM)
@@ -1849,7 +1897,8 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         if verbose:
             print(f"[6/{total_steps}] Cleaning text with Gemini 2.5 Flash...")
         t0 = time.time()
-        _apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
+        llm_failures = _apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
+        warnings.extend(llm_failures)
         llm_time = time.time() - t0
         if verbose:
             print(f"       LLM cleanup took {llm_time:.1f}s")
