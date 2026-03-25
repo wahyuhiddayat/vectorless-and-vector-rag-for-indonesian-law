@@ -296,6 +296,8 @@ def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
     pasal_count = sum(1 for e in elements if e["type"] == "pasal")
     return pasal_count > 500
 
+# Contract: pages items must include page_num/raw_text/clean_text.
+# Returns {"umum": str, "pasal": {pasal_number: explanation_text}}.
 def parse_penjelasan(pages: list[dict], penjelasan_page: int,
                      total_pages: int) -> dict:
     """Parse the PENJELASAN section and return {"umum": str, "pasal": {number: text}}."""
@@ -375,6 +377,65 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
 def _fix_penjelasan_columns(text: str) -> str:
     """Rebuild vertically-read OCR columns in PASAL DEMI PASAL.
     Converts stacked "Pasal\\nPasal\\n51\\n52" into "Pasal 51\\nPasal 52"."""
+    def _consume_stacked_pasal(lines: list[str], start_idx: int) -> tuple[list[str] | None, int]:
+        """Consume a stacked "Pasal" block and return rebuilt lines + next index."""
+        pasal_count = 0
+        j = start_idx
+        while j < len(lines) and re.match(r'^Pasa[l1]\s*$', lines[j].strip()):
+            pasal_count += 1
+            j += 1
+
+        collected: list[tuple[str, int]] = []
+        k = j
+        while k < len(lines) and len(collected) < pasal_count:
+            num_line = lines[k].strip()
+            num_m = re.match(r'^(\d+[A-Z]?)\s*$', num_line)
+            if num_m:
+                collected.append((num_m.group(1), k))
+                k += 1
+            elif collected:
+                k += 1
+            else:
+                break
+
+        if not collected:
+            return None, start_idx + 1
+
+        rebuilt: list[str] = []
+        for idx, (num, start_k) in enumerate(collected):
+            rebuilt.append(f"Pasal {num}")
+            end_k = collected[idx + 1][1] if idx + 1 < len(collected) else k
+            for exp_line_idx in range(start_k + 1, end_k):
+                rebuilt.append(lines[exp_line_idx])
+        return rebuilt, k
+
+    def _consume_bare_number_sequence(lines: list[str], start_idx: int) -> tuple[list[str] | None, int]:
+        """Consume bare-number Pasal continuation block and return rebuilt lines + next index."""
+        j = start_idx
+        bare_entries: list[tuple[str, int]] = []
+        while j < len(lines):
+            num_m = re.match(r'^(\d+)\s*$', lines[j].strip())
+            if num_m:
+                bare_entries.append((num_m.group(1), j))
+                j += 1
+            elif lines[j].strip().lower().startswith('cukup jelas') and bare_entries:
+                j += 1
+            elif bare_entries and not lines[j].strip():
+                j += 1
+            else:
+                break
+
+        if len(bare_entries) < 2:
+            return None, start_idx + 1
+
+        rebuilt: list[str] = []
+        for idx, (num, start_j) in enumerate(bare_entries):
+            rebuilt.append(f"Pasal {num}")
+            end_j = bare_entries[idx + 1][1] if idx + 1 < len(bare_entries) else j
+            for exp_idx in range(start_j + 1, end_j):
+                rebuilt.append(lines[exp_idx])
+        return rebuilt, j
+
     lines = text.split('\n')
     result = []
     i = 0
@@ -384,81 +445,22 @@ def _fix_penjelasan_columns(text: str) -> str:
 
         # Detect stacked "Pasal" lines (N consecutive lines that are just "Pasal")
         if re.match(r'^Pasa[l1]\s*$', stripped):
-            # Count how many consecutive "Pasal" lines
-            pasal_count = 0
-            j = i
-            while j < len(lines) and re.match(r'^Pasa[l1]\s*$', lines[j].strip()):
-                pasal_count += 1
-                j += 1
-
-            # Now collect the next entries: each should be a number possibly
-            # followed by explanation lines until the next bare number
-            collected = []
-            k = j
-            while k < len(lines) and len(collected) < pasal_count:
-                num_line = lines[k].strip()
-                num_m = re.match(r'^(\d+[A-Z]?)\s*$', num_line)
-                if num_m:
-                    collected.append((num_m.group(1), k))
-                    k += 1
-                else:
-                    # This line is explanation text for the previous number
-                    if collected:
-                        k += 1
-                    else:
-                        break  # Can't pair, bail out
-
-            if collected:
-                # Rebuild: pair each number with "Pasal" and emit with
-                # explanation text between this number and the next
-                for idx, (num, start_k) in enumerate(collected):
-                    result.append(f"Pasal {num}")
-                    # Add explanation lines between this number and the next
-                    if idx + 1 < len(collected):
-                        end_k = collected[idx + 1][1]
-                    else:
-                        end_k = k
-                    for exp_line_idx in range(start_k + 1, end_k):
-                        result.append(lines[exp_line_idx])
-                i = k
+            rebuilt, next_i = _consume_stacked_pasal(lines, i)
+            if rebuilt is not None:
+                result.extend(rebuilt)
+                i = next_i
                 continue
-            else:
-                # Failed to pair, keep original lines
-                result.append(lines[i])
-                i += 1
-                continue
+            result.append(lines[i])
+            i = next_i
+            continue
 
         # Detect bare numbers on their own line (page-break continuation)
         # Only treat as Pasal if followed by "Cukup jelas." or another bare number
         elif re.match(r'^(\d+)\s*$', stripped):
-            # Look ahead to see if this is a sequence of bare Pasal numbers
-            # Pattern: "59\nCukup jelas.\n60\nCukup jelas.\n..."
-            j = i
-            bare_entries = []
-            while j < len(lines):
-                num_m = re.match(r'^(\d+)\s*$', lines[j].strip())
-                if num_m:
-                    bare_entries.append((num_m.group(1), j))
-                    j += 1
-                elif lines[j].strip().lower().startswith('cukup jelas') and bare_entries:
-                    j += 1  # Skip the "Cukup jelas." line
-                elif bare_entries and not lines[j].strip():
-                    j += 1  # Skip blank lines
-                else:
-                    break
-
-            if len(bare_entries) >= 2:
-                # Bare number sequence; prefix with "Pasal"
-                for idx, (num, start_j) in enumerate(bare_entries):
-                    result.append(f"Pasal {num}")
-                    # Add explanation text between this and next bare number
-                    if idx + 1 < len(bare_entries):
-                        end_j = bare_entries[idx + 1][1]
-                    else:
-                        end_j = j
-                    for exp_idx in range(start_j + 1, end_j):
-                        result.append(lines[exp_idx])
-                i = j
+            rebuilt, next_i = _consume_bare_number_sequence(lines, i)
+            if rebuilt is not None:
+                result.extend(rebuilt)
+                i = next_i
                 continue
 
         result.append(lines[i])
@@ -605,6 +607,125 @@ ANGKA_PATTERN = re.compile(
     re.MULTILINE
 )
 
+def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[dict]:
+    """Detect raw structural elements from one page and return unsorted items."""
+    page_elements: list[dict] = []
+
+    if is_perubahan:
+        # Perubahan UUs: detect Roman numeral Pasal as root-level containers
+        # (Pasal I, II, III, ...) at level 0 (above BAB).
+        for m in PASAL_ROMAN.finditer(text):
+            roman_str = m.group(1).strip()
+            arabic_val = roman_to_int(roman_str)
+            if arabic_val is None:
+                continue
+            page_elements.append({
+                "type": "pasal_roman",
+                "level": LEVEL_MAP["pasal_roman"],
+                "number": roman_str,
+                "title": f"Pasal {roman_str}",
+                "page_num": page_num,
+                "char_offset": m.start(),
+            })
+
+        # Detect Angka (numbered amendment instructions) inside Pasal I.
+        # These are the primary structural items: "1. Ketentuan Pasal 1 diubah..."
+        for m in ANGKA_PATTERN.finditer(text):
+            angka_num = m.group(1)
+            instruction = m.group(2).strip()
+            title_text = instruction[:80] + ("..." if len(instruction) > 80 else "")
+            page_elements.append({
+                "type": "angka",
+                "level": LEVEL_MAP["angka"],
+                "number": angka_num,
+                "title": f"Angka {angka_num} — {title_text}",
+                "page_num": page_num,
+                "char_offset": m.start(),
+            })
+
+    # Normal element detection (runs for both regular and perubahan UUs)
+    for m in PATTERNS["bab"].finditer(text):
+        heading_text = _clean_heading_title(m.group(2).strip())
+        page_elements.append({
+            "type": "bab",
+            "level": LEVEL_MAP["bab"],
+            "number": m.group(1).strip(),
+            "title": f"BAB {m.group(1).strip()} - {heading_text}",
+            "page_num": page_num,
+            "char_offset": m.start(),
+        })
+
+    for m in PATTERNS["bagian"].finditer(text):
+        heading_text = _clean_heading_title(m.group(2).strip())
+        page_elements.append({
+            "type": "bagian",
+            "level": LEVEL_MAP["bagian"],
+            "number": m.group(1).strip(),
+            "title": f"Bagian {m.group(1).strip()} - {heading_text}",
+            "page_num": page_num,
+            "char_offset": m.start(),
+        })
+
+    for m in PATTERNS["paragraf"].finditer(text):
+        raw_num = m.group(1).strip()
+        roman_val = roman_to_int(raw_num)
+        num = str(roman_val) if roman_val is not None else raw_num
+        heading_text = _clean_heading_title(m.group(2).strip())
+        page_elements.append({
+            "type": "paragraf",
+            "level": LEVEL_MAP["paragraf"],
+            "number": num,
+            "title": f"Paragraf {num} - {heading_text}",
+            "page_num": page_num,
+            "char_offset": m.start(),
+        })
+
+    for m in PATTERNS["pasal"].finditer(text):
+        raw = m.group(1).strip()
+        pasal_num, suffix = _parse_pasal_number(raw)
+        if pasal_num is None:
+            continue
+        # Skip cross-references in body text (not true section headings).
+        preceding = text[:m.start()].rstrip()
+        if preceding:
+            last_word = preceding.split()[-1].lower().rstrip('.,;:)')
+            if last_word in _CROSS_REF_PRECEDING:
+                continue
+        page_elements.append({
+            "type": "pasal",
+            "level": LEVEL_MAP["pasal"],
+            "number": f"{pasal_num}{suffix}",
+            "title": f"Pasal {pasal_num}{suffix}",
+            "page_num": page_num,
+            "char_offset": m.start(),
+        })
+
+    return page_elements
+
+def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
+    """Deduplicate and filter sorted elements while preserving original rules."""
+    deduped = []
+    roman_positions = {(e["page_num"], e["char_offset"])
+                       for e in elements if e["type"] == "pasal_roman"}
+    first_roman = next(((e["page_num"], e["char_offset"])
+                        for e in elements if e["type"] == "pasal_roman"), None)
+
+    for elem in elements:
+        if elem["type"] == "angka" and first_roman:
+            if (elem["page_num"], elem["char_offset"]) < first_roman:
+                continue
+        if elem["type"] == "pasal" and (elem["page_num"], elem["char_offset"]) in roman_positions:
+            continue
+        if deduped and elem["type"] == "pasal" and deduped[-1]["type"] == "pasal":
+            if (elem["number"] == deduped[-1]["number"]
+                    and elem["page_num"] - deduped[-1]["page_num"] <= 1):
+                continue
+        deduped.append(elem)
+
+    return deduped
+
+# Contract: reads pages[*]["clean_text"], returns flat sorted element dicts.
+# Element keys are stable: type, level, number, title, page_num, char_offset.
 def detect_elements(pages: list[dict], body_end_page: int,
                     is_perubahan: bool = False) -> list[dict]:
     """Scan pages and return a flat list of structural elements (BAB, Bagian, Paragraf, Pasal) sorted by position."""
@@ -614,144 +735,13 @@ def detect_elements(pages: list[dict], body_end_page: int,
         # Skip pages after body ends (PENJELASAN, Lampiran, etc.)
         if page["page_num"] > body_end_page:
             continue
-
         text = page["clean_text"]
         page_num = page["page_num"]
-
-        if is_perubahan:
-            # Perubahan UUs: detect Roman numeral Pasal as root-level containers
-            # (Pasal I, II, III, ...) at level 0 (above BAB).
-            for m in PASAL_ROMAN.finditer(text):
-                roman_str = m.group(1).strip()
-                arabic_val = roman_to_int(roman_str)
-                if arabic_val is None:
-                    continue
-                elements.append({
-                    "type": "pasal_roman",
-                    "level": LEVEL_MAP["pasal_roman"],
-                    "number": roman_str,
-                    "title": f"Pasal {roman_str}",
-                    "page_num": page_num,
-                    "char_offset": m.start(),
-                })
-
-            # Detect Angka (numbered amendment instructions) inside Pasal I.
-            # These are the primary structural items: "1. Ketentuan Pasal 1 diubah..."
-            for m in ANGKA_PATTERN.finditer(text):
-                angka_num = m.group(1)
-                instruction = m.group(2).strip()
-                # Truncate long instructions for title
-                title_text = instruction[:80] + ("..." if len(instruction) > 80 else "")
-                elements.append({
-                    "type": "angka",
-                    "level": LEVEL_MAP["angka"],
-                    "number": angka_num,
-                    "title": f"Angka {angka_num} — {title_text}",
-                    "page_num": page_num,
-                    "char_offset": m.start(),
-                })
-            # Fall through to also detect normal elements (BAB, Bagian, Paragraf,
-            # Arabic Pasal) that nest under the Angka items via the tree builder.
-
-        # Normal element detection (runs for both regular and perubahan UUs)
-
-        # Detect BAB
-        for m in PATTERNS["bab"].finditer(text):
-            heading_text = _clean_heading_title(m.group(2).strip())
-            elements.append({
-                "type": "bab",
-                "level": LEVEL_MAP["bab"],
-                "number": m.group(1).strip(),
-                "title": f"BAB {m.group(1).strip()} - {heading_text}",
-                "page_num": page_num,
-                "char_offset": m.start(),
-            })
-
-        # Detect Bagian
-        for m in PATTERNS["bagian"].finditer(text):
-            heading_text = _clean_heading_title(m.group(2).strip())
-            elements.append({
-                "type": "bagian",
-                "level": LEVEL_MAP["bagian"],
-                "number": m.group(1).strip(),
-                "title": f"Bagian {m.group(1).strip()} - {heading_text}",
-                "page_num": page_num,
-                "char_offset": m.start(),
-            })
-
-        # Detect Paragraf
-        for m in PATTERNS["paragraf"].finditer(text):
-            raw_num = m.group(1).strip()
-            # Convert roman to arabic if needed
-            roman_val = roman_to_int(raw_num)
-            if roman_val is not None:
-                num = str(roman_val)
-            else:
-                num = raw_num
-            heading_text = _clean_heading_title(m.group(2).strip())
-            elements.append({
-                "type": "paragraf",
-                "level": LEVEL_MAP["paragraf"],
-                "number": num,
-                "title": f"Paragraf {num} - {heading_text}",
-                "page_num": page_num,
-                "char_offset": m.start(),
-            })
-
-        # Detect Pasal
-        for m in PATTERNS["pasal"].finditer(text):
-            raw = m.group(1).strip()
-            pasal_num, suffix = _parse_pasal_number(raw)
-            if pasal_num is None:
-                continue  # Not a valid Pasal number
-            # Skip cross-references: if the word right before "Pasal X" is a
-            # preposition/conjunction (e.g. "dimaksud dalam\nPasal 76D"), this
-            # is a reference inside body text, not a section heading.
-            preceding = text[:m.start()].rstrip()
-            if preceding:
-                last_word = preceding.split()[-1].lower().rstrip('.,;:)')
-                if last_word in _CROSS_REF_PRECEDING:
-                    continue
-            title = f"Pasal {pasal_num}{suffix}"
-            elements.append({
-                "type": "pasal",
-                "level": LEVEL_MAP["pasal"],
-                "number": f"{pasal_num}{suffix}",
-                "title": title,
-                "page_num": page_num,
-                "char_offset": m.start(),
-            })
+        elements.extend(_detect_page_elements(text, page_num, is_perubahan))
 
     # Sort by page_num, then char_offset
     elements.sort(key=lambda e: (e["page_num"], e["char_offset"]))
-
-    # Deduplicate and filter
-    deduped = []
-    # Build set of Roman Pasal positions for overlap removal
-    roman_positions = {(e["page_num"], e["char_offset"])
-                       for e in elements if e["type"] == "pasal_roman"}
-    # Find first Pasal I position; Angka items before it are false positives
-    # (e.g., "1. Pasal 20, Pasal 21..." in the Mengingat/preamble section)
-    first_roman = next(((e["page_num"], e["char_offset"])
-                        for e in elements if e["type"] == "pasal_roman"), None)
-    for elem in elements:
-        # Skip Angka items that appear before Pasal I (preamble false positives)
-        if elem["type"] == "angka" and first_roman:
-            if (elem["page_num"], elem["char_offset"]) < first_roman:
-                continue
-        # Skip Arabic Pasal that overlaps with a Roman Pasal at the same position.
-        # Both regexes can match "Pasal I": Roman reads it as Roman numeral,
-        # Arabic reads "I" as OCR'd "1". Roman wins in perubahan UUs.
-        if elem["type"] == "pasal" and (elem["page_num"], elem["char_offset"]) in roman_positions:
-            continue
-        # Same Pasal number on adjacent pages = likely page-break continuation
-        if deduped and elem["type"] == "pasal" and deduped[-1]["type"] == "pasal":
-            if (elem["number"] == deduped[-1]["number"]
-                    and elem["page_num"] - deduped[-1]["page_num"] <= 1):
-                continue
-        deduped.append(elem)
-
-    return deduped
+    return _dedupe_detected_elements(elements)
 
 # ============================================================
 # 4. PASAL NUMBERING VALIDATION
@@ -814,6 +804,8 @@ def assign_page_boundaries(elements: list[dict], total_pages: int):
             elif elements[j]["page_num"] > elem["end_index"]:
                 break
 
+# Contract: accepts detect_elements() output and returns nested nodes.
+# Node keys are stable: title, type, number, page bounds, node_id, nodes.
 def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
     """Convert a flat element list into a nested BAB > Bagian > Pasal tree."""
     if not elements:
@@ -1019,26 +1011,75 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
 
 def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | None:
     """Split preamble into Menimbang, Mengingat, and Menetapkan sub-nodes; returns None on failure."""
-    # Step 1: Clean OCR noise while preserving Mengingat/Menetapkan keywords
-    # so they can be used as section boundaries first.
-    _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
-    noise_patterns = [
-        # "Mengingat\nMenetapkan" combo = OCR margin bleed (both in margin column)
-        re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*$', re.MULTILINE),
-        # PRESIDEN REPUBLIK INDONESIA header bleed
-        re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n\s*REP\S*\s+IND\S*\s*\n'),
-        re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n'),
-        # SALINAN/SATINAN watermark
-        re.compile(r'^\s*SAL[IT]NAN\s*\n', re.MULTILINE),
-        # Page numbers like "-2-", "-3-"
-        re.compile(r'^\s*-\d+-\s*\n', re.MULTILINE),
-        # Random OCR garbage (short all-caps nonsense, but NOT Mengingat/Menetapkan)
-        re.compile(r'^\s*(?!Mengingat|Menetapkan)[A-Z]{3,8}\s*\n', re.MULTILINE),
-    ]
-    cleaned = text
-    for pat in noise_patterns:
-        cleaned = pat.sub('\n', cleaned)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    def _clean_preamble_noise(raw_text: str) -> str:
+        """Remove common OCR margin/header noise while preserving split keywords."""
+        _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
+        noise_patterns = [
+            re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*$', re.MULTILINE),
+            re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n\s*REP\S*\s+IND\S*\s*\n'),
+            re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n'),
+            re.compile(r'^\s*SAL[IT]NAN\s*\n', re.MULTILINE),
+            re.compile(r'^\s*-\d+-\s*\n', re.MULTILINE),
+            re.compile(r'^\s*(?!Mengingat|Menetapkan)[A-Z]{3,8}\s*\n', re.MULTILINE),
+        ]
+        cleaned_text = raw_text
+        for pat in noise_patterns:
+            cleaned_text = pat.sub('\n', cleaned_text)
+        return re.sub(r'\n{3,}', '\n\n', cleaned_text).strip()
+
+    def _strip_mengingat_prefix(candidate: str) -> str:
+        """Strip 'Mengingat' prefix from start or within first 200 chars."""
+        stripped = re.sub(r'^\s*Mengingat\s*:?\s*\n?\s*', '', candidate)
+        if stripped != candidate:
+            return stripped
+        kw_m = re.search(r'\bMengingat\b', candidate[:200])
+        if kw_m:
+            after_kw = candidate[kw_m.end():]
+            return re.sub(r'^\s*:?\s*\n?\s*', '', after_kw)
+        return candidate
+
+    def _split_by_content_transition(body: str) -> tuple[str | None, str | None]:
+        """Try splitting Menimbang/Mengingat after final bahwa item punctuation."""
+        last_bahwa_end = None
+        for m in re.finditer(r'bahwa\s', body):
+            last_bahwa_end = m.end()
+        if not last_bahwa_end:
+            return None, None
+
+        after_last = body[last_bahwa_end:]
+        for semi_m in re.finditer(r';\s*\n', after_last):
+            split_pos = last_bahwa_end + semi_m.end()
+            remaining = body[split_pos:]
+            remaining_stripped = _strip_mengingat_prefix(remaining)
+            if re.match(r'\s*[2-9]\d*[\.\s]+', remaining_stripped):
+                continue
+            if re.match(r'\s*(?:\d+[\.\s]+)?(?:Pasal|Undang|Peraturan)', remaining_stripped):
+                return body[:split_pos].strip(), remaining_stripped.strip()
+
+        for period_m in re.finditer(r'\.\s*\n', after_last):
+            split_pos = last_bahwa_end + period_m.end()
+            remaining = body[split_pos:]
+            remaining_stripped = _strip_mengingat_prefix(remaining)
+            if re.match(r'\s*1[\.\s]+(?:Pasal|Undang|Peraturan)', remaining_stripped):
+                return body[:split_pos].strip(), remaining_stripped.strip()
+
+        return None, None
+
+    def _split_by_mengingat_keyword(body: str) -> tuple[str | None, str | None]:
+        """Fallback split using explicit Mengingat heading."""
+        mengingat_kw = re.search(r'\n\s*Mengingat\s*:?\s*\n', body)
+        if not mengingat_kw:
+            return None, None
+        return body[:mengingat_kw.start()].strip(), body[mengingat_kw.end():].strip()
+
+    def _split_by_first_pasal_ref(body: str) -> tuple[str | None, str | None]:
+        """Last-resort split using first legal reference line."""
+        mengingat_m = re.search(r'\n((?:\d+\.\s+)?Pasal\s+\d+)', body)
+        if not mengingat_m:
+            return None, None
+        return body[:mengingat_m.start()].strip(), body[mengingat_m.start():].strip()
+
+    cleaned = _clean_preamble_noise(text)
 
     # Step 2: Find Menimbang start
     menimbang_m = re.search(r'Menimbang\s*:?\s*(?:\n|(?=a[\.\s]))', cleaned)
@@ -1082,87 +1123,12 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     else:
         preamble_body = after_menimbang.strip()
 
-    # Step 4: Split Menimbang from Mengingat
-    # Priority: content-based detection first (most reliable), keyword fallback.
-    # OCR margin keywords ("Mengingat") can appear at wrong positions, so we
-    # prefer detecting the content transition after the last "bahwa" item.
-    menimbang_text = None
-    mengingat_text = None
-
-    # Strategy A: content transition after last "bahwa" semicolon
-    # Menimbang = "bahwa" items ending with ";", Mengingat = legal references
-    last_bahwa_end = None
-    for m in re.finditer(r'bahwa\s', preamble_body):
-        last_bahwa_end = m.end()
-
-    if last_bahwa_end:
-        after_last = preamble_body[last_bahwa_end:]
-        # Find the LAST semicolon in the final bahwa item (the item may
-        # reference laws with intermediate semicolons, e.g. "(Lembaran...;")
-        # so we need the semicolon that ends the whole bahwa clause.
-        # Search for semicolon followed by newline, then check what comes next.
-        def _strip_mengingat_prefix(text: str) -> str:
-            """Strip 'Mengingat' prefix from start or within first 200 chars,
-            handling OCR garbage that can appear before the references."""
-            stripped = re.sub(r'^\s*Mengingat\s*:?\s*\n?\s*', '', text)
-            if stripped != text:
-                return stripped  # Found at start
-            kw_m = re.search(r'\bMengingat\b', text[:200])
-            if kw_m:
-                after_kw = text[kw_m.end():]
-                return re.sub(r'^\s*:?\s*\n?\s*', '', after_kw)
-            return text  # not found, return as-is
-
-        for semi_m in re.finditer(r';\s*\n', after_last):
-            split_pos = last_bahwa_end + semi_m.end()
-            remaining = preamble_body[split_pos:]
-            remaining_stripped = _strip_mengingat_prefix(remaining)
-            # Skip if remaining starts at item 2+: item 1 is still within Menimbang,
-            # so this semicolon is not the real Menimbang/Mengingat boundary.
-            if re.match(r'\s*[2-9]\d*[\.\s]+', remaining_stripped):
-                continue
-            ref_m = re.match(
-                r'\s*(?:\d+[\.\s]+)?(?:Pasal|Undang|Peraturan)',
-                remaining_stripped,
-            )
-            if ref_m:
-                menimbang_text = preamble_body[:split_pos].strip()
-                mengingat_text = remaining_stripped.strip()
-                break
-
-        # Also try period-ending bahwa items where the last bahwa closes with
-        # "." instead of ";". Stricter regex requires "1." to avoid false
-        # positives from abbreviation periods mid-sentence.
-        if menimbang_text is None:
-            for period_m in re.finditer(r'\.\s*\n', after_last):
-                split_pos = last_bahwa_end + period_m.end()
-                remaining = preamble_body[split_pos:]
-                remaining_stripped = _strip_mengingat_prefix(remaining)
-                ref_m = re.match(
-                    r'\s*1[\.\s]+(?:Pasal|Undang|Peraturan)',
-                    remaining_stripped,
-                )
-                if ref_m:
-                    menimbang_text = preamble_body[:split_pos].strip()
-                    mengingat_text = remaining_stripped.strip()
-                    break
-
-    # Strategy B: "Mengingat" keyword (only if Strategy A didn't find a split)
+    # Step 4: Split Menimbang from Mengingat by increasingly permissive strategies.
+    menimbang_text, mengingat_text = _split_by_content_transition(preamble_body)
     if menimbang_text is None:
-        mengingat_kw = re.search(r'\n\s*Mengingat\s*:?\s*\n', preamble_body)
-        if mengingat_kw:
-            menimbang_text = preamble_body[:mengingat_kw.start()].strip()
-            mengingat_text = preamble_body[mengingat_kw.end():].strip()
-
-    # Strategy C (legacy fallback): first Pasal ref at start of line
+        menimbang_text, mengingat_text = _split_by_mengingat_keyword(preamble_body)
     if menimbang_text is None:
-        mengingat_m = re.search(
-            r'\n((?:\d+\.\s+)?Pasal\s+\d+)',
-            preamble_body,
-        )
-        if mengingat_m:
-            menimbang_text = preamble_body[:mengingat_m.start()].strip()
-            mengingat_text = preamble_body[mengingat_m.start():].strip()
+        menimbang_text, mengingat_text = _split_by_first_pasal_ref(preamble_body)
 
     # No split found; keep all as Menimbang
     if menimbang_text is None:
@@ -1436,6 +1402,8 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
 
     return results, failures
 
+# Contract: mutates leaf text and penjelasan text in place.
+# Returns warnings while preserving original text on failed cleanup.
 def apply_llm_cleanup(output_nodes: list[dict],
                       penjelasan_data: dict | None = None,
                       verbose: bool = True,
@@ -1541,6 +1509,8 @@ def strip_ocr_headers(nodes: list[dict]):
 # 7. MAIN PIPELINE
 # ============================================================
 
+# Contract: parser entry point for indexing pipeline.
+# Returns metadata and stable 'structure' tree used by downstream indexing.
 def parse_legal_pdf(pdf_path: str, verbose: bool = True,
                     use_llm_cleanup: bool = True,
                     is_perubahan: bool | None = None,
