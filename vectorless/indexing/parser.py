@@ -9,14 +9,13 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_LLM_BATCH_SIZE = 50_000 # ~50K chars ≈ ~12K tokens; smaller batches give more reliable Gemini JSON output.
+_LLM_BATCH_SIZE = 50_000 # ~50K chars is about ~12K tokens; smaller batches give more reliable Gemini JSON output.
 
 # ============================================================
-# TEXT EXTRACTION & CLEANING
+# 1. TEXT EXTRACTION & CLEANING
 # ============================================================
 
-def _detect_two_columns(blocks: list[dict], page_width: float,
-                        is_landscape: bool = False) -> list[dict]:
+def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: bool = False) -> list[dict]:
     """Reorder text blocks for correct reading order; handles two-column gazette layout."""
     if len(blocks) < 4 or not is_landscape:
         return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
@@ -79,16 +78,16 @@ def _extract_page_text(page) -> str:
 
 def extract_pages(pdf_path: str) -> list[dict]:
     """Extract raw text from every page of a PDF using PyMuPDF."""
-    doc = fitz.open(pdf_path)
     pages = []
-    for i, page in enumerate(doc):
-        text = _extract_page_text(page)
-        pages.append({
-            "page_num": i + 1, # 1-indexed
-            "raw_text": text,
-        })
-    doc.close()
+    with fitz.open(pdf_path) as doc:
+        for i, page in enumerate(doc):
+            text = _extract_page_text(page)
+            pages.append({
+                "page_num": i + 1, # 1 indexed
+                "raw_text": text,
+            })
     return pages
+
 
 def clean_page_text(text: str) -> str:
     """Remove common noise from Indonesian legal PDF text."""
@@ -118,9 +117,9 @@ def clean_page_text(text: str) -> str:
     # Remove SK No footer like "SK No 273836A", "SK No248816A"
     text = re.sub(r'SK\s+No\s*\d+\s*A.*$', '', text, flags=re.MULTILINE)
 
-    # Split glued headings: "diperolehPasal 2" → "diperoleh\nPasal 2"
+    # Split glued headings: "diperolehPasal 2" to "diperoleh\nPasal 2"
     text = re.sub(r'([^\s])(?=Pasal\s+\d)', r'\1\n', text)
-    # No-space variant: "Pasal22" → "Pasal 22"
+    # No-space variant: "Pasal22" to "Pasal 22"
     text = re.sub(r'^(Pasal)(\d)', r'\1 \2', text, flags=re.MULTILINE)
 
     # Split glued BAB headings similarly
@@ -130,33 +129,32 @@ def clean_page_text(text: str) -> str:
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
 
-    # Fix font-encoding OCR artifacts (O→0, l→1, I→1) in headings
+    # Fix font-encoding OCR artifacts in headings (O to 0, l to 1, I to 1)
     text = fix_ocr_artifacts(text)
 
     return text.strip()
 
+
 def fix_ocr_artifacts(text: str) -> str:
-    """Fix OCR artifacts in ayat numbering (O→0, l/I→1) and strip page-continuation noise."""
+    """Fix OCR artifacts in ayat numbering (O to 0, l or I to 1) and strip page continuation noise."""
     lines = text.split('\n')
     fixed_lines = []
 
     for line in lines:
-        stripped = line.strip()
-
-        # Fix misread ayat numbers inside closed parens: "(2l)" -> "(21)", "(l)" -> "(1)"
+        # Fix misread ayat numbers inside closed parens: "(2l)" to "(21)", "(l)" to "(1)"
         line = re.sub(
             r'\(([0-9OlI]+)\)',
             lambda m: '(' + _normalize_ocr_digits(m.group(1)) + ')',
             line
         )
 
-        # Fix malformed parens (missing/replaced closing paren): "(2t" -> "(2)"
+        # Fix malformed parens (missing or replaced closing paren): "(2t" to "(2)"
         line = re.sub(r'\((\d+)[t]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\b[tl](\d+)[tl]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\(s\)', '(5)', line)
 
         # Remove page continuation markers: "Pasal 7...", "(3)DBH . , ."
-        line = re.sub(r'^Pasa[lr]\s*\d+\s*\.{2,}\s*$', '', stripped and line or line)
+        line = re.sub(r'^Pasa[lr]\s*\d+\s*\.{2,}\s*$', '', line)
         line = re.sub(r'\.\s*\.\s*\.\s*$', '', line)
 
         fixed_lines.append(line)
@@ -165,8 +163,8 @@ def fix_ocr_artifacts(text: str) -> str:
 
 
 def _normalize_ocr_digits(s: str) -> str:
-    """Normalize OCR-misread digits in a string (O→0, l→1, I→1)."""
-    # Remove spaces (handles "9 I" → "9I")
+    """Normalize OCR-misread digits in a string (O to 0, l to 1, I to 1)."""
+    # Remove spaces (handles "9 I" to "9I")
     s_nospace = s.replace(' ', '')
     normalized = ''
     for ch in s_nospace:
@@ -183,6 +181,7 @@ def _normalize_ocr_digits(s: str) -> str:
     if normalized.isdigit():
         return normalized
     return s  # non-numeric, return original
+
 
 def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
     """Parse a raw Pasal number string into (number, suffix), handling OCR artifacts."""
@@ -211,17 +210,17 @@ def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
                 # Always treat as OCR'd digit
                 return num_with, ""
             elif last_char == 'I' and len(num_without) >= 3:
-                # "119I" → suffix I (Pasal 119I exists in UU perubahan)
-                # but "19I" → OCR for 191, "9I" → OCR for 91
+                # "119I" becomes suffix I (Pasal 119I exists in UU perubahan)
+                # but "19I" is OCR for 191 and "9I" is OCR for 91
                 return num_without, last_char
             else:
                 # "9I" is most likely OCR for 91
                 return num_with, ""
         elif num_without.isdigit():
-            # Only works as number+suffix: "599A" → 599 + A
+            # Only works as number plus suffix: "599A" becomes 599 + A
             return num_without, last_char
         elif num_with.isdigit():
-            # Only works with last char as digit: "4O" → 40
+            # Only works with last char as digit: "4O" becomes 40
             return num_with, ""
         else:
             return None, ""  # Neither interpretation works
@@ -232,9 +231,8 @@ def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
             return normalized, ""
         return None, ""
 
-
 # ============================================================
-# 2. PENJELASAN (EXPLANATION SECTION) DETECTION
+# PENJELASAN (EXPLANATION SECTION) DETECTION
 # ============================================================
 
 def find_penjelasan_page(pages: list[dict]) -> int | None:
@@ -245,6 +243,7 @@ def find_penjelasan_page(pages: list[dict]) -> int | None:
             return page["page_num"]
     return None
 
+
 def find_closing_page(pages: list[dict]) -> int | None:
     """Return the closing/pengesahan page number, or None if not found."""
     for page in pages:
@@ -253,14 +252,15 @@ def find_closing_page(pages: list[dict]) -> int | None:
             return page["page_num"]
     return None
 
+
 def detect_perubahan(pages: list[dict]) -> bool:
     """Return True if the document is a Perubahan (amendment) UU/PP/Perpres."""
     if not pages:
         return False
 
-    # Note: We don't use Roman Pasal detection because PyMuPDF often renders
-    # "Pasal 1" as "Pasal I" due to font encoding, causing false positives.
-
+    # Note: Roman Pasal detection is not used 
+    # Because PyMuPDF often renders "Pasal I" as "Pasal 1" due to font encoding, causing false positives.
+    
     # Scan first 3 pages for the title (handles garbled page order)
     for page in pages[:3]:
         text = page["raw_text"]
@@ -283,6 +283,7 @@ def detect_perubahan(pages: list[dict]) -> bool:
 
     return False
 
+
 def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
     """Return True if the document is an omnibus law (e.g. Cipta Kerja) where Pasal validation is skipped."""
     # Check title (between TENTANG and DENGAN RAHMAT) for omnibus keywords.
@@ -296,10 +297,10 @@ def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
     pasal_count = sum(1 for e in elements if e["type"] == "pasal")
     return pasal_count > 500
 
+
 # Contract: pages items must include page_num/raw_text/clean_text.
 # Returns {"umum": str, "pasal": {pasal_number: explanation_text}}.
-def parse_penjelasan(pages: list[dict], penjelasan_page: int,
-                     total_pages: int) -> dict:
+def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) -> dict:
     """Parse the PENJELASAN section and return {"umum": str, "pasal": {number: text}}."""
     # Extract all PENJELASAN text from cleaned pages
     parts = []
@@ -314,8 +315,7 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
     # Split into UMUM and PASAL DEMI PASAL sections.
     # "II." prefix is optional; some shorter UUs omit it or OCR drops it.
     # First space is \s* not \s+ because OCR sometimes merges "PASALDEMI".
-    split_m = re.split(r'(?:II\.?\s*|[iI][lI1]\.?\s*)?PASAL\s*DEMI\s+PASAL', full_text, maxsplit=1,
-                       flags=re.IGNORECASE)
+    split_m = re.split(r'(?:II\.?\s*|[iI][lI1]\.?\s*)?PASAL\s*DEMI\s+PASAL', full_text, maxsplit=1, flags=re.IGNORECASE)
 
     if len(split_m) == 2:
         umum_raw, pasal_section = split_m
@@ -373,6 +373,7 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
         i += 2
 
     return {"umum": umum_text, "pasal": pasal_dict}
+
 
 def _fix_penjelasan_columns(text: str) -> str:
     """Rebuild vertically-read OCR columns in PASAL DEMI PASAL.
@@ -468,6 +469,7 @@ def _fix_penjelasan_columns(text: str) -> str:
 
     return '\n'.join(result)
 
+
 def _clean_penjelasan_text(text: str) -> str:
     """Clean noise from PENJELASAN text (headers, page markers, trailing metadata)."""
     # Remove PRESIDEN REPUBLIK INDONESIA headers (same OCR variants as body)
@@ -490,6 +492,7 @@ def _clean_penjelasan_text(text: str) -> str:
     # Normalize whitespace
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
+
 
 def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
     """Attach per-Pasal penjelasan text to matching leaf nodes in the tree."""
@@ -525,7 +528,8 @@ PATTERNS = {
         re.MULTILINE
     ),
     "bagian": re.compile(
-        # Tolerates OCR typos in "Bagian" (Bagtan, Brgian, etc.); ordinal name anchors the match.
+        # Fuzzy prefix match on "Bagian" to tolerate OCR substitutions (e.g. Bagtan, Brgian).
+        # The Indonesian ordinal word (Kesatu, Kedua, ...) anchors the match.
         r'^B[a-z]{1,5}an\s+'
         r'(Kesatu|Kedua|Ketiga|Keempat|Kelima|Keenam|Ketujuh|Kedelapan|'
         r'Kesembilan|Kesepuluh|Kesebelas|Kedua\s*belas|Ketiga\s*belas|'
@@ -534,13 +538,13 @@ PATTERNS = {
         re.MULTILINE | re.IGNORECASE
     ),
     "paragraf": re.compile(
-        # Handle both arabic (1, 2, 3) and roman (I, II, III) numbering
         r'^Paragraf\s+(\d+|' + ROMAN_NUMERAL + r')\s*\n\s*(.+?)(?:\n|$)',
         re.MULTILINE | re.IGNORECASE
     ),
     "pasal": re.compile(
-        # Handles OCR variants ("Pasa1", "Pasal 4O", "Pasal 119I").
-        # Negative lookahead prevents matching cross-references (ayat/huruf/angka on next line).
+        # Matches OCR variants of "Pasal" (Pasa1, Pasal 4O, Pasal 119I).
+        # Negative lookahead excludes lines followed by ayat/huruf/angka, which indicate
+        # a cross-reference in body text rather than a section heading.
         r'^[Pp]asa[l1]\s+([0-9OlI][0-9A-Za-z \t]*?)\s*(?:\.\s*\.\s*[.\'])?$'
         r'(?:\n(?!ayat|huruf|angka|dan Pasal|sampai dengan|jo\.?\s)|\Z)',
         re.MULTILINE
@@ -554,10 +558,9 @@ _CROSS_REF_PRECEDING = frozenset({
     'atas', 'bahwa', 'melalui', 'untuk', 'antara',
 })
 
-# Level mapping for hierarchy.
-# For Perubahan (amendment) UUs:
-#   Pasal I (roman, 0) > Angka items (1) > BAB (2) > Bagian (3) > Paragraf (4) > Pasal (5)
-# For normal UUs: BAB (2) is the root; levels 0-1 are unused.
+# Numeric depth for each element type in the document hierarchy.
+# In Perubahan (amendment) UUs, pasal_roman (0) is the root containing angka (1) and below.
+# In normal UUs, bab (2) is the root and levels 0-1 are unused.
 LEVEL_MAP = {
     "pasal_roman": 0,
     "angka": 1,
@@ -566,29 +569,6 @@ LEVEL_MAP = {
     "paragraf": 4,
     "pasal": 5,
 }
-
-def roman_to_int(s: str) -> int | None:
-    """Convert a Roman numeral string to integer. Returns None if invalid."""
-    values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
-    if not s or not all(c in values for c in s.upper()):
-        return None
-    s = s.upper()
-    total = 0
-    for i, c in enumerate(s):
-        if i + 1 < len(s) and values[c] < values[s[i + 1]]:
-            total -= values[c]  # subtractive notation (IV=4, IX=9)
-        else:
-            total += values[c]
-    return total
-
-def _clean_heading_title(title: str) -> str:
-    """Clean OCR artifacts from heading titles (BAB, Bagian, Paragraf)."""
-    # Remove header bleed: "Ganti RugiPRESIDEN" → "Ganti Rugi"
-    title = re.sub(r'(?:PRESIDEN|FRESIDEN|PNESIDEN)(?:\s*REPUBLIK\s*INDONESIA)?', '', title)
-    # Fix common OCR artifacts in heading text
-    title = re.sub(r'Pe\{anjian', 'Perjanjian', title)
-    title = re.sub(r'Pertanggungi\s*awaban', 'Pertanggungjawaban', title)
-    return title.strip()
 
 # Roman numeral Pasal headings in Perubahan UUs (Pasal I, II, III, ...).
 PASAL_ROMAN = re.compile(
@@ -606,13 +586,49 @@ ANGKA_PATTERN = re.compile(
     re.MULTILINE
 )
 
+def roman_to_int(s: str) -> int | None:
+    """Convert a Roman numeral string to an integer.
+
+    Returns None if the input is empty or contains non-Roman characters.
+    """
+    values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+    if not s or not all(c in values for c in s.upper()):
+        return None
+    s = s.upper()
+    total = 0
+    # Accumulate value left to right, subtracting where a smaller numeral precedes a larger one.
+    for i, c in enumerate(s):
+        if i + 1 < len(s) and values[c] < values[s[i + 1]]:
+            total -= values[c]
+        else:
+            total += values[c]
+    return total
+
+
+def _clean_heading_title(title: str) -> str:
+    """Remove OCR artifacts from a heading title (BAB, Bagian, Paragraf).
+
+    Fixes two categories of scanner errors: page-header text bleeding into the
+    heading line, and character-level substitutions in specific Indonesian words.
+    """
+    # Strip "PRESIDEN REPUBLIK INDONESIA" header text that runs into the heading.
+    title = re.sub(r'(?:PRESIDEN|FRESIDEN|PNESIDEN)(?:\s*REPUBLIK\s*INDONESIA)?', '', title)
+    # Restore specific words where the scanner misread characters.
+    title = re.sub(r'Pe\{anjian', 'Perjanjian', title)
+    title = re.sub(r'Pertanggungi\s*awaban', 'Pertanggungjawaban', title)
+    return title.strip()
+
+
 def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[dict]:
-    """Detect raw structural elements from one page and return unsorted items."""
+    """Extract structural elements from a single page's text.
+
+    Returns an unsorted list of element dicts with keys:
+    type, level, number, title, page_num, char_offset.
+    """
     page_elements: list[dict] = []
 
     if is_perubahan:
-        # Perubahan UUs: detect Roman numeral Pasal as root-level containers
-        # (Pasal I, II, III, ...) at level 0 (above BAB).
+        # Collect root-level article headings (Pasal I, II, III) that structure the amendment.
         for m in PASAL_ROMAN.finditer(text):
             roman_str = m.group(1).strip()
             arabic_val = roman_to_int(roman_str)
@@ -627,8 +643,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
                 "char_offset": m.start(),
             })
 
-        # Detect Angka (numbered amendment instructions) inside Pasal I.
-        # These are the primary structural items: "1. Ketentuan Pasal 1 diubah..."
+        # Collect numbered amendment instructions (e.g. "1. Ketentuan Pasal 3 diubah...").
         for m in ANGKA_PATTERN.finditer(text):
             angka_num = m.group(1)
             instruction = m.group(2).strip()
@@ -642,7 +657,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
                 "char_offset": m.start(),
             })
 
-    # Normal element detection (runs for both regular and perubahan UUs)
+    # Collect BAB, Bagian, Paragraf, and Pasal headings present in all document types.
     for m in PATTERNS["bab"].finditer(text):
         heading_text = _clean_heading_title(m.group(2).strip())
         page_elements.append({
@@ -684,7 +699,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
         pasal_num, suffix = _parse_pasal_number(raw)
         if pasal_num is None:
             continue
-        # Skip cross-references in body text (not true section headings).
+        # Skip matches where the preceding word indicates a cross-reference, not a heading.
         preceding = text[:m.start()].rstrip()
         if preceding:
             last_word = preceding.split()[-1].lower().rstrip('.,;:)')
@@ -701,14 +716,20 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
 
     return page_elements
 
-def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
-    """Deduplicate and filter sorted elements while preserving original rules."""
-    deduped = []
-    roman_positions = {(e["page_num"], e["char_offset"])
-                       for e in elements if e["type"] == "pasal_roman"}
-    first_roman = next(((e["page_num"], e["char_offset"])
-                        for e in elements if e["type"] == "pasal_roman"), None)
 
+def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
+    """Remove spurious elements from a position-sorted element list.
+
+    Applies three filters:
+    - Angka items before the first pasal_roman are discarded (pre-body preamble noise).
+    - A pasal entry at the same position as a pasal_roman is discarded (regex overlap).
+    - Consecutive pasal entries with the same number on adjacent pages are collapsed to one.
+    """
+    deduped = []
+    roman_positions = {(e["page_num"], e["char_offset"]) for e in elements if e["type"] == "pasal_roman"}
+    first_roman = next(((e["page_num"], e["char_offset"]) for e in elements if e["type"] == "pasal_roman"), None)
+
+    # Apply each filter rule in order; append only elements that pass all checks.
     for elem in elements:
         if elem["type"] == "angka" and first_roman:
             if (elem["page_num"], elem["char_offset"]) < first_roman:
@@ -723,22 +744,25 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
 
     return deduped
 
-# Contract: reads pages[*]["clean_text"], returns flat sorted element dicts.
-# Element keys are stable: type, level, number, title, page_num, char_offset.
+
 def detect_elements(pages: list[dict], body_end_page: int,
                     is_perubahan: bool = False) -> list[dict]:
-    """Scan pages and return a flat list of structural elements (BAB, Bagian, Paragraf, Pasal) sorted by position."""
+    """Return all structural elements across the document body, sorted by position.
+
+    Reads pages[*]["clean_text"] and ignores pages beyond body_end_page (e.g.
+    PENJELASAN, Lampiran). Each returned dict has stable keys:
+    type, level, number, title, page_num, char_offset.
+    """
     elements = []
 
+    # Collect elements from each body page; stop at post-body sections.
     for page in pages:
-        # Skip pages after body ends (PENJELASAN, Lampiran, etc.)
         if page["page_num"] > body_end_page:
             continue
         text = page["clean_text"]
         page_num = page["page_num"]
         elements.extend(_detect_page_elements(text, page_num, is_perubahan))
 
-    # Sort by page_num, then char_offset
     elements.sort(key=lambda e: (e["page_num"], e["char_offset"]))
     return _dedupe_detected_elements(elements)
 
@@ -746,15 +770,19 @@ def detect_elements(pages: list[dict], body_end_page: int,
 # 4. PASAL NUMBERING VALIDATION
 # ============================================================
 
-def validate_pasal_sequence(elements: list[dict],
-                           is_perubahan: bool = False) -> list[str]:
-    """Check Pasal sequence for gaps and reversals. Returns a list of warning strings."""
+def validate_pasal_sequence(elements: list[dict], is_perubahan: bool = False) -> list[str]:
+    """Check the Pasal numbering sequence for reversals and large gaps.
+
+    Returns a list of warning strings. Skips validation for Perubahan UUs
+    because amendment numbering is inherently non-monotonic.
+    """
     if is_perubahan:
-        return []  # Numbering is inherently non-monotonic in Perubahan UUs
+        return []
 
     warnings = []
     last_pasal_num = 0
 
+    # Scan each Pasal in document order, checking for reversals and gaps greater than 5.
     for elem in elements:
         if elem["type"] != "pasal":
             continue
@@ -768,8 +796,8 @@ def validate_pasal_sequence(elements: list[dict],
                 f"WARNING: Pasal {num} appears after Pasal {last_pasal_num} "
                 f"(page {elem['page_num']}) — possible OCR error or PENJELASAN leak"
             )
-        # Gap > 5 is unusual; smaller gaps (e.g. 2–3) are normal for sub-laws.
         elif num > last_pasal_num + 5:
+            # Gaps of 2-3 are normal in sub-laws; gaps larger than 5 likely indicate a missed page.
             warnings.append(
                 f"WARNING: Gap in Pasal numbering: {last_pasal_num} -> {num} "
                 f"(page {elem['page_num']}) — possible missed Pasal"
@@ -783,9 +811,15 @@ def validate_pasal_sequence(elements: list[dict],
 # ============================================================
 
 def assign_page_boundaries(elements: list[dict], total_pages: int):
-    """Set start_index, end_index, and end_char_offset on each element in-place."""
+    """Set start_index, end_index, and end_char_offset on each element in-place.
+
+    An element's end boundary is the page where the next element at the same or
+    higher level begins. end_char_offset is set when that closing element starts
+    on the same page, enabling intra-page text slicing.
+    """
     for i, elem in enumerate(elements):
         next_page = total_pages
+        # Walk forward to find the nearest element that closes this one.
         for j in range(i + 1, len(elements)):
             if elements[j]["level"] <= elem["level"]:
                 next_page = elements[j]["page_num"]
@@ -793,30 +827,33 @@ def assign_page_boundaries(elements: list[dict], total_pages: int):
         elem["start_index"] = elem["page_num"]
         elem["end_index"] = next_page
 
-        # Find the next element on the same end page to set end_char_offset
-        elem["end_char_offset"] = None  # None means "to end of page"
+        elem["end_char_offset"] = None
+        # Walk forward to find an element that starts on the closing page and provides a char offset to slice at.
         for j in range(i + 1, len(elements)):
             if elements[j]["page_num"] == elem["end_index"]:
-                # Next element starts on the same end page; slice at its offset
                 elem["end_char_offset"] = elements[j]["char_offset"]
                 break
             elif elements[j]["page_num"] > elem["end_index"]:
                 break
 
-# Contract: accepts detect_elements() output and returns nested nodes.
-# Node keys are stable: title, type, number, page bounds, node_id, nodes.
+
 def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
-    """Convert a flat element list into a nested BAB > Bagian > Pasal tree."""
+    """Convert a flat element list into a nested hierarchy of document nodes.
+
+    Accepts the output of detect_elements() and returns root nodes where each
+    node may contain child nodes. Node dicts have stable keys:
+    title, type, number, start_index, end_index, node_id, nodes.
+    """
     if not elements:
         return []
 
     assign_page_boundaries(elements, total_pages)
 
-    # Build nested tree using stack
     root_nodes = []
-    stack = []  # stack of (level, node_dict)
+    stack = []  # each entry is (level, node_dict)
     node_counter = 0
 
+    # Convert each flat element to a node and attach it under its nearest ancestor.
     for elem in elements:
         node = {
             "title": elem["title"],
@@ -825,13 +862,13 @@ def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
             "start_index": elem["start_index"],
             "end_index": elem["end_index"],
             "start_char_offset": elem.get("char_offset", 0),
-            "end_char_offset": None,  # will be set below
+            "end_char_offset": None,  # refined later by fix_node_boundaries
             "node_id": f"{node_counter:04d}",
             "nodes": [],
         }
         node_counter += 1
 
-        # Pop stack until we find a parent (lower level number = higher in hierarchy)
+        # Remove elements from the stack that are at the same or deeper level so the top of the stack is the correct parent.
         while stack and stack[-1][0] >= elem["level"]:
             stack.pop()
 
@@ -844,20 +881,24 @@ def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
 
     return root_nodes
 
+
 def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offset: int | None = None):
-    """Tighten node end_index and end_char_offset so siblings don't overlap.
-    Last child inherits parent's end_char_offset to prevent text bleed."""
+    """Tighten sibling boundaries so their page ranges do not overlap.
+
+    Each node's end is clamped to the next sibling's start. The last sibling
+    inherits the parent's end boundary and char offset, which prevents text
+    bleed across adjacent sections.
+    """
+    # Align each sibling's end to the next sibling's start; give the last sibling the parent's end.
     for i, node in enumerate(nodes):
         if i + 1 < len(nodes):
             next_node = nodes[i + 1]
             next_start = next_node["start_index"]
-            # Check before overwriting end_index
             old_end = node["end_index"]
             node["end_index"] = next_start
             if next_start == old_end:
                 node["end_char_offset"] = next_node.get("start_char_offset", 0)
         else:
-            # Pass parent's end_char_offset to last child to prevent text bleed.
             node["end_index"] = parent_end
             node["end_char_offset"] = parent_end_char_offset
 
@@ -868,10 +909,16 @@ def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offs
 
         node["end_index"] = max(node["end_index"], node["start_index"])
 
+
 def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
-    """Move orphaned Pasals from the next Angka sibling under their BAB node.
-    Handles amendment UUs where a new BAB and its Pasals land in separate Angkas.
-    Mutates tree in place. Returns count of Pasals moved."""
+    """Move orphaned Pasals into their BAB node when the amendment splits them across Angkas.
+
+    In some Perubahan UUs, one Angka introduces a new BAB heading and the next Angka
+    contains the Pasals that belong under it. This function detects that pattern and
+    re-parents those Pasals under the BAB. Mutates the tree in place.
+
+    Returns the total number of Pasals moved.
+    """
     moved_count = 0
 
     for root_node in tree:
@@ -883,16 +930,15 @@ def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
 
         indices_to_remove = []
         i = 0
+        # Walk each Angka child, looking for a BAB-only Angka followed by a Pasal-bearing Angka.
         while i < len(children):
             angka = children[i]
             if angka.get("type") != "angka":
                 i += 1
                 continue
 
-            # Find Angka whose ONLY child is a BAB leaf (no Pasal siblings).
-            # This means the amendment inserted a BAB heading whose Pasals
-            # are in the next Angka sibling. Excludes BAB renames where the
-            # Angka also contains Pasals (e.g., Angka 89 has Pasal 108 + BAB IX).
+            # Qualify the current Angka: it must contain a childless BAB and no Pasals.
+            # Angkas that already have Pasals are BAB renames, not introductions.
             angka_children = angka.get("nodes", [])
             has_pasal = any(c.get("type") == "pasal" for c in angka_children)
             if has_pasal:
@@ -907,7 +953,7 @@ def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
                 i += 1
                 continue
 
-            # Look at next sibling Angka
+            # Check the next sibling for Pasals to absorb.
             if i + 1 >= len(children):
                 i += 1
                 continue
@@ -916,53 +962,59 @@ def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
                 i += 1
                 continue
 
-            # Collect Pasal children from next Angka
-            pasal_children = [n for n in next_angka.get("nodes", [])
-                              if n.get("type") == "pasal"]
+            pasal_children = [n for n in next_angka.get("nodes", []) if n.get("type") == "pasal"]
             if not pasal_children:
                 i += 1
                 continue
 
-            # Move Pasals under the BAB
+            # Re-parent each Pasal under the BAB and record which Angka it came from.
             for pasal in pasal_children:
                 pasal["_moved_from_angka"] = next_angka.get("number")
             bab_node["nodes"] = pasal_children
             moved_count += len(pasal_children)
 
-            # Update BAB boundaries to encompass moved children
+            # Expand BAB and Angka boundaries to cover the adopted children.
             bab_node["end_index"] = max(
                 bab_node["end_index"],
                 max(p["end_index"] for p in pasal_children),
             )
             angka["end_index"] = max(angka["end_index"], bab_node["end_index"])
 
-            # Remove or trim the absorbed Angka
-            remaining = [n for n in next_angka.get("nodes", [])
-                         if n.get("type") != "pasal"]
+            # Remove the absorbed Angka if it is now empty; otherwise strip the Pasals.
+            remaining = [n for n in next_angka.get("nodes", []) if n.get("type") != "pasal"]
             if remaining:
                 next_angka["nodes"] = remaining
             else:
                 indices_to_remove.append(i + 1)
 
-            i += 2  # skip absorbed Angka
+            i += 2
 
-        # Remove absorbed Angka items (reverse to preserve indices)
+        # Delete absorbed Angkas in reverse order to keep earlier indices stable.
         for idx in reversed(indices_to_remove):
             children.pop(idx)
 
     return moved_count
 
+
 def iter_leaves(nodes: list[dict]):
-    """Yield all leaf nodes from a tree (nodes without children)."""
+    """Yield every leaf node in the tree (nodes that have no children)."""
+    # Recurse into non-empty node lists; yield nodes with no children as leaves.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             yield from iter_leaves(node["nodes"])
         else:
             yield node
 
+
 def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) -> list[dict]:
-    """Strip internal fields and embed leaf node text for PageIndex output."""
+    """Return a cleaned copy of the tree with internal fields removed.
+
+    When pages is provided, text is embedded directly into each leaf node.
+    pasal_roman container nodes also receive any intro text that precedes
+    their first child.
+    """
     result = []
+    # Build each output node, embedding text for leaves and pasal_roman containers.
     for node in nodes:
         clean = {
             "title": node["title"],
@@ -972,16 +1024,13 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
         }
         if node.get("nodes"):
             clean["nodes"] = clean_tree_for_output(node["nodes"], pages)
-            # Pasal_roman nodes in perubahan UUs may have their own text before
-            # their first child. Recover it by extracting up to the first child.
+            # A pasal_roman node may have intro text before its first child; extract it.
             if pages is not None and node.get("type") == "pasal_roman":
                 first_child = node["nodes"][0]
                 if first_child["start_index"] == node["start_index"]:
-                    # Child starts on same page; extract up to child's char_offset
                     own_end_page = node["start_index"]
                     own_end_char = first_child.get("start_char_offset") or None
                 else:
-                    # Child starts on a later page; extract up to the page before it
                     own_end_page = first_child["start_index"] - 1
                     own_end_char = None
                 if own_end_page >= node["start_index"]:
@@ -993,25 +1042,27 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
                     if intro.strip():
                         clean["text"] = intro
         elif pages is not None:
-            # Leaf node: embed text with intra-page slicing
             clean["text"] = _extract_node_text(
                 pages, node["start_index"], node["end_index"],
                 start_char_offset=node.get("start_char_offset", 0),
                 end_char_offset=node.get("end_char_offset"),
             )
-        # Propagate penjelasan if attached (set by attach_penjelasan)
         if "penjelasan" in node:
             clean["penjelasan"] = node["penjelasan"]
-        # Propagate source_angka for Pasals moved by BAB consolidation
         if "_moved_from_angka" in node:
             clean["source_angka"] = node["_moved_from_angka"]
         result.append(clean)
     return result
 
+
 def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | None:
-    """Split preamble into Menimbang, Mengingat, and Menetapkan sub-nodes; returns None on failure."""
+    """Split preamble text into Menimbang, Mengingat, and Menetapkan child nodes.
+
+    Returns a list of node dicts on success, or None if no Menimbang section
+    can be located in the text.
+    """
     def _clean_preamble_noise(raw_text: str) -> str:
-        """Remove common OCR margin/header noise while preserving split keywords."""
+        """Remove page-header and margin OCR noise while preserving preamble keywords."""
         _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
         noise_patterns = [
             re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*$', re.MULTILINE),
@@ -1022,12 +1073,13 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             re.compile(r'^\s*(?!Mengingat|Menetapkan)[A-Z]{3,8}\s*\n', re.MULTILINE),
         ]
         cleaned_text = raw_text
+        # Apply each noise pattern in order; all matches become a single newline.
         for pat in noise_patterns:
             cleaned_text = pat.sub('\n', cleaned_text)
         return re.sub(r'\n{3,}', '\n\n', cleaned_text).strip()
 
     def _strip_mengingat_prefix(candidate: str) -> str:
-        """Strip 'Mengingat' prefix from start or within first 200 chars."""
+        """Remove a leading 'Mengingat' keyword from the candidate string."""
         stripped = re.sub(r'^\s*Mengingat\s*:?\s*\n?\s*', '', candidate)
         if stripped != candidate:
             return stripped
@@ -1038,14 +1090,16 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         return candidate
 
     def _split_by_content_transition(body: str) -> tuple[str | None, str | None]:
-        """Try splitting Menimbang/Mengingat after final bahwa item punctuation."""
+        """Split after the terminal punctuation of the last bahwa clause."""
         last_bahwa_end = None
+        # Walk all bahwa occurrences to find the position after the last one.
         for m in re.finditer(r'bahwa\s', body):
             last_bahwa_end = m.end()
         if not last_bahwa_end:
             return None, None
 
         after_last = body[last_bahwa_end:]
+        # Try each semicolon-terminated line break as a candidate split point.
         for semi_m in re.finditer(r';\s*\n', after_last):
             split_pos = last_bahwa_end + semi_m.end()
             remaining = body[split_pos:]
@@ -1055,6 +1109,7 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             if re.match(r'\s*(?:\d+[\.\s]+)?(?:Pasal|Undang|Peraturan)', remaining_stripped):
                 return body[:split_pos].strip(), remaining_stripped.strip()
 
+        # Fall back to period-terminated line breaks.
         for period_m in re.finditer(r'\.\s*\n', after_last):
             split_pos = last_bahwa_end + period_m.end()
             remaining = body[split_pos:]
@@ -1065,14 +1120,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         return None, None
 
     def _split_by_mengingat_keyword(body: str) -> tuple[str | None, str | None]:
-        """Fallback split using explicit Mengingat heading."""
+        """Split at an explicit 'Mengingat' heading line."""
         mengingat_kw = re.search(r'\n\s*Mengingat\s*:?\s*\n', body)
         if not mengingat_kw:
             return None, None
         return body[:mengingat_kw.start()].strip(), body[mengingat_kw.end():].strip()
 
     def _split_by_first_pasal_ref(body: str) -> tuple[str | None, str | None]:
-        """Last-resort split using first legal reference line."""
+        """Split at the first numbered legal reference as a last resort."""
         mengingat_m = re.search(r'\n((?:\d+\.\s+)?Pasal\s+\d+)', body)
         if not mengingat_m:
             return None, None
@@ -1080,13 +1135,12 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
 
     cleaned = _clean_preamble_noise(text)
 
-    # Step 2: Find Menimbang start
+    # Locate the Menimbang section start.
     menimbang_m = re.search(r'Menimbang\s*:?\s*(?:\n|(?=a[\.\s]))', cleaned)
     if menimbang_m:
         before_menimbang = cleaned[:menimbang_m.start()]
         after_menimbang = cleaned[menimbang_m.end():]
-        # Some PDFs place the "Menimbang:" label block after its bahwa items due to
-        # block sort order. If "a. bahwa" appears before the keyword, prepend it.
+        # OCR block reordering can place "a. bahwa" content before the "Menimbang:" label; detect this and prepend the misplaced content.
         bahwa_before_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', before_menimbang)
         if bahwa_before_m:
             after_menimbang = (
@@ -1094,7 +1148,7 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
                 + after_menimbang
             )
     else:
-        # Fall back: find first "a. bahwa" or "a bahwa" pattern
+        # No Menimbang keyword; locate the preamble body via the first bahwa clause.
         fallback_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', cleaned)
         if not fallback_m:
             fallback_m = re.search(r'(?:^|\n)\s*a\.\s*\n\s*bahwa\s', cleaned)
@@ -1105,15 +1159,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         before_menimbang = cleaned[:fallback_m.start()]
         after_menimbang = cleaned[fallback_m.start():].lstrip('\n')
 
-    # Step 3: Find MEMUTUSKAN as end boundary and extract Menetapkan text
+    # Locate MEMUTUSKAN to bound the preamble body and extract Menetapkan text.
     memutuskan_m = re.search(r'MEMUTUS\S*\s*:', after_menimbang)
     menetapkan_text = None
 
     if memutuskan_m:
         preamble_body = after_menimbang[:memutuskan_m.start()].strip()
-        # Text after "MEMUTUSKAN:" is the Menetapkan content
         raw_after = after_menimbang[memutuskan_m.end():].strip()
-        # Strip "Menetapkan :" prefix if present
+        # Remove an optional "Menetapkan :" label that some documents include.
         menet_m = re.match(r'Menetapkan\s*:\s*', raw_after)
         if menet_m:
             menetapkan_text = raw_after[menet_m.end():].strip()
@@ -1122,21 +1175,18 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     else:
         preamble_body = after_menimbang.strip()
 
-    # Step 4: Split Menimbang from Mengingat by increasingly permissive strategies.
+    # Split the preamble body into Menimbang and Mengingat using fallback strategies.
     menimbang_text, mengingat_text = _split_by_content_transition(preamble_body)
     if menimbang_text is None:
         menimbang_text, mengingat_text = _split_by_mengingat_keyword(preamble_body)
     if menimbang_text is None:
         menimbang_text, mengingat_text = _split_by_first_pasal_ref(preamble_body)
 
-    # No split found; keep all as Menimbang
     if menimbang_text is None:
         menimbang_text = preamble_body
         mengingat_text = None
 
-    # Step 5: Clean up and build children
-    # Strip trailing "Mengingat" OCR keyword from Menimbang: margin bleed can
-    # leave a lone "Mengingat" at the very end of the section.
+    # Finalize Menimbang text: remove a trailing "Mengingat" word left by margin bleed.
     menimbang_text = re.sub(r'\s*\bMengingat\b\s*$', '', menimbang_text).strip()
     menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
     if not menimbang_text:
@@ -1153,15 +1203,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     ]
 
     if mengingat_text:
-        # Strip leading colon/whitespace OCR artifact (e.g. ": 1. Pasal..." →
-        # "1. Pasal...") when "Mengingat :" label is on the same line as ref 1.
+        # Remove a leading colon artifact when the "Mengingat :" label shares a line with ref 1.
         mengingat_text = re.sub(r'^[\s:]+', '', mengingat_text)
-        # Strip trailing "Dengan Persetujuan Bersama..." boilerplate between
-        # Mengingat and MEMUTUSKAN. Fuzzy match since OCR garbles 'uj' → 'qj'.
+        # Remove "Dengan Persetujuan Bersama" boilerplate that falls between Mengingat
+        # and MEMUTUSKAN. The fuzzy word match handles common OCR garbling.
         dpr_m = re.search(r'\n[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
         if dpr_m:
             mengingat_text = mengingat_text[:dpr_m.start()]
-        # Strip lone "Mengingat" OCR margin-bleed lines from within Mengingat text.
+        # Remove isolated "Mengingat" lines inserted by OCR margin bleed.
         mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
         if mengingat_text:
@@ -1186,12 +1235,18 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
 
     return children
 
+
 def _extract_node_text(
     pages: list[dict], start: int, end: int,
     start_char_offset: int = 0, end_char_offset: int | None = None,
 ) -> str:
-    """Extract and join cleaned text from pages [start, end], slicing by char offsets."""
+    """Extract and join page text for a node spanning pages [start, end].
+
+    Applies char offset slicing at the start and end boundaries to return only
+    the text belonging to this node.
+    """
     parts = []
+    # Collect text from each page in the range, slicing at the boundary pages.
     for page in pages:
         if page["page_num"] < start:
             continue
@@ -1199,15 +1254,13 @@ def _extract_node_text(
             break
         text = page["clean_text"]
 
-        # Slice start page from char_offset onward
         if page["page_num"] == start and start_char_offset > 0:
             text = text[start_char_offset:]
 
-        # Slice end page up to end_char_offset
         if page["page_num"] == end and end_char_offset is not None:
-            # end_char_offset is relative to the full page text
+            # When start and end are the same page, the end offset is relative to
+            # the original page text, so subtract the start slice already applied.
             if page["page_num"] == start and start_char_offset > 0:
-                # Adjust since we already sliced the start
                 adjusted = end_char_offset - start_char_offset
                 if adjusted > 0:
                     text = text[:adjusted]
@@ -1216,13 +1269,12 @@ def _extract_node_text(
 
         parts.append(text.strip())
     joined = "\n\n".join(p for p in parts if p)
-    # Safety net: remove any remaining header bleed-through in extracted text
-    # Match OCR variants: PRESIDEN, PRESIOEN, PRESTDEN, FRESIDEN, etc.
+
+    # Strip page header bleed-through that survived the initial OCR cleaning pass.
     _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
     joined = re.sub(r'\n\s*' + _PRESIDEN_RE + r'\s*\n\s*REPUBLIK INDONESIA\s*\n', '\n', joined)
     joined = re.sub(r'\n\s*' + _PRESIDEN_RE + r'\s*\n', '\n', joined)
-    # Remove trailing BAB/Bagian/Paragraf headers that bleed from page breaks
-    # e.g., "BAB XV" at bottom of page before the actual BAB starts on next page
+    # Strip structural headings at the very end of the text that bleed from the next page.
     joined = re.sub(r'\n\s*BAB\s+[IVXLCDM]+\s*$', '', joined)
     joined = re.sub(r'\n\s*B[a-z]{1,5}an\s+\w+\s*$', '', joined)
     joined = re.sub(r'\n\s*Paragraf\s+\w+\s*$', '', joined)
@@ -1247,13 +1299,38 @@ Rules:
 Input (JSON):
 """
 
-def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool,
-                   _label: str | None = None):
-    """Run one Gemini batch with rate-limit retry. Returns (cleaned_dict, in_tokens, out_tokens, error_or_None)."""
+# Page header and footer patterns that survive into extracted node text.
+_OCR_HEADER_PATTERNS = [
+    re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
+    re.compile(r'^PRESIDEN\s+REPUBLIK\s+INDONESIA\s*$', re.MULTILINE),
+    re.compile(r'^LEMBARAN\s+NEGARA\s+REPUBLIK\s+INDONESIA.*$', re.MULTILINE),
+    re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
+]
+
+# Pengesahan (closing) text that bleeds into the last Pasal when they share a page.
+# Written to tolerate OCR word breaks and extra whitespace.
+_CLOSING_TEXT_RE = re.compile(
+    r'\n\s*(?:'
+    r'Ditetapkan\s+di\s'
+    r'|Diundangkan\s+di\s'
+    r'|Agar\s+setiap\s+orang'
+    r'|Agar\s+setiap\s*\n'  # line-break OCR variant
+    r')'
+    r'[\s\S]*$',
+)
+
+def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool, _label: str | None = None):
+    """Send one batch to Gemini and return the cleaned texts with token counts.
+
+    Returns a 4-tuple: (cleaned_dict, input_tokens, output_tokens, error_message).
+    On unrecoverable error, returns the original batch unchanged with error_message set.
+    Retries up to 5 times on rate-limit or transient network errors.
+    """
     prompt = LLM_CLEANUP_PROMPT + json.dumps(batch, ensure_ascii=False)
 
     max_retries = 5
     last_err: Exception | None = None
+    # Retry up to max_retries times, backing off linearly on rate limit or network errors.
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -1280,7 +1357,7 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
                     log.warning(f"batch {_lbl}: {reason} ({e.__class__.__name__}), retrying in {wait}s")
                 time.sleep(wait)
             else:
-                # Soft-fail: return original texts so caller can continue with remaining batches
+                # Return the original batch unchanged so the caller can proceed with other batches.
                 _lbl = _label or f"{batch_idx + 1}/{total}"
                 msg = f"batch {_lbl}: {e.__class__.__name__}: {e}"
                 if verbose:
@@ -1288,11 +1365,9 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
                 return batch, 0, 0, msg
 
     if last_err is not None:
-        # Should not reach here, but guard anyway
         _lbl = _label or f"{batch_idx + 1}/{total}"
         return batch, 0, 0, f"batch {_lbl}: unexpected retry exit"
 
-    # Track token usage
     usage = response.usage_metadata
     input_tok = usage.prompt_token_count or 0
     output_tok = usage.candidates_token_count or 0
@@ -1300,9 +1375,8 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     if verbose:
         log.info(f"batch {_lbl}: {input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
 
-    # Parse JSON from response
     response_text = response.text.strip()
-    # Strip markdown code fences if present
+    # Remove markdown code fences that the model sometimes wraps around JSON.
     if response_text.startswith("```"):
         lines = response_text.split("\n")
         response_text = "\n".join(lines[1:-1])
@@ -1314,13 +1388,18 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
         msg = f"batch {_lbl}: {e}"
         if verbose:
             log.warning(f"failed to parse LLM response for {msg}")
-        return batch, input_tok, output_tok, msg  # Fall back to original texts
+        return batch, input_tok, output_tok, msg
 
     return cleaned, input_tok, output_tok, None
 
-def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
-                      client=None) -> tuple[dict[str, str], list[str]]:
-    """Clean OCR artifacts in texts with Gemini. Returns (cleaned_dict, failure_messages)."""
+
+def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client=None) -> tuple[dict[str, str], list[str]]:
+    """Send node texts to Gemini for OCR cleanup and return the results.
+
+    Splits the input into character-bounded batches, processes them in parallel,
+    and retries failed batches at half size. Returns a tuple of
+    (cleaned_dict mapping node_id to cleaned text, list of failure messages).
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google import genai
 
@@ -1330,11 +1409,11 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
             raise RuntimeError("GEMINI_API_KEY environment variable is not set")
         client = genai.Client(api_key=api_key, http_options={"timeout": 300})
 
-    # Split into batches by character count
     batches: list[dict[str, str]] = []
     current_batch: dict[str, str] = {}
     current_size = 0
 
+    # Pack texts greedily into batches, flushing when the size limit is reached.
     for node_id, text in texts:
         text_len = len(text)
         if current_size + text_len > _LLM_BATCH_SIZE and current_batch:
@@ -1350,12 +1429,12 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
     if verbose:
         log.info(f"{len(texts)} nodes in {len(batches)} batch(es), processing in parallel")
 
-    # Process batches in parallel
     results: dict[str, str] = {}
     failed_batches: list[tuple[int, dict[str, str]]] = []
     total_input_tokens = 0
     total_output_tokens = 0
 
+    # Submit all batches to a thread pool and collect results as they complete.
     with ThreadPoolExecutor(max_workers=min(len(batches), 4)) as executor:
         futures = {
             executor.submit(_process_batch, client, batch, i, len(batches), verbose): i
@@ -1370,14 +1449,15 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
             if error:
                 failed_batches.append((batch_i, batches[batch_i]))
 
-    # Retry failed batches by splitting in half (smaller batch = less likely to truncate).
     failures: list[str] = []
     if failed_batches:
         if verbose:
             log.info(f"retrying {len(failed_batches)} failed batch(es) split in half")
+        # Retry each failed batch at half size to reduce the chance of truncation.
         for batch_i, failed_batch in failed_batches:
             items = list(failed_batch.items())
             mid = max(1, len(items) // 2)
+            # Process each half independently; any remaining failure is treated as permanent.
             for sub_idx, sub_items in enumerate([items[:mid], items[mid:]]):
                 if not sub_items:
                     continue
@@ -1396,23 +1476,21 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
                     )
 
     if verbose:
-        log.info(f"total tokens: {total_input_tokens + total_output_tokens:,} "
-                 f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
+        log.info(f"total tokens: {total_input_tokens + total_output_tokens:,} "f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
 
     return results, failures
 
-# Contract: mutates leaf text and penjelasan text in place.
-# Returns warnings while preserving original text on failed cleanup.
-def apply_llm_cleanup(output_nodes: list[dict],
-                      penjelasan_data: dict | None = None,
-                      verbose: bool = True,
-                      client=None):
-    """Run LLM OCR cleanup on all leaf node texts and penjelasan in-place."""
-    # Collect all leaf texts (nodes with "text" field)
-    # Also collect penjelasan texts (skip trivial "Cukup jelas.")
+
+def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = None, verbose: bool = True, client=None):
+    """Run LLM OCR cleanup on all leaf texts and penjelasan, mutating the tree in place.
+
+    Preserves original text for any node whose cleaned version is missing from the
+    LLM response. Returns the list of failure messages from llm_cleanup_texts.
+    """
     texts_to_clean: list[tuple[str, str]] = []
 
     def _collect(nodes: list[dict]):
+        """Recursively gather leaf node texts and non-trivial penjelasan for cleaning."""
         for node in nodes:
             if "nodes" in node:
                 _collect(node["nodes"])
@@ -1424,7 +1502,6 @@ def apply_llm_cleanup(output_nodes: list[dict],
 
     _collect(output_nodes)
 
-    # Also clean penjelasan_umum if present
     if penjelasan_data and penjelasan_data.get("umum"):
         texts_to_clean.append(("__penjelasan_umum__", penjelasan_data["umum"]))
 
@@ -1433,17 +1510,15 @@ def apply_llm_cleanup(output_nodes: list[dict],
             log.info("no texts to clean")
         return
 
-    # Call LLM cleanup
     cleaned, llm_failures = llm_cleanup_texts(texts_to_clean, verbose=verbose, client=client)
 
-    # Check for missing nodes
     expected_ids = {nid for nid, _ in texts_to_clean}
     missing = expected_ids - set(cleaned.keys())
     if missing and verbose:
         log.warning(f"{len(missing)} node(s) missing from LLM response, keeping original: {sorted(missing)}")
 
-    # Replace texts in-place
     def _replace(nodes: list[dict]):
+        """Recursively write cleaned text back into each leaf node."""
         for node in nodes:
             if "nodes" in node:
                 _replace(node["nodes"])
@@ -1456,7 +1531,6 @@ def apply_llm_cleanup(output_nodes: list[dict],
 
     _replace(output_nodes)
 
-    # Write back penjelasan_umum
     if penjelasan_data and "__penjelasan_umum__" in cleaned:
         penjelasan_data["umum"] = cleaned["__penjelasan_umum__"]
 
@@ -1465,31 +1539,10 @@ def apply_llm_cleanup(output_nodes: list[dict],
 
     return llm_failures
 
-_OCR_HEADER_PATTERNS = [
-    # Multi-line "PRESIDEN\nREPUBLIK INDONESIA" (clean version, post-LLM)
-    re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
-    # Single-line variant
-    re.compile(r'^PRESIDEN\s+REPUBLIK\s+INDONESIA\s*$', re.MULTILINE),
-    # Footer patterns
-    re.compile(r'^LEMBARAN\s+NEGARA\s+REPUBLIK\s+INDONESIA.*$', re.MULTILINE),
-    re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
-]
-
-# Closing/pengesahan text that leaks into the last Pasal when both share a page.
-# Must be tolerant of OCR noise (broken words, extra whitespace).
-_CLOSING_TEXT_RE = re.compile(
-    r'\n\s*(?:'
-    r'Ditetapkan\s+di\s'
-    r'|Diundangkan\s+di\s'
-    r'|Agar\s+setiap\s+orang'
-    r'|Agar\s+setiap\s*\n'  # OCR line-break variant
-    r')'
-    r'[\s\S]*$',
-)
-
 
 def strip_ocr_headers(nodes: list[dict]):
-    """Strip residual PDF header/footer text from all leaf node texts in-place."""
+    """Remove residual page headers, footers, and pengesahan text from all leaf nodes in-place."""
+    # Recurse into container nodes; apply patterns only to leaf text.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             strip_ocr_headers(node["nodes"])
@@ -1497,33 +1550,35 @@ def strip_ocr_headers(nodes: list[dict]):
             text = node["text"]
             for pat in _OCR_HEADER_PATTERNS:
                 text = pat.sub('', text)
-            # Strip closing/pengesahan text that leaked into content
             text = _CLOSING_TEXT_RE.sub('', text)
-            # Clean up extra blank lines left behind
             text = re.sub(r'\n{3,}', '\n\n', text).strip()
             node["text"] = text
-
 
 # ============================================================
 # 7. MAIN PIPELINE
 # ============================================================
 
-# Contract: parser entry point for indexing pipeline.
-# Returns metadata and stable 'structure' tree used by downstream indexing.
 def parse_legal_pdf(pdf_path: str, verbose: bool = True,
                     use_llm_cleanup: bool = True,
                     is_perubahan: bool | None = None,
                     granularity: str = "pasal") -> dict:
-    """Parse an Indonesian legal PDF into a PageIndex-compatible tree."""
+    """Parse an Indonesian legal PDF and return a PageIndex-compatible document dict.
+
+    This is the primary entry point for the indexing pipeline. It runs text
+    extraction, structural detection, tree building, penjelasan parsing, and
+    optional LLM OCR cleanup in sequence.
+
+    The returned dict contains document metadata and a 'structure' key holding
+    the node tree consumed by downstream indexers.
+    """
     if granularity not in ("pasal", "ayat", "full_split"):
-        raise ValueError(f"Unknown granularity: {granularity!r}. "
-                         f"Use 'pasal', 'ayat', or 'full_split'.")
+        raise ValueError(f"Unknown granularity: {granularity!r}. " f"Use 'pasal', 'ayat', or 'full_split'.")
     pdf_path = str(pdf_path)
     pdf_name = Path(pdf_path).name
     total_steps = 6 if use_llm_cleanup else 5
     t_start = time.time()
 
-    # Step 1: Extract text
+    # Step 1: Extract raw text from all pages.
     if verbose:
         log.info(f"[1/{total_steps}] extracting text from {pdf_name}")
     t0 = time.time()
@@ -1532,7 +1587,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     if verbose:
         log.info(f"total pages: {total_pages} ({time.time() - t0:.1f}s)")
 
-    # Step 2: Clean text
+    # Step 2: Apply OCR normalization to each page.
     if verbose:
         log.info(f"[2/{total_steps}] cleaning text")
     t0 = time.time()
@@ -1541,13 +1596,13 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     if verbose:
         log.info(f"done ({time.time() - t0:.1f}s)")
 
-    # Step 3: Detect body boundaries
+    # Step 3: Locate section boundaries (body, penjelasan, pengesahan).
     if verbose:
         log.info(f"[3/{total_steps}] detecting document sections")
     closing_page = find_closing_page(pages)
     penjelasan_page = find_penjelasan_page(pages)
 
-    # Body ends at whichever comes first: closing or penjelasan
+    # Body ends at the page before whichever post-body section starts first.
     boundaries = [p for p in [closing_page, penjelasan_page] if p]
     if boundaries:
         body_end = min(boundaries) - 1
@@ -1561,56 +1616,55 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         if penjelasan_page:
             log.info(f"penjelasan: pages {penjelasan_page}-{total_pages}")
 
-    # Auto-detect Perubahan (amendment) UU if not specified
     if is_perubahan is None:
         is_perubahan = detect_perubahan(pages)
     if verbose and is_perubahan:
         log.info("detected as Perubahan (amendment)")
 
-    # Step 4: Detect structural elements (only in body)
+    # Step 4: Detect BAB, Bagian, Paragraf, and Pasal elements within the body.
     if verbose:
         log.info(f"[4/{total_steps}] detecting structural elements")
     t0 = time.time()
     elements = detect_elements(pages, body_end, is_perubahan=is_perubahan)
 
+    # Count each element type for the log summary.
     type_counts = {}
     for e in elements:
         type_counts[e["type"]] = type_counts.get(e["type"], 0) + 1
     if verbose:
         log.info(f"found: {type_counts} ({time.time() - t0:.1f}s)")
 
-    # Validate Pasal sequence (skip for Perubahan and omnibus)
     is_omnibus = detect_omnibus(pages, elements)
     if verbose and is_omnibus:
         log.info("detected as Omnibus law")
     warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan or is_omnibus)
+    # Emit each sequence warning to the log.
     for w in warnings:
         log.warning(w)
 
-    # Step 5: Build tree
+    # Step 5: Build the node tree and fix sibling boundaries.
     if verbose:
         log.info(f"[5/{total_steps}] building tree structure")
     t0 = time.time()
     tree = build_tree(elements, body_end)
     fix_node_boundaries(tree, body_end)
 
-    # Post-process: consolidate inserted BABs in perubahan documents
+    # In Perubahan documents, re-parent Pasals that the parser split across Angkas.
     if is_perubahan:
         bab_moved = consolidate_bab_in_perubahan(tree)
         if verbose and bab_moved:
             log.info(f"consolidated {bab_moved} Pasal(s) under inserted BAB(s)")
 
-    # Add preamble node (text before first structural element)
+    # Build the preamble node from text before the first structural element.
     output_nodes = []
 
     if elements:
         first_elem = elements[0]
         first_elem_page = first_elem["page_num"]
         first_elem_offset = first_elem["char_offset"]
-        # Only add preamble if there's content before the first element
+        # Skip if the document body starts at the very first character.
         if first_elem_page > 1 or first_elem_offset > 0:
-            preamble_text = _extract_node_text(pages, 1, first_elem_page,
-                                               end_char_offset=first_elem_offset)
+            preamble_text = _extract_node_text(pages, 1, first_elem_page, end_char_offset=first_elem_offset)
             preamble_children = _split_preamble(preamble_text, 1, first_elem_page)
 
             if preamble_children:
@@ -1622,7 +1676,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
                     "nodes": preamble_children,
                 })
             else:
-                # Fallback: keep as single blob if splitting fails
+                # If preamble splitting fails, emit the text as a single unsplit node.
                 output_nodes.append({
                     "title": "Pembukaan (Menimbang, Mengingat, Memutuskan)",
                     "node_id": "P000",
@@ -1633,20 +1687,19 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
 
     output_nodes.extend(clean_tree_for_output(tree, pages))
 
-    # Parse PENJELASAN per-Pasal and attach to leaf nodes
+    # Parse the PENJELASAN section and attach each entry to its Pasal leaf node.
     penjelasan_data = None
     if penjelasan_page:
         penjelasan_data = parse_penjelasan(pages, penjelasan_page, total_pages)
         attach_penjelasan(output_nodes, penjelasan_data["pasal"])
         matched = sum(1 for n in iter_leaves(output_nodes) if n.get("penjelasan"))
         if verbose:
-            log.info(f"penjelasan: {len(penjelasan_data['pasal'])} pasal parsed, "
-                     f"{matched} matched to tree nodes")
+            log.info(f"penjelasan: {len(penjelasan_data['pasal'])} pasal parsed, " f"{matched} matched to tree nodes")
 
     if verbose:
         log.info(f"done ({time.time() - t0:.1f}s)")
 
-    # Step 6: LLM text cleanup (on by default, skip with --no-llm)
+    # Step 6: LLM cleanup of remaining OCR artifacts.
     llm_time = 0.0
     if use_llm_cleanup:
         if verbose:
@@ -1665,18 +1718,16 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         else:
             log.info(f"total time: {total_time:.1f}s")
 
-    # Sub-Pasal splitting based on requested granularity.
+    # Split Pasal leaves into finer sub-nodes based on the requested granularity.
     if granularity == "ayat":
         output_nodes = ayat_split_leaves(output_nodes)
     elif granularity == "full_split":
         output_nodes = deep_split_leaves(output_nodes)
 
-    # Final pass: strip residual OCR header/footer leaks from all leaf texts
     strip_ocr_headers(output_nodes)
 
-    # Store unmatched penjelasan at doc level for retrieval agent fallback.
-    # With perubahan support, amended Pasals are now leaf nodes and should
-    # match normally; only fall back to doc-level if nothing matched.
+    # Only store penjelasan at the document level if no Pasal nodes were matched.
+    # In Perubahan documents, amended Pasals appear as leaf nodes and should match normally, making doc-level storage rarely needed.
     penjelasan_pasal = None
     if penjelasan_data and penjelasan_data["pasal"]:
         if matched == 0:
@@ -1697,8 +1748,9 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
 
     return result
 
+
 def print_tree(nodes: list[dict], indent: int = 0):
-    """Pretty-print tree structure."""
+    """Print each node's id, title, and page range, indented by depth."""
     for node in nodes:
         prefix = "  " * indent
         page_range = f"[p.{node['start_index']}-{node['end_index']}]"
@@ -1709,39 +1761,34 @@ def print_tree(nodes: list[dict], indent: int = 0):
 # ============================================================
 # 8. SUB-PASAL LEAF SPLITTING
 # ============================================================
-# Post-processing step that splits Pasal leaf nodes into finer sub-nodes.
-# Used by granularity="ayat" and granularity="full_split".
-#
-# Hierarchy: Pasal → Ayat (1)/(2)/... → Huruf a./b./... → Angka 1./2./...
-#
-# "ayat" mode:      splits to Ayat only (no Huruf/Angka recursion)
-# "full_split" mode: recursively splits to the deepest level present
+# Splits Pasal leaf nodes into finer sub-nodes based on the requested granularity.
+# The split hierarchy is: Pasal, then Ayat (1)/(2)/..., then Huruf a./b./..., then Angka 1./2./...
+# The "ayat" granularity splits to Ayat only; "full_split" recurses to the deepest level present.
 
+# Patterns for detecting sub-Pasal structure and penjelasan section headings.
 _AYAT_RE = re.compile(r'(?:^|\n)\((\d+)\)\s', re.MULTILINE)
 _HURUF_RE = re.compile(r'(?:^|\n)([a-z])\.\s', re.MULTILINE)
 _ANGKA_ITEM_RE = re.compile(r'(?:^|\n)(\d+)\.\s', re.MULTILINE)
 _PENJ_AYAT_RE = re.compile(r'Ayat\s*\((\d+)\)\s*\n', re.MULTILINE)
 _PENJ_HURUF_RE = re.compile(r'Huruf\s+([a-z])\s*\n', re.MULTILINE)
 
+def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: str) -> list[tuple[int, str]] | None:
+    """Find structural markers in text and verify they form a consecutive sequence.
 
-def _find_and_validate_markers(
-    text: str, pattern: re.Pattern, expected_start: str
-) -> list[tuple[int, str]] | None:
-    """Find structural markers in text and validate they form a consecutive sequence.
-
-    Consecutive means: starts at expected_start and increments by 1 (a→b→c or 1→2→3).
-    Returns list of (char_pos, label) if valid sequence with ≥2 items, else None.
+    A valid sequence starts at expected_start and increments by one (letters a, b, c
+    or numbers 1, 2, 3). Returns a list of (char_pos, label) tuples if at least two
+    consecutive markers are found, or None otherwise.
     """
     matches = list(pattern.finditer(text))
     if len(matches) < 2:
         return None
 
-    # Deduplicate consecutive markers with the same label.
-    # Page-break text overlap can create duplicates like "(5) Selain\n\n(5) Selain dikenai..."
+    # Collapse consecutive matches with the same label. Page-break text overlap
+    # can produce duplicates, e.g. "(5) Selain" appearing twice on adjacent pages.
     deduped: list[re.Match] = [matches[0]]
     for m in matches[1:]:
         if m.group(1) == deduped[-1].group(1):
-            deduped[-1] = m  # replace with later (more complete) occurrence
+            deduped[-1] = m  # keep the later, more complete occurrence
         else:
             deduped.append(m)
     matches = deduped
@@ -1768,12 +1815,11 @@ def _find_and_validate_markers(
     return [(m.start(), m.group(1)) for m in matches]
 
 
-def _split_text_by_markers(
-    text: str, markers: list[tuple[int, str]]
-) -> tuple[str, list[tuple[str, str]]]:
-    """Split text into segments at each marker position.
+def _split_text_by_markers(text: str, markers: list[tuple[int, str]]) -> tuple[str, list[tuple[str, str]]]:
+    """Split text at each marker position into labelled segments.
 
-    Returns (intro_text, [(label, segment_text), ...]).
+    Returns a 2-tuple of (intro_text, segments) where intro_text is the content
+    before the first marker and segments is a list of (label, segment_text) pairs.
     """
     positions = [pos for pos, _ in markers]
     labels = [label for _, label in markers]
@@ -1781,6 +1827,7 @@ def _split_text_by_markers(
     intro = text[:positions[0]].strip()
 
     segments = []
+    # Slice between adjacent markers; the final segment extends to the end of the text.
     for i, (pos, label) in enumerate(zip(positions, labels)):
         end = positions[i + 1] if i + 1 < len(positions) else len(text)
         segment = text[pos:end].strip()
@@ -1789,13 +1836,13 @@ def _split_text_by_markers(
     return intro, segments
 
 
-def _distribute_penjelasan(
-    penjelasan: str | None, sub_nodes: list[dict], kind: str
-) -> None:
-    """Distribute penjelasan text to sub-nodes in-place.
+def _distribute_penjelasan(penjelasan: str | None, sub_nodes: list[dict], kind: str) -> None:
+    """Assign penjelasan text to each sub-node in-place.
 
-    Tries to parse penjelasan for per-item markers (Ayat (N) or Huruf X).
-    Assigns matched sub-node its specific explanation; unmatched nodes get full text.
+    Parses the penjelasan for per-item section headings (Ayat (N) or Huruf X) and
+    assigns each matched sub-node its specific excerpt. Sub-nodes with no matching
+    entry receive the full penjelasan text. For Angka items, the full text is always
+    assigned since there is no known per-item heading pattern.
     """
     if not penjelasan:
         return
@@ -1805,16 +1852,18 @@ def _distribute_penjelasan(
     elif kind == "huruf":
         split_re = _PENJ_HURUF_RE
     else:
-        # angka: no known penjelasan distribution pattern
+        # Angka has no per-item penjelasan heading pattern; assign full text to all.
         for node in sub_nodes:
             node["penjelasan"] = penjelasan
         return
 
     parts = split_re.split(penjelasan)
+    # re.split with a capturing group produces alternating [text, label, text, label, ...]
     penj_map = {}
     for i in range(1, len(parts) - 1, 2):
         penj_map[parts[i]] = parts[i + 1].strip()
 
+    # Assign each sub-node its specific excerpt, or the full text if no match found.
     for node in sub_nodes:
         label = node.get("_split_label")
         if label and label in penj_map:
@@ -1828,19 +1877,10 @@ def _strip_leading_junk(text: str) -> str:
     return re.sub(r'^[\s:;,\-]+', '', text)
 
 
-# Ayat-only splitting (granularity="ayat")
+def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
+    """Split text into Ayat sub-nodes without recursing into Huruf or Angka.
 
-def _try_ayat_split(
-    text: str,
-    parent_id: str,
-    parent_title: str,
-    parent_start: int,
-    parent_end: int,
-    penjelasan: str | None,
-) -> list[dict] | None:
-    """Split text into Ayat sub-nodes only. No recursion into Huruf/Angka.
-
-    Returns a list of Ayat child dicts if ayat markers found, else None.
+    Returns a list of Ayat child dicts if Ayat markers are found, or None.
     """
     text = _strip_leading_junk(text)
 
@@ -1850,6 +1890,7 @@ def _try_ayat_split(
 
     intro, segments = _split_text_by_markers(text, ayat_markers)
     sub_nodes = []
+    # Build one Ayat sub-node for each matched segment.
     for i, (label, segment) in enumerate(segments, 1):
         sub_id = f"{parent_id}_a{i}"
         sub_title = f"{parent_title} Ayat ({label})"
@@ -1869,8 +1910,9 @@ def _try_ayat_split(
 
 
 def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
-    """Apply a leaf split function recursively and preserve non-leaf structure."""
+    """Apply a split function to every leaf node, preserving the container structure."""
     result = []
+    # Recurse into container nodes; apply split_func only to leaves that have text.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             node["nodes"] = _split_leaves_with(node["nodes"], split_func)
@@ -1889,10 +1931,10 @@ def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
 
 
 def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
-    """Walk the tree and split every leaf node into Ayat sub-nodes only.
+    """Split every leaf node in the tree into Ayat sub-nodes.
 
-    Does NOT recurse deeper into Huruf/Angka. If a Pasal has no Ayat markers,
-    it stays as a leaf unchanged.
+    Only splits at the Ayat level; Huruf and Angka sub-structure is not examined.
+    Leaves with no Ayat markers are kept unchanged.
     """
     def _split(node: dict):
         return _try_ayat_split(
@@ -1907,19 +1949,10 @@ def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
     return _split_leaves_with(nodes, _split)
 
 
-# Recursive deep splitting (granularity="full_split")
+def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
+    """Recursively split text into the smallest structural sub-nodes present.
 
-def _try_deep_split(
-    text: str,
-    parent_id: str,
-    parent_title: str,
-    parent_start: int,
-    parent_end: int,
-    penjelasan: str | None,
-) -> list[dict] | None:
-    """Recursively split text into the smallest structural sub-nodes.
-
-    Tries ayat first, then huruf, then angka items.
+    Tries Ayat first, then Huruf, then Angka. Each level recurses into the next.
     Returns a list of child node dicts if a split was found, or None.
     """
     text = _strip_leading_junk(text)
@@ -1929,6 +1962,7 @@ def _try_deep_split(
     if ayat_markers:
         intro, segments = _split_text_by_markers(text, ayat_markers)
         sub_nodes = []
+        # Build one Ayat sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
             sub_id = f"{parent_id}_a{i}"
             sub_title = f"{parent_title} Ayat ({label})"
@@ -1957,6 +1991,7 @@ def _try_deep_split(
     if huruf_markers:
         intro, segments = _split_text_by_markers(text, huruf_markers)
         sub_nodes = []
+        # Build one Huruf sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
             sub_id = f"{parent_id}_h{i}"
             sub_title = f"{parent_title} Huruf {label}"
@@ -1985,6 +2020,7 @@ def _try_deep_split(
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
         sub_nodes = []
+        # Angka is the deepest level; build leaf nodes without recursing further.
         for i, (label, segment) in enumerate(segments, 1):
             sub_id = f"{parent_id}_n{i}"
             sub_title = f"{parent_title} Angka {label}"
@@ -2005,9 +2041,10 @@ def _try_deep_split(
 
 
 def deep_split_leaves(nodes: list[dict]) -> list[dict]:
-    """Walk the tree and recursively split every leaf node to its deepest sub-structure.
+    """Recursively split every leaf node in the tree to its deepest sub-structure.
 
-    Tries Ayat → Huruf → Angka. If no sub-structure found, leaf stays unchanged.
+    Tries Ayat, then Huruf, then Angka at each level. Leaves with no detectable
+    sub-structure are kept unchanged.
     """
     def _split(node: dict):
         return _try_deep_split(
@@ -2021,7 +2058,6 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
 
     return _split_leaves_with(nodes, _split)
 
-
 # ============================================================
 # MAIN
 # ============================================================
@@ -2031,14 +2067,14 @@ if __name__ == "__main__":
                         format="%(asctime)s  %(levelname)-7s  %(message)s",
                         datefmt="%H:%M:%S")
 
-    # Parse flags
+    # Extract boolean flags from sys.argv before processing positional args.
     args = sys.argv[1:]
     skip_llm = "--no-llm" in args
     if skip_llm:
         args.remove("--no-llm")
     use_llm = not skip_llm
 
-    # Parse --granularity flag (default: pasal)
+    # Extract the --granularity flag and its value, defaulting to pasal.
     gran = "pasal"
     if "--granularity" in args:
         idx = args.index("--granularity")
@@ -2057,12 +2093,11 @@ if __name__ == "__main__":
         log.error("GEMINI_API_KEY is not set. Set it for LLM cleanup, or use --no-llm to skip.")
         sys.exit(1)
 
-    # Determine input
-    # Join remaining args to handle paths with spaces
+    # Remaining args form the PDF path; join them to handle paths containing spaces.
     pdf_arg = " ".join(args).strip() if args else ""
     if not pdf_arg:
         pdf_dir = Path("data/raw/UU/pdfs")
-        # Process all main UU PDFs (not lampiran/salinan)
+        # When no path is given, process all main UU PDFs, excluding Lampiran and Salinan variants.
         pdf_files = sorted([
             f for f in pdf_dir.glob("UU Nomor *.pdf")
             if "Lampiran" not in f.name and "Salinan" not in f.name
@@ -2073,6 +2108,7 @@ if __name__ == "__main__":
     else:
         pdf_files = [Path(pdf_arg)]
 
+    # Parse each PDF and write its result to a JSON file.
     for pdf_path in pdf_files:
         log.info(f"processing {pdf_path.name}")
 
@@ -2082,7 +2118,6 @@ if __name__ == "__main__":
         print(f"\nTree structure ({gran})")
         print_tree(result["structure"])
 
-        # Save output
         output_dir = Path("results")
         output_dir.mkdir(exist_ok=True)
         output_path = output_dir / (pdf_path.stem + "_structure.json")
