@@ -493,25 +493,24 @@ def _clean_penjelasan_text(text: str) -> str:
 
 def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
     """Attach per-Pasal penjelasan text to matching leaf nodes in the tree."""
-    for node in nodes:
-        if "nodes" in node and node["nodes"]:
-            attach_penjelasan(node["nodes"], pasal_dict)
-        elif "text" in node:
-            # Leaf node: match Pasal number from title (e.g. "Pasal 5" → "5", "Pasal 119I" → "119I")
-            m = re.match(r'Pasal\s+(.+)', node.get("title", ""))
-            if m:
-                pasal_key = m.group(1).strip()
-                # Try exact match first, then just the numeric part
-                if pasal_key in pasal_dict:
-                    node["penjelasan"] = pasal_dict[pasal_key]
+    for node in iter_leaves(nodes):
+        if "text" not in node:
+            continue
+        # Leaf node: match Pasal number from title (e.g. "Pasal 5" → "5", "Pasal 119I" → "119I")
+        m = re.match(r'Pasal\s+(.+)', node.get("title", ""))
+        if m:
+            pasal_key = m.group(1).strip()
+            # Try exact match first, then just the numeric part
+            if pasal_key in pasal_dict:
+                node["penjelasan"] = pasal_dict[pasal_key]
+            else:
+                # Try numeric-only match (strip suffix)
+                num_m = re.match(r'(\d+)', pasal_key)
+                if num_m and num_m.group(1) in pasal_dict:
+                    node["penjelasan"] = pasal_dict[num_m.group(1)]
                 else:
-                    # Try numeric-only match (strip suffix)
-                    num_m = re.match(r'(\d+)', pasal_key)
-                    if num_m and num_m.group(1) in pasal_dict:
-                        node["penjelasan"] = pasal_dict[num_m.group(1)]
-                    else:
-                        node["penjelasan"] = None
-            # Non-Pasal leaf nodes (Pembukaan, etc.) don't get penjelasan
+                    node["penjelasan"] = None
+        # Non-Pasal leaf nodes (Pembukaan, etc.) don't get penjelasan
 
 # ============================================================
 # 3. STRUCTURAL ELEMENT DETECTION
@@ -1869,26 +1868,15 @@ def _try_ayat_split(
     return sub_nodes
 
 
-def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
-    """Walk the tree and split every leaf node into Ayat sub-nodes only.
-
-    Does NOT recurse deeper into Huruf/Angka. If a Pasal has no Ayat markers,
-    it stays as a leaf unchanged.
-    """
+def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
+    """Apply a leaf split function recursively and preserve non-leaf structure."""
     result = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            node["nodes"] = ayat_split_leaves(node["nodes"])
+            node["nodes"] = _split_leaves_with(node["nodes"], split_func)
             result.append(node)
         elif "text" in node:
-            sub_nodes = _try_ayat_split(
-                text=node["text"],
-                parent_id=node["node_id"],
-                parent_title=node["title"],
-                parent_start=node["start_index"],
-                parent_end=node["end_index"],
-                penjelasan=node.get("penjelasan"),
-            )
+            sub_nodes = split_func(node)
             if sub_nodes:
                 branch = {k: v for k, v in node.items() if k not in ("text", "penjelasan")}
                 branch["nodes"] = sub_nodes
@@ -1898,6 +1886,25 @@ def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
         else:
             result.append(node)
     return result
+
+
+def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
+    """Walk the tree and split every leaf node into Ayat sub-nodes only.
+
+    Does NOT recurse deeper into Huruf/Angka. If a Pasal has no Ayat markers,
+    it stays as a leaf unchanged.
+    """
+    def _split(node: dict):
+        return _try_ayat_split(
+            text=node["text"],
+            parent_id=node["node_id"],
+            parent_title=node["title"],
+            parent_start=node["start_index"],
+            parent_end=node["end_index"],
+            penjelasan=node.get("penjelasan"),
+        )
+
+    return _split_leaves_with(nodes, _split)
 
 
 # Recursive deep splitting (granularity="full_split")
@@ -2002,29 +2009,17 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
 
     Tries Ayat → Huruf → Angka. If no sub-structure found, leaf stays unchanged.
     """
-    result = []
-    for node in nodes:
-        if "nodes" in node and node["nodes"]:
-            node["nodes"] = deep_split_leaves(node["nodes"])
-            result.append(node)
-        elif "text" in node:
-            sub_nodes = _try_deep_split(
-                text=node["text"],
-                parent_id=node["node_id"],
-                parent_title=node["title"],
-                parent_start=node["start_index"],
-                parent_end=node["end_index"],
-                penjelasan=node.get("penjelasan"),
-            )
-            if sub_nodes:
-                branch = {k: v for k, v in node.items() if k not in ("text", "penjelasan")}
-                branch["nodes"] = sub_nodes
-                result.append(branch)
-            else:
-                result.append(node)
-        else:
-            result.append(node)
-    return result
+    def _split(node: dict):
+        return _try_deep_split(
+            text=node["text"],
+            parent_id=node["node_id"],
+            parent_title=node["title"],
+            parent_start=node["start_index"],
+            parent_end=node["end_index"],
+            penjelasan=node.get("penjelasan"),
+        )
+
+    return _split_leaves_with(nodes, _split)
 
 
 # ============================================================
