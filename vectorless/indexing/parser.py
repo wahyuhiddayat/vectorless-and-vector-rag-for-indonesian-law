@@ -1,51 +1,29 @@
-"""
-Rule-based parser for Indonesian legal documents (UU/PP/Perpres).
-Converts PDF to hierarchical tree structure (PageIndex-compatible format).
-
-Exploits the predictable hierarchy defined by UU No. 12/2011:
-    BAB > Bagian > Paragraf > Pasal
-to build a structural tree index without LLM-based indexing.
-
-Supports 3 leaf granularity levels via the `granularity` parameter:
-    - "pasal":      leaf = entire Pasal text (coarsest)
-    - "ayat":       leaf = Ayat within each Pasal
-    - "full_split": leaf = smallest unit: Ayat > Huruf > Angka (finest)
-"""
-
 import re
 import json
+import logging
 import os
 import sys
 import time
-import fitz  # PyMuPDF
+import fitz
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+
+_LLM_BATCH_SIZE = 50_000 # ~50K chars ≈ ~12K tokens; smaller batches give more reliable Gemini JSON output.
+
 # ============================================================
-# 1. TEXT EXTRACTION & CLEANING
+# TEXT EXTRACTION & CLEANING
 # ============================================================
 
 def _detect_two_columns(blocks: list[dict], page_width: float,
                         is_landscape: bool = False) -> list[dict]:
-    """
-    Detect two-column gazette layout and reorder blocks for correct reading order.
-
-    Indonesian gazette PDFs (Lembaran Negara) use two-column landscape layout.
-    Column detection is restricted to landscape pages (width > height) to avoid
-    false positives on regular portrait PDFs where blocks may incidentally
-    straddle the midpoint. For portrait pages, blocks are sorted by (y, x)
-    which is still an improvement over PyMuPDF's unsorted default.
-
-    Returns blocks in correct reading order.
-    """
+    """Reorder text blocks for correct reading order; handles two-column gazette layout."""
     if len(blocks) < 4 or not is_landscape:
         return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
 
-    # Two-column detection: only for landscape gazette pages.
-    # Landscape pages (width > height) are gazette (Lembaran Negara) format
-    # with left/right columns that need special handling.
+    # Landscape gazette pages use left/right columns.
     midpoint = page_width / 2
 
-    # Classify each block into exactly one column using its center x-coordinate.
     left = []
     right = []
     for b in blocks:
@@ -55,10 +33,10 @@ def _detect_two_columns(blocks: list[dict], page_width: float,
         else:
             right.append(b)
 
-    # Wide blocks span >60% of page width (e.g. full-width headers/titles)
+    # Wide blocks span >60% of page width (full-width headers/titles)
     wide_blocks = [b for b in blocks if (b["x1"] - b["x0"]) > page_width * 0.6]
 
-    # Two-column: both sides have content, and most blocks are not full-width
+    # Two-column: both halves populated, <30% full-width blocks
     if len(left) >= 3 and len(right) >= 3 and len(wide_blocks) < len(blocks) * 0.3:
         left_sorted = sorted(left, key=lambda b: (b["y0"], b["x0"]))
         right_sorted = sorted(right, key=lambda b: (b["y0"], b["x0"]))
@@ -69,20 +47,14 @@ def _detect_two_columns(blocks: list[dict], page_width: float,
 
 
 def _extract_page_text(page) -> str:
-    """
-    Extract text from a single PyMuPDF page with column-aware ordering.
-
-    Uses get_text("dict") to get bounding box coordinates for each text block,
-    detects two-column gazette layout, and reorders blocks so left column is
-    read fully before right column.
-    """
+    """Extract and column-sort text from a single PyMuPDF page."""
     page_dict = page.get_text("dict")
-    page_width = page_dict.get("width", 595)  # A4 default fallback
+    page_width = page_dict.get("width", 595) # A4 default
     raw_blocks = page_dict.get("blocks", [])
 
     text_blocks = []
     for b in raw_blocks:
-        if b.get("type") != 0:  # 0 = text block, 1 = image
+        if b.get("type") != 0: # 0 = text, 1 = image
             continue
         block_text = ""
         for line in b.get("lines", []):
@@ -106,18 +78,13 @@ def _extract_page_text(page) -> str:
 
 
 def extract_pages(pdf_path: str) -> list[dict]:
-    """Extract text from each page of a PDF using PyMuPDF.
-
-    Uses column-aware extraction to handle two-column gazette PDFs
-    (Lembaran Negara format) where PyMuPDF's default extraction reads
-    across columns instead of reading each column top-to-bottom.
-    """
+    """Extract raw text from every page of a PDF using PyMuPDF."""
     doc = fitz.open(pdf_path)
     pages = []
     for i, page in enumerate(doc):
         text = _extract_page_text(page)
         pages.append({
-            "page_num": i + 1,  # 1-indexed
+            "page_num": i + 1, # 1-indexed
             "raw_text": text,
         })
     doc.close()
@@ -125,13 +92,7 @@ def extract_pages(pdf_path: str) -> list[dict]:
 
 def clean_page_text(text: str) -> str:
     """Remove common noise from Indonesian legal PDF text."""
-    # --- Header removal ---
-    # OCR often garbles "PRESIDEN REPUBLIK INDONESIA" into many variants.
-    # Each regex below targets a different corruption pattern observed across
-    # 10+ UU PDFs from BPK JDIH. The strings look like garbage but are real
-    # OCR outputs — do not "clean up" these regex patterns themselves.
-
-    # Multi-line "PRESIDEN\nREPUBLIK INDONESIA" with OCR variants
+    # OCR corruptions of "PRESIDEN REPUBLIK INDONESIA" (multi-line variant)
     text = re.sub(
         r'(?:SALINAN\s*)?(?:Menimbang\s*)?'
         r'(?:FRESIDEN|PRESIDEN|PNESIDEN|FTjTJTFiTIilNEEtrtrEIn!)\s*\n'
@@ -157,14 +118,9 @@ def clean_page_text(text: str) -> str:
     # Remove SK No footer like "SK No 273836A", "SK No248816A"
     text = re.sub(r'SK\s+No\s*\d+\s*A.*$', '', text, flags=re.MULTILINE)
 
-    # Split glued Pasal/BAB headings where word is concatenated without space:
-    #   "diperolehPasal 2" → "diperoleh\nPasal 2"
-    #   "rupiah),Pasal 7" → "rupiah),\nPasal 7"
-    #   "(3)Pasal 4" → "(3)\nPasal 4"
-    # Uses lookbehind: only split when preceded by letter/digit/punct (not space/newline)
-    # This preserves "dalam Pasal 3" on separate lines
+    # Split glued headings: "diperolehPasal 2" → "diperoleh\nPasal 2"
     text = re.sub(r'([^\s])(?=Pasal\s+\d)', r'\1\n', text)
-    # Handle glued Pasal with no space: "Pasal22" → "Pasal 22" (on its own line)
+    # No-space variant: "Pasal22" → "Pasal 22"
     text = re.sub(r'^(Pasal)(\d)', r'\1 \2', text, flags=re.MULTILINE)
 
     # Split glued BAB headings similarly
@@ -174,46 +130,27 @@ def clean_page_text(text: str) -> str:
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
 
-    # Fix font-encoding issues in headings:
-    #   O (U+004F) → 0, l (U+006C) → 1, I (U+0049) → 1
-    # Only apply to lines that look like structural headings (Pasal, BAB, etc.)
+    # Fix font-encoding OCR artifacts (O→0, l→1, I→1) in headings
     text = fix_ocr_artifacts(text)
 
     return text.strip()
 
 def fix_ocr_artifacts(text: str) -> str:
-    """
-    Fix OCR artifacts in ayat numbering and remove page-continuation noise.
-
-    Handles font-encoding issues where heading fonts encode:
-      0 (zero) as O (letter O)
-      1 (one) as l (letter l) or I (letter I)
-
-    Also fixes broken ayat patterns like "(2t" → "(2)" and removes
-    trailing dots from Pasal continuation markers.
-
-    NOTE: Pasal heading numbers are NOT fixed here — they use the smarter
-    _parse_pasal_number() which distinguishes suffix letters from OCR digits.
-    """
+    """Fix OCR artifacts in ayat numbering (O→0, l/I→1) and strip page-continuation noise."""
     lines = text.split('\n')
     fixed_lines = []
 
     for line in lines:
         stripped = line.strip()
 
-        # Fix ayat pattern: "(2l)" → "(21)", "(l)" → "(1)", "(s)" → "(5)"
-        # Also handles: "(2t" → "(2)", "t2t" → "(2)", "l2l" → "(2)"
+        # Fix misread ayat numbers inside closed parens: "(2l)" -> "(21)", "(l)" -> "(1)"
         line = re.sub(
             r'\(([0-9OlI]+)\)',
             lambda m: '(' + _normalize_ocr_digits(m.group(1)) + ')',
             line
         )
 
-        # Fix broken ayat patterns from OCR:
-        # "(2t" (missing close paren, t is noise) → "(2)"
-        # "t2t" (garbled parens) → "(2)"
-        # "l2l" (garbled parens) → "(2)"
-        # "(s)" where s should be 5 → "(5)"
+        # Fix malformed parens (missing/replaced closing paren): "(2t" -> "(2)"
         line = re.sub(r'\((\d+)[t]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\b[tl](\d+)[tl]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\(s\)', '(5)', line)
@@ -226,13 +163,9 @@ def fix_ocr_artifacts(text: str) -> str:
 
     return '\n'.join(fixed_lines)
 
-def _normalize_ocr_digits(s: str) -> str:
-    """
-    Normalize a string that should be purely numeric but may contain
-    OCR misreads: O→0, l→1, I→1, and spurious spaces.
 
-    Only converts if the result would be a valid integer.
-    """
+def _normalize_ocr_digits(s: str) -> str:
+    """Normalize OCR-misread digits in a string (O→0, l→1, I→1)."""
     # Remove spaces (handles "9 I" → "9I")
     s_nospace = s.replace(' ', '')
     normalized = ''
@@ -249,25 +182,10 @@ def _normalize_ocr_digits(s: str) -> str:
     # Verify the result is actually numeric
     if normalized.isdigit():
         return normalized
-    return s  # Return original if normalization doesn't produce a number
+    return s  # non-numeric, return original
 
 def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
-    """
-    Parse a raw Pasal number string that may contain OCR artifacts.
-
-    Returns (number, suffix) where suffix is a letter A-Z or empty string.
-
-    Examples:
-        "40"    → ("40", "")
-        "4O"    → ("40", "")       # O is OCR'd 0
-        "119I"  → ("119", "I")     # I is suffix, not OCR'd 1
-        "9I"    → ("91", "")       # I is OCR'd 1 (since 9I with suffix would be unusual)
-        "2l"    → ("21", "")       # l is OCR'd 1
-        "9 I"   → ("91", "")       # space + I is OCR'd 1
-        "599A"  → ("599", "A")
-        "11G"   → ("11", "G")
-        "17M"   → ("17", "M")
-    """
+    """Parse a raw Pasal number string into (number, suffix), handling OCR artifacts."""
     # Remove spaces (handles "9 I" case)
     s = raw.replace(' ', '')
 
@@ -297,7 +215,7 @@ def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
                 # but "19I" → OCR for 191, "9I" → OCR for 91
                 return num_without, last_char
             else:
-                # Likely OCR: "9I" → Pasal 91
+                # "9I" is most likely OCR for 91
                 return num_with, ""
         elif num_without.isdigit():
             # Only works as number+suffix: "599A" → 599 + A
@@ -308,22 +226,19 @@ def _parse_pasal_number(raw: str) -> tuple[str | None, str]:
         else:
             return None, ""  # Neither interpretation works
     else:
-        # No trailing letter — just normalize digits
+        # No trailing letter, just normalize digits
         normalized = _normalize_ocr_digits(s)
         if normalized.isdigit():
             return normalized, ""
         return None, ""
+
 
 # ============================================================
 # 2. PENJELASAN (EXPLANATION SECTION) DETECTION
 # ============================================================
 
 def find_penjelasan_page(pages: list[dict]) -> int | None:
-    """
-    Detect the page where PENJELASAN (Explanation) section starts.
-    This section comes after the main body and should be separated.
-    Returns page_num or None if not found.
-    """
+    """Return the page number where PENJELASAN starts, or None if not found."""
     for page in pages:
         text = page["raw_text"]  # use raw text since PENJELASAN is usually clean
         if re.search(r'PENJ\S*SAN\s*\n\s*ATAS', text):
@@ -331,11 +246,7 @@ def find_penjelasan_page(pages: list[dict]) -> int | None:
     return None
 
 def find_closing_page(pages: list[dict]) -> int | None:
-    """
-    Detect the closing page (pengesahan).
-    UU uses 'Disahkan di Jakarta', PP/Perpres uses 'Ditetapkan di Jakarta'.
-    This marks the end of the main body.
-    """
+    """Return the closing/pengesahan page number, or None if not found."""
     for page in pages:
         text = page["raw_text"]
         if re.search(r'Di(?:sahkan|tetapkan) di Jakarta|Agar setiap orang mengetahuinya', text):
@@ -343,19 +254,7 @@ def find_closing_page(pages: list[dict]) -> int | None:
     return None
 
 def detect_perubahan(pages: list[dict]) -> bool:
-    """
-    Detect if a law is a Perubahan (amendment) UU/PP/Perpres.
-
-    Checks the law's title (between TENTANG and DENGAN RAHMAT) for keywords
-    "PERUBAHAN" or "PENYESUAIAN".
-
-    Scans first 3 pages because some PDFs have garbled page ordering or
-    the title spans multiple pages. Uses relaxed whitespace matching to
-    handle OCR that concatenates words (e.g. "TENTANGPENYESUAIAN").
-
-    Amendment UUs use Roman numeral articles (Pasal I, Pasal II) per UU 12/2011
-    convention. Arabic-numbered Pasals inside are quoted text from the amended law.
-    """
+    """Return True if the document is a Perubahan (amendment) UU/PP/Perpres."""
     if not pages:
         return False
 
@@ -385,11 +284,7 @@ def detect_perubahan(pages: list[dict]) -> bool:
     return False
 
 def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
-    """Detect if document is an omnibus law (e.g. Cipta Kerja).
-
-    Omnibus laws amend multiple existing laws, each with independent Pasal
-    numbering. Pasal validation is meaningless for these documents.
-    """
+    """Return True if the document is an omnibus law (e.g. Cipta Kerja) where Pasal validation is skipped."""
     # Check title (between TENTANG and DENGAN RAHMAT) for omnibus keywords.
     # Must be in title, not in preamble references to other laws.
     for page in pages[:3]:
@@ -403,23 +298,7 @@ def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
 
 def parse_penjelasan(pages: list[dict], penjelasan_page: int,
                      total_pages: int) -> dict:
-    """
-    Parse PENJELASAN section into umum (general) + per-Pasal explanations.
-
-    The PENJELASAN section of Indonesian laws has two parts:
-      I.  UMUM — general background/philosophy of the law
-      II. PASAL DEMI PASAL — per-article explanations
-
-    Returns:
-        {
-            "umum": "...",       # Text of section I. UMUM
-            "pasal": {           # Per-Pasal explanations keyed by Pasal number string
-                "1": "Cukup jelas.",
-                "2": "Huruf a\nYang dimaksud dengan ...",
-                "7": "Ayat (1)\nCukup jelas.\nAyat (2)\n...",
-            }
-        }
-    """
+    """Parse the PENJELASAN section and return {"umum": str, "pasal": {number: text}}."""
     # Extract all PENJELASAN text from cleaned pages
     parts = []
     for page in pages:
@@ -431,7 +310,7 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
     full_text = "\n\n".join(parts)
 
     # Split into UMUM and PASAL DEMI PASAL sections.
-    # "II." prefix is optional — some shorter UUs omit it or OCR drops it.
+    # "II." prefix is optional; some shorter UUs omit it or OCR drops it.
     # First space is \s* not \s+ because OCR sometimes merges "PASALDEMI".
     split_m = re.split(r'(?:II\.?\s*|[iI][lI1]\.?\s*)?PASAL\s*DEMI\s+PASAL', full_text, maxsplit=1,
                        flags=re.IGNORECASE)
@@ -439,7 +318,7 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
     if len(split_m) == 2:
         umum_raw, pasal_section = split_m
     else:
-        # No "PASAL DEMI PASAL" found — entire text is umum
+        # No "PASAL DEMI PASAL" found; entire text is umum
         return {"umum": _clean_penjelasan_text(full_text), "pasal": {}}
 
     # Clean UMUM: strip the PENJELASAN header lines
@@ -494,18 +373,8 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int,
     return {"umum": umum_text, "pasal": pasal_dict}
 
 def _fix_penjelasan_columns(text: str) -> str:
-    """
-    Fix OCR column-reading artifacts in PENJELASAN's PASAL DEMI PASAL section.
-
-    PyMuPDF reads multi-column compact layouts vertically, producing:
-      "Pasal\\nPasal\\nPasal\\n51\\nCukup jelas.\\n52\\nCukup jelas.\\n53\\n..."
-
-    This function detects sequences of N consecutive "Pasal" lines followed by
-    bare numbers, and reconstructs them as "Pasal 51\\nCukup jelas.\\nPasal 52\\n..."
-
-    Also handles bare numbers without "Pasal" prefix (continuation from stacked
-    pattern across page breaks).
-    """
+    """Rebuild vertically-read OCR columns in PASAL DEMI PASAL.
+    Converts stacked "Pasal\\nPasal\\n51\\n52" into "Pasal 51\\nPasal 52"."""
     lines = text.split('\n')
     result = []
     i = 0
@@ -579,7 +448,7 @@ def _fix_penjelasan_columns(text: str) -> str:
                     break
 
             if len(bare_entries) >= 2:
-                # This is a bare number sequence — prefix with "Pasal"
+                # Bare number sequence; prefix with "Pasal"
                 for idx, (num, start_j) in enumerate(bare_entries):
                     result.append(f"Pasal {num}")
                     # Add explanation text between this and next bare number
@@ -621,18 +490,12 @@ def _clean_penjelasan_text(text: str) -> str:
     return text.strip()
 
 def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
-    """
-    Attach per-Pasal penjelasan to leaf nodes in the tree.
-
-    Walks the tree and for each leaf node that is a Pasal, looks up its
-    number in pasal_dict and sets the 'penjelasan' field.
-    """
+    """Attach per-Pasal penjelasan text to matching leaf nodes in the tree."""
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             attach_penjelasan(node["nodes"], pasal_dict)
         elif "text" in node:
-            # Leaf node — try to match Pasal number
-            # Extract number from title: "Pasal 5" → "5", "Pasal 119I" → "119I"
+            # Leaf node: match Pasal number from title (e.g. "Pasal 5" → "5", "Pasal 119I" → "119I")
             m = re.match(r'Pasal\s+(.+)', node.get("title", ""))
             if m:
                 pasal_key = m.group(1).strip()
@@ -652,8 +515,7 @@ def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
 # 3. STRUCTURAL ELEMENT DETECTION
 # ============================================================
 
-# Roman numeral pattern for both BAB and Paragraf.
-# Optional trailing letter (A, B, C) for amendment-inserted sections like BAB VIIA, BAB IXA.
+# Roman numerals with optional trailing letter (e.g. BAB VIIA in amendments).
 ROMAN_NUMERAL = r'[IVXLCDM]+[A-Z]?'
 
 PATTERNS = {
@@ -662,9 +524,7 @@ PATTERNS = {
         re.MULTILINE
     ),
     "bagian": re.compile(
-        # Handle OCR typos: Bagian, Bagtan, Brgian, etc.
-        # Uses B + 1-5 lowercase chars + "an" to catch OCR corruptions
-        # while avoiding false matches (ordinal names like Kesatu anchor it)
+        # Tolerates OCR typos in "Bagian" (Bagtan, Brgian, etc.); ordinal name anchors the match.
         r'^B[a-z]{1,5}an\s+'
         r'(Kesatu|Kedua|Ketiga|Keempat|Kelima|Keenam|Ketujuh|Kedelapan|'
         r'Kesembilan|Kesepuluh|Kesebelas|Kedua\s*belas|Ketiga\s*belas|'
@@ -678,24 +538,15 @@ PATTERNS = {
         re.MULTILINE | re.IGNORECASE
     ),
     "pasal": re.compile(
-        # Capture entire number+suffix part, parse in code
-        # Handles: "Pasal 40", "Pasal 4O", "Pasal 119I", "Pasal 9 I", "Pasal 51 ..."
-        # Also handles OCR variant "Pasa1" (l→1) via Pasa[l1]
-        # Case-insensitive initial P handles OCR "pasal" → "Pasal"
-        # Requires space between "Pasal" and number
-        # Negative lookahead: next line must NOT start with reference continuation
-        # (ayat, huruf, angka, dan Pasal, sampai, jo) — these indicate "Pasal X" is
-        # a cross-reference, not a heading
+        # Handles OCR variants ("Pasa1", "Pasal 4O", "Pasal 119I").
+        # Negative lookahead prevents matching cross-references (ayat/huruf/angka on next line).
         r'^[Pp]asa[l1]\s+([0-9OlI][0-9A-Za-z \t]*?)\s*(?:\.\s*\.\s*[.\'])?$'
         r'(?:\n(?!ayat|huruf|angka|dan Pasal|sampai dengan|jo\.?\s)|\Z)',
         re.MULTILINE
     ),
 }
 
-# Words whose presence on the line immediately before "Pasal X" indicate that
-# the match is a cross-reference within body text, NOT a section heading.
-# Example: "...sebagaimana dimaksud dalam\nPasal 76D\ndipidana..." — here "dalam"
-# on the previous line means "Pasal 76D" is part of the sentence, not a heading.
+# Preceding-line words that make "Pasal X" a cross-reference, not a heading.
 _CROSS_REF_PRECEDING = frozenset({
     'dalam', 'pada', 'oleh', 'dari', 'dan', 'atau', 'dengan',
     'sebagaimana', 'berdasarkan', 'terhadap', 'menurut', 'tentang',
@@ -705,7 +556,7 @@ _CROSS_REF_PRECEDING = frozenset({
 # Level mapping for hierarchy.
 # For Perubahan (amendment) UUs:
 #   Pasal I (roman, 0) > Angka items (1) > BAB (2) > Bagian (3) > Paragraf (4) > Pasal (5)
-# For normal UUs: BAB (2) is the root — levels 0-1 are unused.
+# For normal UUs: BAB (2) is the root; levels 0-1 are unused.
 LEVEL_MAP = {
     "pasal_roman": 0,
     "angka": 1,
@@ -738,44 +589,25 @@ def _clean_heading_title(title: str) -> str:
     title = re.sub(r'Pertanggungi\s*awaban', 'Pertanggungjawaban', title)
     return title.strip()
 
-# Regex for Roman numeral Pasal headings used in Perubahan (amendment) UUs.
-# These are the actual articles of the amendment law (Pasal I, II, III, ...).
+# Roman numeral Pasal headings in Perubahan UUs (Pasal I, II, III, ...).
 PASAL_ROMAN = re.compile(
     r'^[Pp]asa[l1]\s+([IVXLC]+)\s*$',
     re.MULTILINE
 )
 
-# Regex for Angka (numbered amendment instructions) inside Pasal I of Perubahan UUs.
-# Matches patterns like:
-#   "76. Ketentuan Pasal 88 diubah sehingga..."
-#   "82. Pasal 99 dihapus."
-#   "86. Di antara Bab VII dan Bab VIII disisipkan..."
-#   "81. Bagian Keenam Bab VII dihapus."
-#   "1.\nKetentuan Pasal 1 ditambahkan..." (number on own line, text on next)
-# The instruction keyword check (Ketentuan/Pasal/Bagian/Bab/Di antara) prevents
-# false matches on numbered list items inside Pasal text ("1. Ibadah Haji adalah...").
+# Numbered amendment instructions in Perubahan UUs, e.g. "76. Ketentuan Pasal 88 diubah..."
+# Keyword anchor (Ketentuan/Pasal/Bab/Bagian) prevents false matches on regular list items.
 ANGKA_PATTERN = re.compile(
     r'^(\d+)\.\s*'                              # number + period at start of line
     r'((?:Ketentuan\s+)?'                       # optional "Ketentuan "
     r'(?:Pasal|Bagian|Bab|Di\s+antara)\b'       # instruction keyword
-    r'[^\n]*)',                                  # rest of first line
+    r'[^\n]*)',                                 # rest of first line
     re.MULTILINE
 )
 
 def detect_elements(pages: list[dict], body_end_page: int,
                     is_perubahan: bool = False) -> list[dict]:
-    """
-    Scan all pages and detect structural elements with their positions.
-    Only scans pages within the main body (before PENJELASAN/closing).
-
-    When is_perubahan=True (amendment UU), additionally detects:
-    - Roman numeral Pasal (Pasal I, II, ...) as level-0 root containers
-    - Angka items (numbered amendment instructions) as level-1 containers
-    Normal elements (BAB, Bagian, Paragraf, Arabic Pasal) also detected and
-    nest under the Angka items: Pasal I > Angka > BAB > Bagian > Pasal.
-
-    Returns a flat list of elements sorted by (page_num, char_offset).
-    """
+    """Scan pages and return a flat list of structural elements (BAB, Bagian, Paragraf, Pasal) sorted by position."""
     elements = []
 
     for page in pages:
@@ -819,9 +651,9 @@ def detect_elements(pages: list[dict], body_end_page: int,
                     "char_offset": m.start(),
                 })
             # Fall through to also detect normal elements (BAB, Bagian, Paragraf,
-            # Arabic Pasal) — these nest under the Angka items via the tree builder.
+            # Arabic Pasal) that nest under the Angka items via the tree builder.
 
-        # --- Normal element detection (runs for both regular and perubahan UUs) ---
+        # Normal element detection (runs for both regular and perubahan UUs)
 
         # Detect BAB
         for m in PATTERNS["bab"].finditer(text):
@@ -898,7 +730,7 @@ def detect_elements(pages: list[dict], body_end_page: int,
     # Build set of Roman Pasal positions for overlap removal
     roman_positions = {(e["page_num"], e["char_offset"])
                        for e in elements if e["type"] == "pasal_roman"}
-    # Find first Pasal I position — Angka items before it are false positives
+    # Find first Pasal I position; Angka items before it are false positives
     # (e.g., "1. Pasal 20, Pasal 21..." in the Mengingat/preamble section)
     first_roman = next(((e["page_num"], e["char_offset"])
                         for e in elements if e["type"] == "pasal_roman"), None)
@@ -908,8 +740,8 @@ def detect_elements(pages: list[dict], body_end_page: int,
             if (elem["page_num"], elem["char_offset"]) < first_roman:
                 continue
         # Skip Arabic Pasal that overlaps with a Roman Pasal at the same position.
-        # Both regexes can match "Pasal I" — Roman sees it as Roman numeral,
-        # Arabic sees "I" as OCR'd "1". Roman wins in perubahan UUs.
+        # Both regexes can match "Pasal I": Roman reads it as Roman numeral,
+        # Arabic reads "I" as OCR'd "1". Roman wins in perubahan UUs.
         if elem["type"] == "pasal" and (elem["page_num"], elem["char_offset"]) in roman_positions:
             continue
         # Same Pasal number on adjacent pages = likely page-break continuation
@@ -927,14 +759,7 @@ def detect_elements(pages: list[dict], body_end_page: int,
 
 def validate_pasal_sequence(elements: list[dict],
                            is_perubahan: bool = False) -> list[str]:
-    """
-    Check that Pasal numbers are monotonically increasing.
-    Returns list of warnings.
-
-    Skips validation for Perubahan UUs — amendment laws have non-monotonic
-    Pasal numbers by nature (Roman numeral articles I-IX, with arbitrary
-    referenced article numbers in between).
-    """
+    """Check Pasal sequence for gaps and reversals. Returns a list of warning strings."""
     if is_perubahan:
         return []  # Numbering is inherently non-monotonic in Perubahan UUs
 
@@ -954,6 +779,7 @@ def validate_pasal_sequence(elements: list[dict],
                 f"WARNING: Pasal {num} appears after Pasal {last_pasal_num} "
                 f"(page {elem['page_num']}) — possible OCR error or PENJELASAN leak"
             )
+        # Gap > 5 is unusual; smaller gaps (e.g. 2–3) are normal for sub-laws.
         elif num > last_pasal_num + 5:
             warnings.append(
                 f"WARNING: Gap in Pasal numbering: {last_pasal_num} -> {num} "
@@ -968,15 +794,7 @@ def validate_pasal_sequence(elements: list[dict],
 # ============================================================
 
 def assign_page_boundaries(elements: list[dict], total_pages: int):
-    """
-    Assign start_index, end_index, and end_char_offset to each element.
-
-    Each element's end_index is set to the page where the next same-or-higher
-    level element begins. end_char_offset enables intra-page slicing when
-    multiple elements share a page.
-
-    Mutates elements in place.
-    """
+    """Set start_index, end_index, and end_char_offset on each element in-place."""
     for i, elem in enumerate(elements):
         next_page = total_pages
         for j in range(i + 1, len(elements)):
@@ -990,27 +808,14 @@ def assign_page_boundaries(elements: list[dict], total_pages: int):
         elem["end_char_offset"] = None  # None means "to end of page"
         for j in range(i + 1, len(elements)):
             if elements[j]["page_num"] == elem["end_index"]:
-                # Next element starts on our end page — slice there
+                # Next element starts on the same end page; slice at its offset
                 elem["end_char_offset"] = elements[j]["char_offset"]
                 break
             elif elements[j]["page_num"] > elem["end_index"]:
                 break
 
 def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
-    """
-    Convert flat list of elements into a nested tree structure.
-
-    First assigns page boundaries (start/end indices) to each element,
-    then uses a stack-based approach where each element becomes a child
-    of the most recent element with a higher level (lower number).
-
-    Args:
-        elements: flat list from detect_elements(), sorted by position.
-        total_pages: total page count in the document body.
-
-    Returns:
-        list of root-level tree nodes, each with nested "nodes" children.
-    """
+    """Convert a flat element list into a nested BAB > Bagian > Pasal tree."""
     if not elements:
         return []
 
@@ -1049,19 +854,8 @@ def build_tree(elements: list[dict], total_pages: int) -> list[dict]:
     return root_nodes
 
 def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offset: int | None = None):
-    """
-    Refine node boundaries after initial tree construction.
-
-    Adjusts end_index so that:
-    - Each node ends where its next sibling begins (no overlap)
-    - The last sibling extends to its parent's end_index
-    - No node ends before it starts
-    - Parent expands if children extend beyond it
-
-    Also sets end_char_offset for intra-page slicing between siblings.
-    The last child inherits its parent's end_char_offset to prevent
-    text from the next section bleeding into the last node.
-    """
+    """Tighten node end_index and end_char_offset so siblings don't overlap.
+    Last child inherits parent's end_char_offset to prevent text bleed."""
     for i, node in enumerate(nodes):
         if i + 1 < len(nodes):
             next_node = nodes[i + 1]
@@ -1072,7 +866,7 @@ def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offs
             if next_start == old_end:
                 node["end_char_offset"] = next_node.get("start_char_offset", 0)
         else:
-            # Propagate parent's end_char_offset to last child so it doesn't capture text from the next section
+            # Pass parent's end_char_offset to last child to prevent text bleed.
             node["end_index"] = parent_end
             node["end_char_offset"] = parent_end_char_offset
 
@@ -1084,16 +878,9 @@ def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offs
         node["end_index"] = max(node["end_index"], node["start_index"])
 
 def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
-    """
-    Post-process a perubahan tree: move orphaned Pasals under their BAB.
-
-    When an amendment inserts a new BAB, the BAB heading and its Pasals appear
-    in separate Angka siblings. This finds BAB-leaf nodes and absorbs Pasals
-    from the immediately following Angka sibling.
-
-    Only handles explicit BAB insertions ("disisipkan ... bab").
-    Mutates tree in place. Returns count of Pasals moved.
-    """
+    """Move orphaned Pasals from the next Angka sibling under their BAB node.
+    Handles amendment UUs where a new BAB and its Pasals land in separate Angkas.
+    Mutates tree in place. Returns count of Pasals moved."""
     moved_count = 0
 
     for root_node in tree:
@@ -1183,10 +970,7 @@ def iter_leaves(nodes: list[dict]):
             yield node
 
 def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) -> list[dict]:
-    """
-    Remove internal fields, keep only PageIndex-compatible fields.
-    If pages is provided, embed text content in leaf nodes.
-    """
+    """Strip internal fields and embed leaf node text for PageIndex output."""
     result = []
     for node in nodes:
         clean = {
@@ -1197,19 +981,16 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
         }
         if node.get("nodes"):
             clean["nodes"] = clean_tree_for_output(node["nodes"], pages)
-            # Fix (Parser Fix 11): pasal_roman nodes in perubahan UUs can have
-            # their own substantive text (e.g., ayats) before their first child
-            # element (BAB heading, Arabic Pasal, Angka). The standard leaf-only
-            # text extraction loses this content. Recover it by extracting the
-            # text between the node's start and the first child's start position.
+            # Pasal_roman nodes in perubahan UUs may have their own text before
+            # their first child. Recover it by extracting up to the first child.
             if pages is not None and node.get("type") == "pasal_roman":
                 first_child = node["nodes"][0]
                 if first_child["start_index"] == node["start_index"]:
-                    # Child starts on the same page — extract up to child's char_offset
+                    # Child starts on same page; extract up to child's char_offset
                     own_end_page = node["start_index"]
                     own_end_char = first_child.get("start_char_offset") or None
                 else:
-                    # Child starts on a later page — extract pages up to the page before it
+                    # Child starts on a later page; extract up to the page before it
                     own_end_page = first_child["start_index"] - 1
                     own_end_char = None
                 if own_end_page >= node["start_index"]:
@@ -1221,7 +1002,7 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
                     if intro.strip():
                         clean["text"] = intro
         elif pages is not None:
-            # Leaf node — embed text with intra-page slicing
+            # Leaf node: embed text with intra-page slicing
             clean["text"] = _extract_node_text(
                 pages, node["start_index"], node["end_index"],
                 start_char_offset=node.get("start_char_offset", 0),
@@ -1237,19 +1018,8 @@ def clean_tree_for_output(nodes: list[dict], pages: list[dict] | None = None) ->
     return result
 
 def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | None:
-    """Split preamble text into Menimbang, Mengingat, and Menetapkan sub-nodes.
-
-    Indonesian legal documents have a standard preamble structure:
-      [Header] → Menimbang (a. bahwa...; b. bahwa...; ...)
-               → Mengingat (Pasal/UU references)
-               → MEMUTUSKAN: Menetapkan: ...
-
-    Strategy: find section boundaries BEFORE stripping keywords, then use
-    "Mengingat" keyword as primary boundary (fallback to content transition).
-
-    Returns list of child nodes, or None if splitting fails (fallback to blob).
-    """
-    # Step 1: Clean OCR noise — but preserve Mengingat/Menetapkan keywords
+    """Split preamble into Menimbang, Mengingat, and Menetapkan sub-nodes; returns None on failure."""
+    # Step 1: Clean OCR noise while preserving Mengingat/Menetapkan keywords
     # so they can be used as section boundaries first.
     _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
     noise_patterns = [
@@ -1275,13 +1045,8 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     if menimbang_m:
         before_menimbang = cleaned[:menimbang_m.start()]
         after_menimbang = cleaned[menimbang_m.end():]
-        # Fix (Parser Fix 10): In some PDFs (e.g., perpu-2-2022, uu-1-2026), PyMuPDF
-        # block sorting by (y0, x0) places the narrow "Menimbang :" label block AFTER
-        # the bahwa item blocks in the sorted text, so "a. bahwa", "b. bahwa", etc.
-        # appear BEFORE the "Menimbang" keyword.  _split_preamble() then slices from
-        # menimbang_m.end(), silently discarding items a–d.
-        # Recovery: if "a. bahwa" appears in the prefix (before_menimbang), prepend
-        # the orphaned bahwa items to the front of after_menimbang.
+        # Some PDFs place the "Menimbang:" label block after its bahwa items due to
+        # block sort order. If "a. bahwa" appears before the keyword, prepend it.
         bahwa_before_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', before_menimbang)
         if bahwa_before_m:
             after_menimbang = (
@@ -1337,10 +1102,8 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         # so we need the semicolon that ends the whole bahwa clause.
         # Search for semicolon followed by newline, then check what comes next.
         def _strip_mengingat_prefix(text: str) -> str:
-            """Strip 'Mengingat :?' prefix — either at the start or within the
-            first 200 chars (handles OCR garbage like 'ban atas\\nMengingat\\n'
-            that can appear between the final bahwa semicolon and the refs).
-            Parser Fix 12 - Bug A (extended)."""
+            """Strip 'Mengingat' prefix from start or within first 200 chars,
+            handling OCR garbage that can appear before the references."""
             stripped = re.sub(r'^\s*Mengingat\s*:?\s*\n?\s*', '', text)
             if stripped != text:
                 return stripped  # Found at start
@@ -1348,14 +1111,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             if kw_m:
                 after_kw = text[kw_m.end():]
                 return re.sub(r'^\s*:?\s*\n?\s*', '', after_kw)
-            return text  # No keyword found — return unchanged
+            return text  # not found, return as-is
 
         for semi_m in re.finditer(r';\s*\n', after_last):
             split_pos = last_bahwa_end + semi_m.end()
             remaining = preamble_body[split_pos:]
             remaining_stripped = _strip_mengingat_prefix(remaining)
-            # Skip if remaining starts at item 2+ — means item 1 is still within
-            # Menimbang and we haven't hit the real boundary yet. (Parser Fix 12)
+            # Skip if remaining starts at item 2+: item 1 is still within Menimbang,
+            # so this semicolon is not the real Menimbang/Mengingat boundary.
             if re.match(r'\s*[2-9]\d*[\.\s]+', remaining_stripped):
                 continue
             ref_m = re.match(
@@ -1367,10 +1130,9 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
                 mengingat_text = remaining_stripped.strip()
                 break
 
-        # Also try period-ending bahwa items (e.g. "...APBN 2026.\n1. Pasal 5...")
-        # where the last bahwa closes with "." instead of ";".
-        # Use stricter regex: must start at numbered item "1." to avoid false-
-        # positives from abbreviation periods mid-sentence. (Parser Fix 12 - Bug A)
+        # Also try period-ending bahwa items where the last bahwa closes with
+        # "." instead of ";". Stricter regex requires "1." to avoid false
+        # positives from abbreviation periods mid-sentence.
         if menimbang_text is None:
             for period_m in re.finditer(r'\.\s*\n', after_last):
                 split_pos = last_bahwa_end + period_m.end()
@@ -1402,15 +1164,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             menimbang_text = preamble_body[:mengingat_m.start()].strip()
             mengingat_text = preamble_body[mengingat_m.start():].strip()
 
-    # No split found — keep all as Menimbang
+    # No split found; keep all as Menimbang
     if menimbang_text is None:
         menimbang_text = preamble_body
         mengingat_text = None
 
     # Step 5: Clean up and build children
-    # Strip trailing ghost "Mengingat" OCR keyword from Menimbang text — margin
-    # bleed can leave a lone "Mengingat" line at the very end of the section.
-    # (Parser Fix 12 - Bug B)
+    # Strip trailing "Mengingat" OCR keyword from Menimbang: margin bleed can
+    # leave a lone "Mengingat" at the very end of the section.
     menimbang_text = re.sub(r'\s*\bMengingat\b\s*$', '', menimbang_text).strip()
     menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
     if not menimbang_text:
@@ -1428,18 +1189,14 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
 
     if mengingat_text:
         # Strip leading colon/whitespace OCR artifact (e.g. ": 1. Pasal..." →
-        # "1. Pasal...") that appears when "Mengingat :" label is on the same
-        # line as the first reference. (Parser Fix 12 - Fix 4)
+        # "1. Pasal...") when "Mengingat :" label is on the same line as ref 1.
         mengingat_text = re.sub(r'^[\s:]+', '', mengingat_text)
-        # Strip trailing "Dengan Persetujuan Bersama..." boilerplate that appears
-        # in UU/Perpu between Mengingat and MEMUTUSKAN — procedural text with no
-        # retrieval value. Use fuzzy OCR match (e.g. "Persetqjuan") since
-        # OCR frequently garbles 'uj' → 'qj'. (Parser Fix 12 - Bug C)
+        # Strip trailing "Dengan Persetujuan Bersama..." boilerplate between
+        # Mengingat and MEMUTUSKAN. Fuzzy match since OCR garbles 'uj' → 'qj'.
         dpr_m = re.search(r'\n[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
         if dpr_m:
             mengingat_text = mengingat_text[:dpr_m.start()]
-        # Strip ghost "Mengingat" OCR keyword lines from within Mengingat text.
-        # (Parser Fix 12 - Bug B)
+        # Strip lone "Mengingat" OCR margin-bleed lines from within Mengingat text.
         mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
         if mengingat_text:
@@ -1468,11 +1225,7 @@ def _extract_node_text(
     pages: list[dict], start: int, end: int,
     start_char_offset: int = 0, end_char_offset: int | None = None,
 ) -> str:
-    """
-    Extract and join cleaned text from pages [start, end] (1-indexed, inclusive).
-    Uses char offsets for intra-page slicing to avoid text bleeding between
-    adjacent Pasal on the same page.
-    """
+    """Extract and join cleaned text from pages [start, end], slicing by char offsets."""
     parts = []
     for page in pages:
         if page["page_num"] < start:
@@ -1529,19 +1282,9 @@ Rules:
 Input (JSON):
 """
 
-# Max chars per batch (~50K chars ≈ ~12K tokens). Smaller batches = more reliable
-# JSON output from Gemini — large responses cause JSON truncation errors.
-# Speed comes from parallel processing, not larger batches.
-_LLM_BATCH_SIZE = 50_000
-
 def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool,
                    _label: str | None = None):
-    """Process a single batch through Gemini with retry on rate limit.
-
-    Returns (cleaned_dict, input_tokens, output_tokens, error_msg_or_None).
-    On JSON parse failure, error_msg_or_None is set and cleaned_dict falls back
-    to the original batch texts so callers can retry with smaller sub-batches.
-    """
+    """Run one Gemini batch with rate-limit retry. Returns (cleaned_dict, in_tokens, out_tokens, error_or_None)."""
     prompt = LLM_CLEANUP_PROMPT + json.dumps(batch, ensure_ascii=False)
 
     max_retries = 5
@@ -1569,14 +1312,14 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
                 reason = "rate limited" if is_rate_limit else "network error"
                 if verbose:
                     _lbl = _label or f"{batch_idx + 1}/{total}"
-                    print(f"\n       Batch {_lbl}: {reason} ({e.__class__.__name__}), retrying in {wait}s...")
+                    log.warning(f"batch {_lbl}: {reason} ({e.__class__.__name__}), retrying in {wait}s")
                 time.sleep(wait)
             else:
                 # Soft-fail: return original texts so caller can continue with remaining batches
                 _lbl = _label or f"{batch_idx + 1}/{total}"
                 msg = f"batch {_lbl}: {e.__class__.__name__}: {e}"
                 if verbose:
-                    print(f"\n       Batch {_lbl}: failed after {attempt + 1} attempt(s) — keeping raw OCR text")
+                    log.warning(f"batch {_lbl}: failed after {attempt + 1} attempt(s), keeping raw OCR text")
                 return batch, 0, 0, msg
 
     if last_err is not None:
@@ -1590,8 +1333,7 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     output_tok = usage.candidates_token_count or 0
     _lbl = _label or f"{batch_idx + 1}/{total}"
     if verbose:
-        print(f"       Batch {_lbl} done: "
-              f"{input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
+        log.info(f"batch {_lbl}: {input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
 
     # Parse JSON from response
     response_text = response.text.strip()
@@ -1606,30 +1348,14 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
         _lbl = _label or f"{batch_idx + 1}/{total}"
         msg = f"batch {_lbl}: {e}"
         if verbose:
-            print(f"       WARNING: Failed to parse LLM response for {msg}")
+            log.warning(f"failed to parse LLM response for {msg}")
         return batch, input_tok, output_tok, msg  # Fall back to original texts
 
     return cleaned, input_tok, output_tok, None
 
 def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
                       client=None) -> tuple[dict[str, str], list[str]]:
-    """
-    Clean OCR artifacts in texts using Gemini 2.5 Flash.
-    Batches are processed in parallel for speed.
-    Failed batches are retried by splitting in half (handles Gemini JSON truncation).
-
-    Args:
-        texts: list of (node_id, text) tuples
-        verbose: print progress info
-        client: optional pre-built genai.Client (created fresh if not given). Pass a
-            per-doc client from the build loop so laptop-sleep SSL failures only kill
-            the current document, not all subsequent ones.
-
-    Returns:
-        (cleaned_dict, failures) where cleaned_dict maps node_id to cleaned text
-        and failures is a list of error messages for batches that could not be parsed
-        even after retry — those nodes keep their original OCR text.
-    """
+    """Clean OCR artifacts in texts with Gemini. Returns (cleaned_dict, failure_messages)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google import genai
 
@@ -1657,7 +1383,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
         batches.append(current_batch)
 
     if verbose:
-        print(f"       {len(texts)} nodes in {len(batches)} batch(es), processing in parallel...")
+        log.info(f"{len(texts)} nodes in {len(batches)} batch(es), processing in parallel")
 
     # Process batches in parallel
     results: dict[str, str] = {}
@@ -1679,13 +1405,11 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
             if error:
                 failed_batches.append((batch_i, batches[batch_i]))
 
-    # Retry failed batches by splitting in half (handles Gemini JSON truncation).
-    # When Gemini truncates a large JSON response, a smaller batch is more likely
-    # to complete successfully.
+    # Retry failed batches by splitting in half (smaller batch = less likely to truncate).
     failures: list[str] = []
     if failed_batches:
         if verbose:
-            print(f"       Retrying {len(failed_batches)} failed batch(es) split in half...")
+            log.info(f"retrying {len(failed_batches)} failed batch(es) split in half")
         for batch_i, failed_batch in failed_batches:
             items = list(failed_batch.items())
             mid = max(1, len(items) // 2)
@@ -1707,8 +1431,8 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True,
                     )
 
     if verbose:
-        print(f"       Total tokens: {total_input_tokens + total_output_tokens:,} "
-              f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
+        log.info(f"total tokens: {total_input_tokens + total_output_tokens:,} "
+                 f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
 
     return results, failures
 
@@ -1716,13 +1440,7 @@ def apply_llm_cleanup(output_nodes: list[dict],
                       penjelasan_data: dict | None = None,
                       verbose: bool = True,
                       client=None):
-    """
-    Collect leaf node texts and penjelasan from the output tree,
-    clean them with LLM, and replace texts in-place.
-
-    client: optional pre-built genai.Client. Passed through to llm_cleanup_texts()
-        so the build loop can provide a fresh per-doc client.
-    """
+    """Run LLM OCR cleanup on all leaf node texts and penjelasan in-place."""
     # Collect all leaf texts (nodes with "text" field)
     # Also collect penjelasan texts (skip trivial "Cukup jelas.")
     texts_to_clean: list[tuple[str, str]] = []
@@ -1745,7 +1463,7 @@ def apply_llm_cleanup(output_nodes: list[dict],
 
     if not texts_to_clean:
         if verbose:
-            print("       No texts to clean.")
+            log.info("no texts to clean")
         return
 
     # Call LLM cleanup
@@ -1755,7 +1473,7 @@ def apply_llm_cleanup(output_nodes: list[dict],
     expected_ids = {nid for nid, _ in texts_to_clean}
     missing = expected_ids - set(cleaned.keys())
     if missing and verbose:
-        print(f"       WARNING: {len(missing)} node(s) missing from LLM response, keeping original: {sorted(missing)}")
+        log.warning(f"{len(missing)} node(s) missing from LLM response, keeping original: {sorted(missing)}")
 
     # Replace texts in-place
     def _replace(nodes: list[dict]):
@@ -1776,9 +1494,7 @@ def apply_llm_cleanup(output_nodes: list[dict],
         penjelasan_data["umum"] = cleaned["__penjelasan_umum__"]
 
     if verbose:
-        print(f"       Cleaned {len(cleaned)} nodes.")
-
-    return llm_failures
+        log.info(f"cleaned {len(cleaned)} nodes")
 
     return llm_failures
 
@@ -1829,22 +1545,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
                     use_llm_cleanup: bool = True,
                     is_perubahan: bool | None = None,
                     granularity: str = "pasal") -> dict:
-    """
-    Main function: parse an Indonesian legal PDF into PageIndex-compatible tree.
-
-    Uses Gemini 2.5 Flash to fix remaining OCR artifacts in extracted text.
-    Pass use_llm_cleanup=False to skip (dev/testing only).
-
-    is_perubahan: Force Perubahan (amendment) mode. When None, auto-detects
-    from the PDF title page. Perubahan UUs use Roman numeral articles
-    (Pasal I, II, ...) as root-level containers, with the amended law's
-    structure (BAB, Bagian, Pasal) nested inside.
-
-    granularity: Leaf node granularity level.
-        - "pasal":      leaf = entire Pasal (no sub-splitting)
-        - "ayat":       leaf = Ayat within each Pasal
-        - "full_split": leaf = smallest unit (Ayat > Huruf > Angka)
-    """
+    """Parse an Indonesian legal PDF into a PageIndex-compatible tree."""
     if granularity not in ("pasal", "ayat", "full_split"):
         raise ValueError(f"Unknown granularity: {granularity!r}. "
                          f"Use 'pasal', 'ayat', or 'full_split'.")
@@ -1855,25 +1556,25 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
 
     # Step 1: Extract text
     if verbose:
-        print(f"[1/{total_steps}] Extracting text from {pdf_name}...")
+        log.info(f"[1/{total_steps}] extracting text from {pdf_name}")
     t0 = time.time()
     pages = extract_pages(pdf_path)
     total_pages = len(pages)
     if verbose:
-        print(f"       Total pages: {total_pages} ({time.time() - t0:.1f}s)")
+        log.info(f"total pages: {total_pages} ({time.time() - t0:.1f}s)")
 
     # Step 2: Clean text
     if verbose:
-        print(f"[2/{total_steps}] Cleaning text...")
+        log.info(f"[2/{total_steps}] cleaning text")
     t0 = time.time()
     for page in pages:
         page["clean_text"] = clean_page_text(page["raw_text"])
     if verbose:
-        print(f"       Done ({time.time() - t0:.1f}s)")
+        log.info(f"done ({time.time() - t0:.1f}s)")
 
     # Step 3: Detect body boundaries
     if verbose:
-        print(f"[3/{total_steps}] Detecting document sections...")
+        log.info(f"[3/{total_steps}] detecting document sections")
     closing_page = find_closing_page(pages)
     penjelasan_page = find_penjelasan_page(pages)
 
@@ -1885,21 +1586,21 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         body_end = total_pages
 
     if verbose:
-        print(f"       Body: pages 1-{body_end}")
+        log.info(f"body: pages 1-{body_end}")
         if closing_page:
-            print(f"       Closing/Pengesahan: page {closing_page}")
+            log.info(f"closing/pengesahan: page {closing_page}")
         if penjelasan_page:
-            print(f"       Penjelasan: pages {penjelasan_page}-{total_pages}")
+            log.info(f"penjelasan: pages {penjelasan_page}-{total_pages}")
 
     # Auto-detect Perubahan (amendment) UU if not specified
     if is_perubahan is None:
         is_perubahan = detect_perubahan(pages)
     if verbose and is_perubahan:
-        print(f"       Detected as Perubahan (amendment) UU")
+        log.info("detected as Perubahan (amendment)")
 
     # Step 4: Detect structural elements (only in body)
     if verbose:
-        print(f"[4/{total_steps}] Detecting structural elements...")
+        log.info(f"[4/{total_steps}] detecting structural elements")
     t0 = time.time()
     elements = detect_elements(pages, body_end, is_perubahan=is_perubahan)
 
@@ -1907,19 +1608,19 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     for e in elements:
         type_counts[e["type"]] = type_counts.get(e["type"], 0) + 1
     if verbose:
-        print(f"       Found: {type_counts} ({time.time() - t0:.1f}s)")
+        log.info(f"found: {type_counts} ({time.time() - t0:.1f}s)")
 
     # Validate Pasal sequence (skip for Perubahan and omnibus)
     is_omnibus = detect_omnibus(pages, elements)
     if verbose and is_omnibus:
-        print(f"       Detected as Omnibus law")
+        log.info("detected as Omnibus law")
     warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan or is_omnibus)
     for w in warnings:
-        print(f"       {w}")
+        log.warning(w)
 
     # Step 5: Build tree
     if verbose:
-        print(f"[5/{total_steps}] Building tree structure...")
+        log.info(f"[5/{total_steps}] building tree structure")
     t0 = time.time()
     tree = build_tree(elements, body_end)
     fix_node_boundaries(tree, body_end)
@@ -1928,7 +1629,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     if is_perubahan:
         bab_moved = consolidate_bab_in_perubahan(tree)
         if verbose and bab_moved:
-            print(f"       Consolidated {bab_moved} Pasal(s) under inserted BAB(s)")
+            log.info(f"consolidated {bab_moved} Pasal(s) under inserted BAB(s)")
 
     # Add preamble node (text before first structural element)
     output_nodes = []
@@ -1970,31 +1671,30 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         attach_penjelasan(output_nodes, penjelasan_data["pasal"])
         matched = sum(1 for n in iter_leaves(output_nodes) if n.get("penjelasan"))
         if verbose:
-            print(f"       PENJELASAN: {len(penjelasan_data['pasal'])} pasal parsed, "
-                  f"{matched} matched to tree nodes")
+            log.info(f"penjelasan: {len(penjelasan_data['pasal'])} pasal parsed, "
+                     f"{matched} matched to tree nodes")
 
     if verbose:
-        print(f"       Done ({time.time() - t0:.1f}s)")
+        log.info(f"done ({time.time() - t0:.1f}s)")
 
     # Step 6: LLM text cleanup (on by default, skip with --no-llm)
     llm_time = 0.0
     if use_llm_cleanup:
         if verbose:
-            print(f"[6/{total_steps}] Cleaning text with Gemini 2.5 Flash...")
+            log.info(f"[6/{total_steps}] cleaning text with Gemini 2.5 Flash")
         t0 = time.time()
         llm_failures = apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
         warnings.extend(llm_failures)
         llm_time = time.time() - t0
         if verbose:
-            print(f"       LLM cleanup took {llm_time:.1f}s")
+            log.info(f"LLM cleanup: {llm_time:.1f}s")
 
     total_time = time.time() - t_start
     if verbose:
-        print(f"\n       Total time: {total_time:.1f}s", end="")
         if use_llm_cleanup:
-            print(f" (LLM: {llm_time:.1f}s, parser: {total_time - llm_time:.1f}s)")
+            log.info(f"total time: {total_time:.1f}s  (LLM: {llm_time:.1f}s, parser: {total_time - llm_time:.1f}s)")
         else:
-            print()
+            log.info(f"total time: {total_time:.1f}s")
 
     # Sub-Pasal splitting based on requested granularity.
     if granularity == "ayat":
@@ -2007,7 +1707,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
 
     # Store unmatched penjelasan at doc level for retrieval agent fallback.
     # With perubahan support, amended Pasals are now leaf nodes and should
-    # match normally — only fall back to doc-level if nothing matched.
+    # match normally; only fall back to doc-level if nothing matched.
     penjelasan_pasal = None
     if penjelasan_data and penjelasan_data["pasal"]:
         if matched == 0:
@@ -2159,7 +1859,7 @@ def _strip_leading_junk(text: str) -> str:
     return re.sub(r'^[\s:;,\-]+', '', text)
 
 
-# --- Ayat-only splitting (granularity="ayat") ---
+# Ayat-only splitting (granularity="ayat")
 
 def _try_ayat_split(
     text: str,
@@ -2230,7 +1930,7 @@ def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
     return result
 
 
-# --- Recursive deep splitting (granularity="full_split") ---
+# Recursive deep splitting (granularity="full_split")
 
 def _try_deep_split(
     text: str,
@@ -2247,7 +1947,7 @@ def _try_deep_split(
     """
     text = _strip_leading_junk(text)
 
-    # --- Try Ayat: (1), (2), (3), ... ---
+    # Try Ayat: (1), (2), (3), ...
     ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
     if ayat_markers:
         intro, segments = _split_text_by_markers(text, ayat_markers)
@@ -2275,7 +1975,7 @@ def _try_deep_split(
             n.pop("_split_label", None)
         return sub_nodes
 
-    # --- Try Huruf: a., b., c., ... ---
+    # Try Huruf: a., b., c., ...
     huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
     if huruf_markers:
         intro, segments = _split_text_by_markers(text, huruf_markers)
@@ -2303,7 +2003,7 @@ def _try_deep_split(
             n.pop("_split_label", None)
         return sub_nodes
 
-    # --- Try Angka item: 1., 2., 3., ... ---
+    # Try Angka items: 1., 2., 3., ...
     angka_markers = _find_and_validate_markers(text, _ANGKA_ITEM_RE, "1")
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
@@ -2362,6 +2062,10 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
 # ============================================================
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s  %(levelname)-7s  %(message)s",
+                        datefmt="%H:%M:%S")
+
     # Parse flags
     args = sys.argv[1:]
     skip_llm = "--no-llm" in args
@@ -2377,16 +2081,15 @@ if __name__ == "__main__":
             gran = args[idx + 1]
             args = args[:idx] + args[idx + 2:]
         else:
-            print("ERROR: --granularity requires a value (pasal, ayat, full_split)")
+            log.error("--granularity requires a value (pasal, ayat, full_split)")
             sys.exit(1)
 
     if gran not in ("pasal", "ayat", "full_split"):
-        print(f"ERROR: Unknown granularity '{gran}'. Use: pasal, ayat, full_split")
+        log.error(f"unknown granularity '{gran}'. Use: pasal, ayat, full_split")
         sys.exit(1)
 
     if use_llm and not os.environ.get("GEMINI_API_KEY"):
-        print("ERROR: GEMINI_API_KEY environment variable is not set.")
-        print("       Set it for LLM cleanup, or use --no-llm to skip.")
+        log.error("GEMINI_API_KEY is not set. Set it for LLM cleanup, or use --no-llm to skip.")
         sys.exit(1)
 
     # Determine input
@@ -2400,21 +2103,18 @@ if __name__ == "__main__":
             if "Lampiran" not in f.name and "Salinan" not in f.name
         ])
         if not pdf_files:
-            print("No PDF files found. Provide a path as argument.")
+            log.error("no PDF files found. Provide a path as argument.")
             sys.exit(1)
     else:
         pdf_files = [Path(pdf_arg)]
 
     for pdf_path in pdf_files:
-        print(f"\n{'='*70}")
-        print(f" Processing: {pdf_path.name}")
-        print(f"{'='*70}")
+        log.info(f"processing {pdf_path.name}")
 
         result = parse_legal_pdf(str(pdf_path), use_llm_cleanup=use_llm,
                                 granularity=gran)
 
-        print(f"\nTREE STRUCTURE ({gran}):")
-        print("-" * 60)
+        print(f"\nTree structure ({gran})")
         print_tree(result["structure"])
 
         # Save output
@@ -2423,4 +2123,4 @@ if __name__ == "__main__":
         output_path = output_dir / (pdf_path.stem + "_structure.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
-        print(f"\nSaved to: {output_path}")
+        log.info(f"saved to {output_path}")
