@@ -56,32 +56,54 @@ python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `--granularity` | *(required)* | Leaf node granularity: `pasal`, `ayat`, or `full_split` |
-| `--doc-id ID` | all docs | Index only one document, e.g. `--doc-id uu-20-2025` |
-| `--no-llm` | LLM on | Skip Gemini text cleanup. Faster but lower quality. Use only for quick testing |
-| `--force` | skip existing | Re-index documents that already have output files |
+| `--doc-id ID` | all docs | Operate on a single document, e.g. `--doc-id uu-20-2025` |
+| `--parse-only` | off | Pass 1 only: PDF parsing, no LLM. Use when iterating parser fixes |
+| `--llm-only` | off | Pass 2 only: LLM cleanup on already-parsed docs. Resumes after network failure |
+| `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, or comma-separated doc_ids |
 | `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`full_split` |
+| `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM → ayat resplit → full_split resplit → verify |
+| `--no-llm` | — | *(legacy)* Alias for `--parse-only` |
+| `--force` | — | *(legacy)* Alias for `--rebuild all` |
 
 ### Examples
 
 ```bash
-# Index everything at Pasal level (default, recommended for final data)
+# Index everything at Pasal level (recommended for final thesis data)
 python -m vectorless.indexing.build --granularity pasal
 
-# Quick test: index one doc without LLM cleanup
-python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --no-llm
+# Full pipeline in one command: parse, clean, resplit all three granularities, verify
+python -m vectorless.indexing.build --granularity pasal --full-pipeline
 
-# Re-index a doc after fixing parser bugs
-python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --force
+# Two-pass workflow: parse first, then run LLM cleanup separately
+python -m vectorless.indexing.build --granularity pasal --parse-only
+python -m vectorless.indexing.build --granularity pasal --llm-only
 
-# Build all three granularities
-python -m vectorless.indexing.build --granularity pasal
-python -m vectorless.indexing.build --granularity ayat
-python -m vectorless.indexing.build --granularity full_split
+# Quick test: parse one doc without LLM cleanup
+python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --parse-only
 
-# Fast: re-split ayat/full_split from existing pasal index (no LLM, ~0.2s)
-python -m vectorless.indexing.build --granularity ayat --from-pasal --force
-python -m vectorless.indexing.build --granularity full_split --from-pasal --force
+# Re-index specific docs after a parser fix
+python -m vectorless.indexing.build --granularity pasal --rebuild uu-20-2025,uu-1-2026
+
+# Re-index all docs
+python -m vectorless.indexing.build --granularity pasal --rebuild all
+
+# Fast: re-split ayat/full_split from existing pasal index (~0.2s, no LLM)
+python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild all
 ```
+
+### Parser pipeline (internal)
+
+`vectorless/indexing/parser.py` processes each PDF in 8 stages:
+
+1. **Text extraction & cleaning** — PyMuPDF extraction, two-column gazette layout reorder, OCR artifact fixes
+2. **Penjelasan detection & parsing** — locate PENJELASAN section, fix column-stacking OCR artifacts, attach to tree
+3. **Structural element detection** — regex-based heading detection (BAB / Bagian / Paragraf / Pasal)
+4. **Pasal numbering validation** — sequence checks, gap/jump detection
+5. **Tree building** — stack-based tree assembly, preamble splitting (Menimbang / Mengingat / Menetapkan), boundary fixes
+6. **LLM text cleanup** — Gemini batch OCR correction (~50K chars/batch)
+7. **Main pipeline** — top-level orchestration (`parse_legal_pdf`)
+8. **Sub-Pasal leaf splitting** — Ayat and deep (huruf/angka) granularity expansion
 
 ### Verification
 
