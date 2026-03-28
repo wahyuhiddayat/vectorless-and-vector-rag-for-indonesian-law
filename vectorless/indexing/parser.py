@@ -1424,7 +1424,9 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         after_menimbang = cleaned[fallback_m.start():].lstrip('\n')
 
     # Locate MEMUTUSKAN to bound the preamble body and extract Menetapkan text.
-    memutuskan_m = re.search(r'MEMUTUS\S*\s*:', after_menimbang)
+    # The colon-terminated form ("MEMUTUSKAN:") is tried first; some documents omit the
+    # colon, in which case the bare heading on its own line is matched as a fallback.
+    memutuskan_m = re.search(r'MEMUTUS\S*\s*:|\nMEMUTUS\S*\s*\n', after_menimbang)
     menetapkan_text = None
 
     if memutuskan_m:
@@ -1454,8 +1456,9 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         menimbang_text = preamble_body
         mengingat_text = None
 
-    # Finalize Menimbang text: remove a trailing "Mengingat" word left by margin bleed.
-    menimbang_text = re.sub(r'\s*\bMengingat\b\s*$', '', menimbang_text).strip()
+    # Finalize Menimbang text: remove a trailing "Mengingat" keyword (with any following colon
+    # or OCR-garbled content) that bleeds in from margin noise at the end of the text.
+    menimbang_text = re.sub(r'\s*\bMengingat\b\s*:?.*$', '', menimbang_text).strip()
     menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
     if not menimbang_text:
         return None
@@ -1475,7 +1478,10 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         mengingat_text = re.sub(r'^[\s:]+', '', mengingat_text)
         # Remove "Dengan Persetujuan Bersama" boilerplate that falls between Mengingat
         # and MEMUTUSKAN. The fuzzy word match handles common OCR garbling.
-        dpr_m = re.search(r'\n[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
+        # The (?:^|\n) prefix handles both the start-of-string case (when all Mengingat
+        # legal references were absorbed into Menimbang and only this boilerplate remains)
+        # and the mid-text case (when valid references precede it).
+        dpr_m = re.search(r'(?:^|\n)[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
         if dpr_m:
             mengingat_text = mengingat_text[:dpr_m.start()]
         # Remove isolated "Mengingat" lines inserted by OCR margin bleed.

@@ -192,7 +192,7 @@ def check_preamble(structure: list[dict]) -> list[str]:
 
             # Mengingat should contain either numbered points ("1. Pasal...") or a direct legal
             # reference ("Pasal ...", "Undang-Undang ..."). Simple Perpres documents often skip numbering.
-            has_numbered = re.search(r'(?:^|\n)\s*1[\.\s]', mengingat_all)
+            has_numbered = re.search(r'(?:^|\n)\s*[1l][\.\s]', mengingat_all)
             has_legal_ref = re.search(r'(?:^|\n)\s*(?:Pasal|Undang|Peraturan)', mengingat_all)
             if not has_numbered and not has_legal_ref:
                 issues.append('Preamble: Mengingat has no numbered points or legal references (structure may be garbled)')
