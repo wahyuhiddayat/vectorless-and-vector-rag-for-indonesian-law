@@ -147,7 +147,7 @@ def clean_page_text(text: str) -> str:
 
 
 def fix_ocr_artifacts(text: str) -> str:
-    """Fix OCR digit misreads in ayat numbers and strip page continuation markers."""
+    """Fix OCR digit misreads in ayat numbers, list prefixes, and page continuation markers."""
     lines = text.split('\n')
     fixed_lines = []
 
@@ -163,6 +163,14 @@ def fix_ocr_artifacts(text: str) -> str:
         line = re.sub(r'\((\d+)[t]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\b[tl](\d+)[tl]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\(s\)', '(5)', line)
+        # Numbered list prefixes with OCR-garbled trailing digit: "1O." → "10.", "2l." → "21.".
+        # Capital-O and lowercase-l are common OCR misreads of 0 and 1 respectively when they
+        # follow another digit at the start of a list-item line.
+        line = re.sub(
+            r'^(\d+[OlI]+)\.',
+            lambda m: _normalize_ocr_digits(m.group(1)) + '.',
+            line
+        )
         # Page continuation markers: "Pasal 7...", "(3)DBH . , ."
         line = re.sub(r'^Pasa[lr]\s*\d+\s*\.{2,}\s*$', '', line)
         line = re.sub(r'\.\s*\.\s*\.\s*$', '', line)
@@ -625,14 +633,40 @@ PASAL_ROMAN = re.compile(
     re.MULTILINE
 )
 
-# Numbered amendment instructions in Perubahan UUs, e.g. "76. Ketentuan Pasal 88 diubah..."
-# Keyword anchor (Ketentuan/Pasal/Bab/Bagian) prevents false matches on regular list items.
+# Numbered amendment instructions in Perubahan documents, e.g. "76. Ketentuan Pasal 88 diubah..."
+#
+# Indonesian amendment law uses several instruction forms that all begin with a number:
+#   1. Ketentuan Pasal X diubah...            -- direct Pasal/Bagian/Bab reference
+#   2. Ketentuan huruf a Pasal X diubah...    -- qualifier (huruf/ayat) before Pasal
+#   3. Ketentuan ayat (1) Pasal X diubah...   -- same, with parenthesised ayat number
+#   4. Judul Paragraf X Bagian Y diubah...    -- heading rename
+#   5. Setelah Paragraf X ditambahkan...      -- insertion after a heading
+#   6. Di antara Pasal X dan Pasal Y...       -- insertion between pasals
+#
+# The alternation below handles all six forms. Only runs for is_perubahan documents, so
+# false-positive risk on regular numbered lists in normal laws is zero.
 ANGKA_PATTERN = re.compile(
     r'^(\d+)\.\s*'                              # number + period at start of line
-    r'((?:Ketentuan\s+)?'                       # optional "Ketentuan "
-    r'(?:Pasal|Bagian|Bab|Di\s+antara)\b'       # instruction keyword
+    r'((?:Ketentuan\s+)?'                       # optional "Ketentuan " prefix
+    r'(?:'
+    r'(?:Pasal|Bagian|Bab|Di\s+antara)\b'       # form 1/6: direct structural keyword
+    r'|(?:(?:huruf|ayat|Ayat)\b[^.\n]*?(?:Pasal|Bagian)\b)'  # form 2/3: qualifier then Pasal/Bagian
+    r'|(?:Judul\s+(?:Paragraf|Bagian|Bab)\b)'               # form 4: heading rename
+    r'|(?:Setelah\s+(?:Pasal|Paragraf|Bagian|Bab)\b)'       # form 5: insertion after heading
+    r')'
     r'[^\n]*)',                                 # rest of first line
     re.MULTILINE
+)
+
+# Matches the start of an amendment instruction line when the leading number is absent
+# (used by wrap_orphan_pasals_in_angka1 to extract a title from the OCR gap text).
+# Covers the same instruction forms as ANGKA_PATTERN but without the "N. " prefix.
+_ORPHAN_INSTR_FIRST_RE = re.compile(
+    r'^(?:Ketentuan\b'
+    r'|Judul\s+(?:Paragraf|Bagian|Bab)\b'
+    r'|Di\s+antara\b'
+    r'|Setelah\s+(?:Pasal|Paragraf|Bagian|Bab)\b)',
+    re.MULTILINE,
 )
 
 def roman_to_int(s: str) -> int | None:
@@ -769,10 +803,12 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
 def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
     """Remove spurious elements from a position-sorted element list.
 
-    Applies three filters:
+    Applies four filters:
     - Angka items before the first pasal_roman are discarded (pre-body preamble noise).
     - A pasal entry at the same position as a pasal_roman is discarded (regex overlap).
     - Consecutive pasal entries with the same number on adjacent pages are collapsed to one.
+    - Consecutive angka entries with the same number on adjacent pages are collapsed to one,
+      keeping the entry with the longer title (the complete instruction from the second page).
     """
     deduped = []
     roman_positions = {(e["page_num"], e["char_offset"]) for e in elements if e["type"] == "pasal_roman"}
@@ -788,6 +824,14 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
         if deduped and elem["type"] == "pasal" and deduped[-1]["type"] == "pasal":
             if (elem["number"] == deduped[-1]["number"]
                     and elem["page_num"] - deduped[-1]["page_num"] <= 1):
+                continue
+        # Collapse page-break Angka duplicates: the first page often captures a truncated
+        # instruction while the second page repeats it in full. Keep the longer title.
+        if deduped and elem["type"] == "angka" and deduped[-1]["type"] == "angka":
+            if (elem["number"] == deduped[-1]["number"]
+                    and elem["page_num"] - deduped[-1]["page_num"] <= 1):
+                if len(elem.get("title", "")) > len(deduped[-1].get("title", "")):
+                    deduped[-1] = elem
                 continue
         deduped.append(elem)
 
@@ -1045,6 +1089,132 @@ def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
     return moved_count
 
 
+def _collect_numeric_node_ids(nodes: list[dict], out: list[int]) -> None:
+    """Accumulate all numeric node_ids found anywhere in the tree into out."""
+    for node in nodes:
+        try:
+            out.append(int(node["node_id"]))
+        except (ValueError, KeyError):
+            pass
+        if node.get("nodes"):
+            _collect_numeric_node_ids(node["nodes"], out)
+
+
+def wrap_orphan_pasals_in_angka1(
+    tree: list[dict], pages: list[dict] | None = None
+) -> int:
+    """Wrap leading orphan Pasals under pasal_roman nodes in a synthetic Angka 1.
+
+    In some Perubahan documents, OCR block reordering drops the "1." prefix from
+    the first amendment instruction. The affected Pasal(s) then appear as direct
+    children of the pasal_roman container instead of under an Angka 1 wrapper.
+    The pattern identifying this case: one or more leading pasal children under a
+    pasal_roman node that are followed by genuine angka siblings. A synthetic angka
+    node is inserted to restore the correct pasal_roman > angka > pasal hierarchy.
+
+    When pages is supplied, the text gap between the pasal_roman heading and the
+    first orphan Pasal is scanned for an amendment instruction line starting with a
+    keyword matched by _ORPHAN_INSTR_FIRST_RE. Consecutive non-blank lines are
+    joined to recover split instructions and produce a title in the same format as
+    naturally-detected Angka nodes (e.g. "Angka 1 — Ketentuan huruf a Pasal 6
+    diubah sehingga berbunyi sebagai berikut:"). Falls back to "Angka 1" if no
+    instruction line is found.
+
+    Must be called after consolidate_bab_in_perubahan, on is_perubahan documents
+    only. Mutates tree in place.
+
+    Returns the number of Pasal nodes wrapped.
+    """
+    wrapped_count = 0
+
+    for root_node in tree:
+        if root_node.get("type") != "pasal_roman":
+            continue
+        children = root_node.get("nodes", [])
+        if not children:
+            continue
+
+        # Collect all leading pasal children that appear before the first angka.
+        n_leading = 0
+        for child in children:
+            if child.get("type") == "pasal":
+                n_leading += 1
+            else:
+                break
+
+        if n_leading == 0:
+            continue
+
+        # Only wrap when genuine angka siblings follow the orphan pasals, confirming
+        # this is an amendment container and not a plain law with no Angka layer.
+        has_angka_after = any(c.get("type") == "angka" for c in children[n_leading:])
+        if not has_angka_after:
+            continue
+
+        leading_pasals = children[:n_leading]
+
+        # Build a title from the dropped instruction text when page data is available.
+        # The gap between the pasal_roman heading and the first orphan Pasal contains
+        # the instruction that OCR block-reordering separated from its "1." prefix.
+        angka_title = "Angka 1"
+        if pages is not None:
+            gap_text = _extract_node_text(
+                pages,
+                root_node["start_index"],
+                leading_pasals[0]["start_index"],
+                start_char_offset=root_node.get("start_char_offset", 0),
+                end_char_offset=leading_pasals[0].get("start_char_offset"),
+            ).strip()
+            # Strip the pasal_roman heading line so only the instruction text remains.
+            gap_text = re.sub(r'^[Pp]asa[l1]\s+[IVXLC]+\s*\n?', '', gap_text).strip()
+            # Find the first line starting with an amendment instruction keyword,
+            # skipping any document-header or preamble text that precedes it.
+            m = _ORPHAN_INSTR_FIRST_RE.search(gap_text)
+            if m:
+                # Join consecutive non-blank lines to capture split instructions.
+                # Stop at a blank line, after "berikut:" (natural instruction end),
+                # or once 120 chars have been collected.
+                parts: list[str] = []
+                total = 0
+                for line in gap_text[m.start():].split('\n'):
+                    stripped = line.strip()
+                    if not stripped:
+                        break
+                    parts.append(stripped)
+                    total += len(stripped)
+                    if total >= 120 or re.search(r'berikut\s*:', stripped):
+                        break
+                instr_text = ' '.join(parts)
+                truncated = instr_text[:120] + ('...' if len(instr_text) > 120 else '')
+                angka_title = f"Angka 1 — {truncated}"
+
+        # Assign a unique node_id that does not collide with any existing numeric id.
+        all_ids: list[int] = []
+        _collect_numeric_node_ids(tree, all_ids)
+        synthetic_id = f"{max(all_ids, default=-1) + 1:04d}"
+
+        synthetic_angka: dict = {
+            "title": angka_title,
+            "type": "angka",
+            "number": 1,
+            "start_index": leading_pasals[0]["start_index"],
+            "end_index": leading_pasals[-1]["end_index"],
+            "start_char_offset": leading_pasals[0].get("start_char_offset", 0),
+            "end_char_offset": leading_pasals[-1].get("end_char_offset"),
+            "node_id": synthetic_id,
+            "nodes": leading_pasals,
+        }
+
+        root_node["nodes"] = [synthetic_angka] + children[n_leading:]
+        wrapped_count += n_leading
+        log.debug(
+            "synthetic Angka 1 created for %r: wrapped %d Pasal(s) (title=%r, node_id=%s)",
+            root_node["title"], n_leading, angka_title, synthetic_id,
+        )
+
+    return wrapped_count
+
+
 def iter_leaves(nodes: list[dict]):
     """Yield every leaf node in the tree (nodes that have no children)."""
     # Recurse into non-empty node lists; yield nodes with no children as leaves.
@@ -1181,14 +1351,31 @@ def _split_by_content_transition(body: str) -> tuple[str | None, str | None]:
 
 
 def _split_by_mengingat_keyword(body: str) -> tuple[str | None, str | None]:
-    """Split preamble body at an explicit 'Mengingat' heading line.
+    """Split preamble body at an explicit 'Mengingat' heading.
 
-    Returns (menimbang, mengingat) or (None, None) if no such heading exists.
+    Tries two detection strategies in order:
+
+    1. Strict: "Mengingat" appears on its own line (well-formatted OCR).
+    2. Relaxed: "Mengingat" follows immediately after a semicolon or period with no
+       preceding newline -- a common OCR garbling where the line break between the last
+       Menimbang clause and the Mengingat heading is lost.
+
+    Returns (menimbang, mengingat) or (None, None) if the keyword is absent.
     """
+    # Strategy 1: standalone Mengingat heading line.
     mengingat_kw = re.search(r'\n\s*Mengingat\s*:?\s*\n', body)
-    if not mengingat_kw:
-        return None, None
-    return body[:mengingat_kw.start()].strip(), body[mengingat_kw.end():].strip()
+    if mengingat_kw:
+        return body[:mengingat_kw.start()].strip(), body[mengingat_kw.end():].strip()
+
+    # Strategy 2: Mengingat runs inline after the clause terminator (;/.) when the OCR
+    # drops the intervening newline, e.g. "...Negara;Mengingat\n1. Pasal 4 ayat (1)..."
+    # The terminator is kept with Menimbang; everything from Mengingat onward is Mengingat.
+    mengingat_kw = re.search(r'([;.])\s*\n?\s*Mengingat\s*:?\s*\n?', body)
+    if mengingat_kw:
+        cut = mengingat_kw.start() + 1  # include the terminator in the Menimbang slice
+        return body[:cut].strip(), body[mengingat_kw.end():].strip()
+
+    return None, None
 
 
 def _split_by_first_pasal_ref(body: str) -> tuple[str | None, str | None]:
@@ -1253,9 +1440,13 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         preamble_body = after_menimbang.strip()
 
     # Split the preamble body into Menimbang and Mengingat using fallback strategies.
-    menimbang_text, mengingat_text = _split_by_content_transition(preamble_body)
+    # Keyword-based detection is tried first: when "Mengingat" is present in the text it is
+    # the most unambiguous signal regardless of OCR quality. Content-transition and first-ref
+    # heuristics serve as fallbacks for documents where the keyword is absent or garbled beyond
+    # recognition.
+    menimbang_text, mengingat_text = _split_by_mengingat_keyword(preamble_body)
     if menimbang_text is None:
-        menimbang_text, mengingat_text = _split_by_mengingat_keyword(preamble_body)
+        menimbang_text, mengingat_text = _split_by_content_transition(preamble_body)
     if menimbang_text is None:
         menimbang_text, mengingat_text = _split_by_first_pasal_ref(preamble_body)
 
@@ -1729,11 +1920,16 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     tree = build_tree(elements, body_end)
     fix_node_boundaries(tree, body_end)
 
-    # In Perubahan documents, re-parent Pasals that the parser split across Angkas.
+    # In Perubahan documents, re-parent Pasals that the parser split across Angkas,
+    # and wrap any orphan leading Pasals in a synthetic Angka 1 when OCR dropped the
+    # "1." prefix of the first amendment instruction.
     if is_perubahan:
         bab_moved = consolidate_bab_in_perubahan(tree)
         if verbose and bab_moved:
             log.info(f"consolidated {bab_moved} Pasal(s) under inserted BAB(s)")
+        angka_wrapped = wrap_orphan_pasals_in_angka1(tree, pages=pages)
+        if verbose and angka_wrapped:
+            log.info(f"wrapped {angka_wrapped} orphan Pasal(s) under synthetic Angka 1")
 
     # Build the preamble node from text before the first structural element.
     output_nodes = []
