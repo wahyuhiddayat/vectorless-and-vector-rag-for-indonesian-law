@@ -1484,8 +1484,9 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         dpr_m = re.search(r'(?:^|\n)[^\n]*Dengan\s+Perse\w+\s+Bersama', mengingat_text)
         if dpr_m:
             mengingat_text = mengingat_text[:dpr_m.start()]
-        # Remove isolated "Mengingat" lines inserted by OCR margin bleed.
+        # Remove isolated "Mengingat" lines and leading keyword inserted by OCR/parsing.
         mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
+        mengingat_text = _strip_mengingat_prefix(mengingat_text)
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
         if mengingat_text:
             children.append({
