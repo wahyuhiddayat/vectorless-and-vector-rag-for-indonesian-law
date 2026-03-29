@@ -1488,6 +1488,9 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
         mengingat_text = _strip_mengingat_prefix(mengingat_text)
         mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
+        # Drop text that has no legal reference content — it is an OCR artifact (e.g. "Dengan", "2.").
+        if not re.search(r'\b(?:Pasal|Undang|Peraturan)\b', mengingat_text):
+            mengingat_text = ''
         if mengingat_text:
             children.append({
                 "title": "Mengingat",
