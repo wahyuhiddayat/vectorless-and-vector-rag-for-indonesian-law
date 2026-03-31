@@ -9,16 +9,16 @@ Two tree search modes:
   - "stepwise" — navigate level-by-level (BAB → Bagian → Pasal) with reasoning
 
 Usage:
-    python -m vectorless.retrieval.llm "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.llm "Apa syarat penyadapan?" --strategy full
-    python -m vectorless.retrieval.llm "query" --strategy stepwise
+    python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?" --strategy full
+    python -m vectorless.retrieval.llm.search "query" --strategy stepwise
 """
 
 import argparse
 import json
 import time
 
-from .common import (
+from ..common import (
     llm_call, reset_token_counters, get_token_stats,
     load_catalog, load_doc, find_node, extract_nodes,
     generate_answer, save_log,

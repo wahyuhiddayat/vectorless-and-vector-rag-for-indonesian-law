@@ -1,14 +1,14 @@
 """
 BM25 retrieval strategy for Indonesian legal QA — NO STOPWORD REMOVAL variant.
 
-Same as bm25_2stage.py but without stopword removal in tokenizer.
+Same as two_stage.py but without stopword removal in tokenizer.
 Based on Faisal et al. (2024) finding that stopword removal hurts BM25
 on formal Indonesian legal documents.
 
 Usage:
-    python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?" --top_k 5
-    python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?" --top_k_nodes 10
+    python -m vectorless.retrieval.bm25.no_sw "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.bm25.no_sw "Apa syarat penyadapan?" --top_k 5
+    python -m vectorless.retrieval.bm25.no_sw "Apa syarat penyadapan?" --top_k_nodes 10
 """
 
 import argparse
@@ -17,7 +17,7 @@ import time
 
 from rank_bm25 import BM25Okapi
 
-from .common import (
+from ..common import (
     tokenize_no_sw as tokenize,
     reset_token_counters, get_token_stats,
     load_catalog, load_doc, extract_nodes,

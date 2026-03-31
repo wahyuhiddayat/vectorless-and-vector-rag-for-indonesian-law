@@ -1,20 +1,14 @@
 """
-Hybrid BM25 + LLM retrieval strategy for Indonesian legal QA.
+Hybrid BM25 + LLM retrieval strategy — NO STOPWORD REMOVAL variant.
 
-Combines keyword matching (BM25) with LLM semantic understanding:
-  1. Doc search  — union of BM25 metadata match + LLM semantic selection
-  2. Node search — BM25 retrieves candidate Pasal, LLM reranks with text context
-  3. Answer gen  — LLM generates grounded answer (same as other strategies)
-
-This addresses weaknesses of both pure approaches:
-  - Pure BM25 fails on vocabulary mismatch (query term not in metadata)
-  - Pure LLM fails on blind navigation (generic titles like "Pasal 3")
-  - Hybrid: BM25 finds keyword-relevant content, LLM adds semantic understanding
+Same as search.py but without stopword removal in BM25 tokenizer.
+Based on Faisal et al. (2024) finding that stopword removal hurts BM25
+on formal Indonesian legal documents.
 
 Usage:
-    python -m vectorless.retrieval.hybrid "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.hybrid "Apa definisi penyadapan?" --bm25_top_k 10
-    python -m vectorless.retrieval.hybrid "Apa definisi penyadapan?" --bm25_top_k 15
+    python -m vectorless.retrieval.hybrid.no_sw "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.hybrid.no_sw "Apa definisi penyadapan?" --bm25_top_k 10
+    python -m vectorless.retrieval.hybrid.no_sw "Apa syarat penyadapan?" --bm25_top_k 15
 """
 
 import argparse
@@ -23,8 +17,9 @@ import time
 
 from rank_bm25 import BM25Okapi
 
-from .common import (
-    tokenize, llm_call, reset_token_counters, get_token_stats,
+from ..common import (
+    tokenize_no_sw as tokenize,
+    llm_call, reset_token_counters, get_token_stats,
     load_catalog, load_doc, find_node, extract_nodes,
     generate_answer, save_log, DATA_INDEX,
 )
@@ -321,7 +316,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     if verbose:
         print(f"{'='*60}")
         print(f"Query: {query}")
-        print(f"Strategy: hybrid (bm25_top_k={bm25_top_k})")
+        print(f"Strategy: hybrid-no-sw (bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
     # Step 1: Hybrid doc search
@@ -330,7 +325,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     doc_ids = doc_result.get("doc_ids", [])
 
     if not doc_ids:
-        return {"query": query, "strategy": "hybrid", "error": "No relevant documents found"}
+        return {"query": query, "strategy": "hybrid-no-sw", "error": "No relevant documents found"}
 
     # Step 2: Hybrid node search (on first relevant doc)
     doc_id = doc_ids[0]
@@ -340,14 +335,14 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     node_ids = node_result.get("node_ids", [])
 
     if not node_ids:
-        return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
+        return {"query": query, "strategy": "hybrid-no-sw", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
     # Step 3: Extract text and generate answer
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
-        return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
+        return {"query": query, "strategy": "hybrid-no-sw", "doc_ids": doc_ids,
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
 
     doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
@@ -370,7 +365,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     result = {
         "query": query,
-        "strategy": "hybrid",
+        "strategy": "hybrid-no-sw",
         "doc_search": doc_result,
         "node_search": node_result,
         "answer": answer_result.get("answer", ""),

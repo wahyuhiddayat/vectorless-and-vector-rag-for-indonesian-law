@@ -15,9 +15,9 @@ import argparse
 import json
 from pathlib import Path
 
-from .retrieval.bm25_2stage import node_search as bm25_node_search
-from .retrieval.llm import tree_search_stepwise as llm_tree_search
-from .retrieval.hybrid import node_search as hybrid_node_search
+from .retrieval.bm25.two_stage import node_search as bm25_node_search
+from .retrieval.llm.search import tree_search_stepwise as llm_tree_search
+from .retrieval.hybrid.search import node_search as hybrid_node_search
 
 # Paths to the three index variants
 INDEX_PASAL = Path("data/index_pasal")

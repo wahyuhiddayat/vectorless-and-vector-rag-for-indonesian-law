@@ -9,9 +9,9 @@ grounded in the finding that BM25 outperforms semantic search for formal
 Indonesian legal documents (Granularity-aware Legal QA, 2024).
 
 Usage:
-    python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?" --top_k 5
-    python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?" --top_k_nodes 10
+    python -m vectorless.retrieval.bm25.two_stage "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.bm25.two_stage "Apa syarat penyadapan?" --top_k 5
+    python -m vectorless.retrieval.bm25.two_stage "Apa syarat penyadapan?" --top_k_nodes 10
 """
 
 import argparse
@@ -20,7 +20,7 @@ import time
 
 from rank_bm25 import BM25Okapi
 
-from .common import (
+from ..common import (
     tokenize, reset_token_counters, get_token_stats,
     load_catalog, load_doc, extract_nodes,
     generate_answer, save_log, DATA_INDEX,

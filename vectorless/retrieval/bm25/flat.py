@@ -9,9 +9,9 @@ This is the IR-standard way to use BM25 (flat corpus search), avoiding the
 cascading failure problem where doc-level metadata mismatch blocks retrieval.
 
 Usage:
-    python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?" --top_k 5
-    python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?" --top_k 10
+    python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?" --top_k 5
+    python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?" --top_k 10
 """
 
 import argparse
@@ -19,7 +19,7 @@ import time
 
 from rank_bm25 import BM25Okapi
 
-from .common import (
+from ..common import (
     tokenize, reset_token_counters, get_token_stats,
     load_all_leaf_nodes, generate_answer_multi_doc, save_log,
 )
