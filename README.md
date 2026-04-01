@@ -284,6 +284,44 @@ for name, fn in strategies.items():
 
 ---
 
+## 6. Ground Truth Workflow
+
+Ground truth annotation now uses **ayat-index leaves as the semantic anchor**.
+Each benchmark query must be **self-contained**: vague wording is allowed, but
+context-dependent/coreferential queries are not part of the main benchmark.
+
+```bash
+# List available documents from data/index_ayat
+python scripts/gt_prompt.py --list
+
+# Generate prompt for ChatGPT/Claude
+python scripts/gt_prompt.py perpu-1-2016
+python scripts/gt_prompt.py perpu-1-2016 --out %TEMP%\\gt_perpu-1-2016.txt
+
+# Validate raw annotation files
+python scripts/gt_collect.py --check-only
+
+# Merge validated items
+python scripts/gt_collect.py
+
+# Build multi-granularity evaluation testset
+python scripts/finalize_gt.py
+
+# Inspect the final pickle
+python scripts/load_testset.py --stats
+```
+
+Semantics of `validated_testset.pkl`:
+
+- `gold_pasal_node_ids` - parent pasal of the correct ayat anchor
+- `gold_ayat_node_ids` - exact ayat anchor
+- `gold_full_split_node_ids` - descendant leaves under that ayat anchor in `index_full_split`
+
+This keeps retrieval-method comparisons fair while making pasal vs ayat vs
+full_split evaluation sharper than the older pasal-anchored scheme.
+
+---
+
 ## Environment
 
 Requires `.env` at project root:

@@ -1,5 +1,6 @@
 data/
 CLAUDE.md
+AGENTS.md
 CHANGELOG.md
 __pycache__/
 *.pyc
