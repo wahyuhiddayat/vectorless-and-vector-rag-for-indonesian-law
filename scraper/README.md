@@ -34,6 +34,9 @@ python scraper/bpk_scraper.py [OPTIONS]
 | `9` | Perpu | ~170 |
 | `10` | PP (Peraturan Pemerintah) | ~4965 |
 | `11` | Perpres (Peraturan Presiden) | ~2640 |
+| `42` | PMK (Peraturan Menteri Keuangan) | - |
+| `105` | Permenaker (Peraturan Menteri Ketenagakerjaan) | - |
+| `182` | Permenkes (Peraturan Menteri Kesehatan) | - |
 
 ## Contoh
 
