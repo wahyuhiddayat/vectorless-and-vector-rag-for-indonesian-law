@@ -1,9 +1,4 @@
-"""
-Shared utilities for retrieval pipelines.
-
-Contains: tokenizer, LLM client, data loading, tree helpers, answer generation, logging.
-These are used by all retrieval strategies (bm25_flat, llm, hybrid, ablations).
-"""
+"""Shared utilities used by the active retrieval pipelines."""
 
 import json
 import os
@@ -40,13 +35,6 @@ def tokenize(text: str) -> list[str]:
     text = text.lower()
     tokens = re.findall(r'[a-z0-9]+', text)
     return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
-
-
-def tokenize_no_sw(text: str) -> list[str]:
-    """Indonesian tokenizer without stopword removal (ablation variant)."""
-    text = text.lower()
-    tokens = re.findall(r'[a-z0-9]+', text)
-    return [t for t in tokens if len(t) > 1]
 
 
 # ============================================================

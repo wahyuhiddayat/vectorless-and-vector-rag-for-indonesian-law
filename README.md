@@ -120,7 +120,9 @@ python -m vectorless.indexing.verify --granularity pasal --json
 
 ## 3. Retrieval (Vectorless)
 
-Six retrieval strategies, each in its own file. All share the same data from `data/index_*/`.
+Three retrieval strategies are kept for the final experiments: BM25 flat, pure
+LLM navigation, and hybrid BM25+LLM. All share the same data from
+`data/index_*/`.
 
 ### Switching granularity
 
@@ -128,20 +130,20 @@ All retrieval modules read from `data/index_pasal` by default. Switch granularit
 
 ```bash
 # Default (pasal)
-python -m vectorless.retrieval.bm25_flat "query"
+python -m vectorless.retrieval.bm25.flat "query"
 
 # Ayat-level index
-DATA_INDEX=data/index_ayat python -m vectorless.retrieval.bm25_flat "query"
+DATA_INDEX=data/index_ayat python -m vectorless.retrieval.bm25.flat "query"
 
 # Full-split index
-DATA_INDEX=data/index_full_split python -m vectorless.retrieval.hybrid "query"
+DATA_INDEX=data/index_full_split python -m vectorless.retrieval.hybrid.search "query"
 ```
 
 For Python API usage, set the env var **before** importing:
 ```python
 import os
 os.environ["DATA_INDEX"] = "data/index_ayat"
-from vectorless.retrieval.bm25_flat import retrieve  # picks up env var at import time
+from vectorless.retrieval.bm25.flat import retrieve  # picks up env var at import time
 ```
 
 ### 3.1 BM25 Flat (single-stage keyword search)
@@ -149,8 +151,8 @@ from vectorless.retrieval.bm25_flat import retrieve  # picks up env var at impor
 Searches ALL leaf nodes from ALL documents at once using BM25 scoring.
 
 ```bash
-python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?"
-python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?" --top_k 10
+python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?"
+python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?" --top_k 10
 ```
 
 | Flag | Default | What it does |
@@ -163,8 +165,8 @@ python -m vectorless.retrieval.bm25_flat "Apa syarat penyadapan?" --top_k 10
 LLM navigates the document tree to find relevant Pasal. No keyword matching.
 
 ```bash
-python -m vectorless.retrieval.llm "Apa syarat penyadapan?"
-python -m vectorless.retrieval.llm "Apa syarat penyadapan?" --strategy full
+python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?"
+python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?" --strategy full
 ```
 
 | Flag | Default | What it does |
@@ -177,39 +179,14 @@ python -m vectorless.retrieval.llm "Apa syarat penyadapan?" --strategy full
 BM25 finds keyword-relevant candidates, LLM reranks using text snippets.
 
 ```bash
-python -m vectorless.retrieval.hybrid "Apa syarat penyadapan?"
-python -m vectorless.retrieval.hybrid "Apa syarat penyadapan?" --bm25_top_k 15
+python -m vectorless.retrieval.hybrid.search "Apa syarat penyadapan?"
+python -m vectorless.retrieval.hybrid.search "Apa syarat penyadapan?" --bm25_top_k 15
 ```
 
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `query` | *(required)* | Legal question in Indonesian |
 | `--bm25_top_k N` | `10` | How many BM25 candidates to pass to LLM for reranking. The LLM then picks 1-3 from these |
-
-### 3.4 Ablations
-
-Same as above but without stopword removal (testing if stopwords help or hurt BM25 for Indonesian legal text):
-
-```bash
-python -m vectorless.retrieval.bm25_no_sw "Apa syarat penyadapan?"
-python -m vectorless.retrieval.hybrid_no_sw "Apa syarat penyadapan?"
-```
-
-| Flag | Default | What it does |
-|------|---------|--------------|
-| `query` | *(required)* | Legal question in Indonesian |
-| `--top_k_docs N` | `3` | Max documents from doc-level search |
-| `--top_k_nodes N` | `5` | Max Pasal nodes from node-level search |
-
-### 3.5 BM25 2-Stage (legacy, not used in experiments)
-
-Two-stage BM25: first find relevant documents, then search within. Superseded by BM25 flat.
-
-```bash
-python -m vectorless.retrieval.bm25_2stage "Apa syarat penyadapan?"
-```
-
-Same flags as ablations (`--top_k_docs`, `--top_k_nodes`).
 
 ---
 
@@ -257,7 +234,7 @@ python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?"
 All retrieval modules export a `retrieve()` function. For thesis experiments, call this directly instead of using CLI:
 
 ```python
-from vectorless.retrieval.bm25_flat import retrieve
+from vectorless.retrieval.bm25.flat import retrieve
 result = retrieve("Apa syarat penyadapan?", top_k=5)
 
 print(result["answer"])        # LLM-generated answer
@@ -268,7 +245,9 @@ print(result["metrics"])       # Token usage, elapsed time
 Compare strategies programmatically:
 
 ```python
-from vectorless.retrieval import bm25_flat, hybrid, llm
+from vectorless.retrieval.bm25 import flat as bm25_flat
+from vectorless.retrieval.hybrid import search as hybrid
+from vectorless.retrieval.llm import search as llm
 
 strategies = {
     "bm25_flat": lambda q: bm25_flat.retrieve(q, top_k=5),
