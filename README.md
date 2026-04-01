@@ -61,9 +61,9 @@ python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 | `--llm-only` | off | Pass 2 only: LLM cleanup on already-parsed docs. Resumes after network failure |
 | `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, or comma-separated doc_ids |
 | `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`full_split` |
-| `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM → ayat resplit → full_split resplit → verify |
-| `--no-llm` | — | *(legacy)* Alias for `--parse-only` |
-| `--force` | — | *(legacy)* Alias for `--rebuild all` |
+| `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM â†’ ayat resplit â†’ full_split resplit â†’ verify |
+| `--no-llm` | â€” | *(legacy)* Alias for `--parse-only` |
+| `--force` | â€” | *(legacy)* Alias for `--rebuild all` |
 
 ### Examples
 
@@ -96,14 +96,14 @@ python -m vectorless.indexing.build --granularity full_split --from-pasal --rebu
 
 `vectorless/indexing/parser.py` processes each PDF in 8 stages:
 
-1. **Text extraction & cleaning** — PyMuPDF extraction, two-column gazette layout reorder, OCR artifact fixes
-2. **Penjelasan detection & parsing** — locate PENJELASAN section, fix column-stacking OCR artifacts, attach to tree
-3. **Structural element detection** — regex-based heading detection (BAB / Bagian / Paragraf / Pasal)
-4. **Pasal numbering validation** — sequence checks, gap/jump detection
-5. **Tree building** — stack-based tree assembly, preamble splitting (Menimbang / Mengingat / Menetapkan), boundary fixes
-6. **LLM text cleanup** — Gemini batch OCR correction (~50K chars/batch)
-7. **Main pipeline** — top-level orchestration (`parse_legal_pdf`)
-8. **Sub-Pasal leaf splitting** — Ayat and deep (huruf/angka) granularity expansion
+1. **Text extraction & cleaning** â€” PyMuPDF extraction, two-column gazette layout reorder, OCR artifact fixes
+2. **Penjelasan detection & parsing** â€” locate PENJELASAN section, fix column-stacking OCR artifacts, attach to tree
+3. **Structural element detection** â€” regex-based heading detection (BAB / Bagian / Paragraf / Pasal)
+4. **Pasal numbering validation** â€” sequence checks, gap/jump detection
+5. **Tree building** â€” stack-based tree assembly, preamble splitting (Menimbang / Mengingat / Menetapkan), boundary fixes
+6. **LLM text cleanup** â€” Gemini batch OCR correction (~50K chars/batch)
+7. **Main pipeline** â€” top-level orchestration (`parse_legal_pdf`)
+8. **Sub-Pasal leaf splitting** â€” Ayat and deep (huruf/angka) granularity expansion
 
 ### Verification
 

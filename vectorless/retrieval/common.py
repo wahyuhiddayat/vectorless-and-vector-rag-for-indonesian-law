@@ -125,7 +125,7 @@ def load_catalog() -> list[dict]:
 
 
 def _doc_category(doc_id: str) -> str:
-    """Derive category subfolder from doc_id: 'uu-1-2026' → 'UU'."""
+    """Derive category subfolder from doc_id: 'uu-1-2026' â†’ 'UU'."""
     return doc_id.split("-")[0].upper()
 
 
@@ -280,7 +280,7 @@ Aturan:
     if verbose:
         print(f"\n[Answer] {result.get('answer', '')[:300]}")
         for c in result.get("citations", []):
-            print(f"  [{c['label']}] {c['node_id']} — {c['title']}")
+            print(f"  [{c['label']}] {c['node_id']} â€” {c['title']}")
 
     return result
 
@@ -355,7 +355,7 @@ Aturan:
     if verbose:
         print(f"\n[Answer] {result.get('answer', '')[:300]}")
         for c in result.get("citations", []):
-            print(f"  [{c['label']}] {c['node_id']} — {c['title']}")
+            print(f"  [{c['label']}] {c['node_id']} â€” {c['title']}")
 
     return result
 
