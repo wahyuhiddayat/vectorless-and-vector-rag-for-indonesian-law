@@ -3,7 +3,7 @@ Ground Truth Prompt Generator.
 
 Generates a copy-paste prompt for ChatGPT to create self-contained,
 ayat-anchored ground truth question-answer pairs for Indonesian legal
-QA evaluation.
+QA evaluation, with a balanced mix of reference styles.
 
 Workflow:
   1. Run: python scripts/gt_prompt.py <doc_id>
@@ -16,6 +16,7 @@ Usage:
     python scripts/gt_prompt.py perpu-1-2016
     python scripts/gt_prompt.py perpu-1-2016 --questions 15
     python scripts/gt_prompt.py perpu-1-2016 --out prompt.txt
+    python scripts/gt_prompt.py perpu-1-2016 --stdout
     python scripts/gt_prompt.py --list
 """
 
@@ -57,15 +58,81 @@ percakapan atau query sebelumnya.
 (satu ayat anchor). Jika sebuah pasal tidak punya ayat eksplisit dan tetap menjadi \
 leaf di index ayat, leaf tersebut boleh dipakai sebagai anchor.
 3. Jangan buat pertanyaan yang butuh dua atau lebih ayat/pasal.
-4. Distribusikan pertanyaan ke BANYAK bagian yang berbeda - jangan terlalu banyak \
+4. Nama dokumen BOLEH disebut, tetapi TIDAK WAJIB. Jangan paksa semua pertanyaan \
+menyebut nama dokumen, Pasal, atau ayat.
+5. Pertanyaan boleh menyebut:
+   - tidak menyebut dokumen maupun referensi hukum,
+   - hanya menyebut referensi hukum (Pasal/ayat/huruf/angka),
+   - hanya menyebut dokumen,
+   - atau menyebut keduanya.
+6. Gunakan campuran reference_mode yang seimbang. Benchmark utama TIDAK boleh \
+didominasi query yang eksplisit menyebut Pasal/ayat. Jika ragu, lebih baik \
+parafrase menjadi `none` atau `doc_only` daripada terus memakai `legal_ref`.
+7. Distribusikan pertanyaan ke BANYAK bagian yang berbeda - jangan terlalu banyak \
 dari satu Bab yang sama.
-5. Jawaban harus ada secara EKSPLISIT di teks node (bukan inferensi atau interpretasi).
-6. Jangan buat pertanyaan tentang bagian Menimbang, Mengingat, atau Menetapkan.
-7. DILARANG membuat query yang context-dependent atau coreferential, misalnya \
+8. Jawaban harus ada secara EKSPLISIT di teks node (bukan inferensi atau interpretasi).
+9. Jangan buat pertanyaan tentang bagian Menimbang, Mengingat, atau Menetapkan.
+10. DILARANG membuat query yang context-dependent atau coreferential, misalnya \
 "aturan ini", "ketentuan tersebut", "hal itu", "yang tadi", atau "juga nggak?" \
 jika acuan sebelumnya tidak disebut jelas dalam kalimat yang sama.
-8. Jika memakai kata "ini", "itu", atau "tersebut", antecedent-nya harus disebut \
+11. Jika memakai kata "ini", "itu", atau "tersebut", antecedent-nya harus disebut \
 eksplisit di query yang sama, sehingga query tetap self-contained.
+12. Pertanyaan INVALID jika ayat anchor hanya bisa menjawab dengan cara menunjuk \
+ke ayat/pasal lain. Jika teks ayat hanya berkata "sebagaimana dimaksud pada ayat ..." \
+dan detail jawabannya sebenarnya ada di sibling ayat, JANGAN pakai ayat itu sebagai GT.
+
+=== REFERENCE MODE (reference_mode) ===
+
+Setiap item HARUS punya `reference_mode` yang sesuai dengan bentuk query:
+
+1. none - tidak menyebut nama dokumen dan tidak menyebut Pasal/ayat/huruf/angka.
+   Contoh valid:
+   "Kalau seseorang membujuk anak untuk melakukan persetubuhan dengan dirinya atau \
+orang lain, apakah ketentuan pidana yang sama juga berlaku?"
+
+2. legal_ref - menyebut Pasal/ayat/huruf/angka, tetapi tidak menyebut nama dokumen.
+   Contoh valid:
+   "Berapa pidana penjara paling singkat dan paling lama bagi setiap orang yang \
+melanggar ketentuan dalam Pasal 76D?"
+
+3. doc_only - menyebut nama/jenis dokumen, tetapi tidak menyebut Pasal/ayat/huruf/angka.
+   Contoh valid:
+   "Dalam Perpu Nomor 1 Tahun 2016, kapan peraturan ini mulai berlaku?"
+
+4. both - menyebut nama dokumen dan juga referensi hukum seperti Pasal/ayat.
+   Contoh valid:
+   "Siapa saja pelaku yang ancaman pidananya ditambah sepertiga dalam Pasal 81 ayat \
+(3) Perpu Nomor 1 Tahun 2016?"
+
+Target distribusi reference_mode per batch:
+- none: 3-5 item
+- legal_ref: 3-5 item
+- doc_only: 1-3 item
+- both: 1-3 item
+
+CATATAN:
+- `both` harus menjadi minoritas.
+- Query `none` dan `doc_only` sangat dianjurkan selama tetap self-contained dan unik.
+- Jangan paksa semua query menjadi `legal_ref` atau `both`.
+- `legal_ref` + `both` TIDAK boleh melebihi setengah total item.
+- `both` maksimal 3 item.
+- `legal_ref` maksimal 5 item.
+- Invalid multi-ayat dependency:
+  query yang di-anchor ke ayat yang hanya berkata "sebagaimana dimaksud pada ayat \
+  (4) dan ayat (5)" tetapi pertanyaannya justru meminta rincian kondisi dari ayat \
+  (4)/(5).
+
+=== PRE-FLIGHT CHECK SEBELUM OUTPUT ===
+
+Sebelum mengembalikan JSON final, lakukan pengecekan internal:
+1. Hitung jumlah item per `reference_mode`.
+2. Jika `legal_ref` + `both` > setengah total item, ubah beberapa query menjadi \
+   `none` atau `doc_only`.
+3. Jika `both` > 3, kurangi.
+4. Jika `legal_ref` > 5, kurangi.
+5. Jika `none` < 3, tambahkan query `none`.
+6. Pastikan tidak ada query yang hanya bagus karena terlalu eksplisit menyebut \
+   Pasal/ayat padahal bisa ditulis lebih natural.
 
 === JENIS PERTANYAAN (query_style) ===
 
@@ -110,11 +177,12 @@ ayat yang berbeda dalam pasal yang sama)
 
 Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
 
-[
+[ 
   {{
     "query": "pertanyaan dalam bahasa Indonesia",
     "query_style": "formal|natural|paraphrase|vague",
     "difficulty": "easy|medium|tricky",
+    "reference_mode": "none|legal_ref|doc_only|both",
     "gold_anchor_granularity": "ayat",
     "gold_anchor_node_id": "node_id leaf index ayat yang menjawab",
     "gold_node_id": "sama dengan gold_anchor_node_id",
@@ -125,10 +193,18 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
 ]
 
 Buat tepat {N} item. Gunakan distribusi query_style ~25% tiap jenis dan difficulty \
-~40% easy, ~40% medium, ~20% tricky. Pastikan semua query self-contained dan semua \
-gold node mengacu ke leaf node pada index ayat.
+~40% easy, ~40% medium, ~20% tricky. Gunakan distribusi reference_mode yang \
+seimbang seperti di atas. Benchmark ini untuk retrieval stateless, jadi query \
+harus membantu menguji document discovery, bukan cuma pencocokan kata `Pasal/ayat`. \
+Pastikan semua query self-contained, tidak terlalu didominasi explicit legal \
+references, dan semua gold node mengacu ke leaf node pada index ayat.
 Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 """
+
+
+def default_output_path(doc_id: str) -> Path:
+    """Return the default temp prompt path in the project root."""
+    return Path(f"tmp_gt_{doc_id}.txt")
 
 
 def find_doc(doc_id: str) -> Path | None:
@@ -300,6 +376,10 @@ def main() -> None:
         help="Save prompt to file instead of printing to stdout",
     )
     ap.add_argument(
+        "--stdout", action="store_true",
+        help="Print prompt to stdout instead of writing the default temp txt file",
+    )
+    ap.add_argument(
         "--list", "-l", action="store_true",
         help="List all available doc_ids",
     )
@@ -332,16 +412,13 @@ def main() -> None:
     if args.questions is not None:
         print(f"  [override: --questions {args.questions}]", end="")
     print()
-    print(f"Output     : {args.out or 'stdout (copy-paste)'}\n")
+    output_path = Path(args.out) if args.out else default_output_path(doc["doc_id"])
+    output_label = "stdout (copy-paste)" if args.stdout else str(output_path)
+    print(f"Output     : {output_label}\n")
 
     prompt, _ = build_prompt(doc, n_questions=args.questions)
 
-    if args.out:
-        Path(args.out).write_text(prompt, encoding="utf-8")
-        print(f"Prompt disimpan ke: {args.out}")
-        print("\nLangkah selanjutnya:")
-        print(f"  1. Buka {args.out} dan copy isinya")
-    else:
+    if args.stdout:
         print("=" * 70)
         print("COPY PROMPT DI BAWAH INI KE CHATGPT (BUKAN Gemini):")
         print("=" * 70)
@@ -349,6 +426,12 @@ def main() -> None:
         print("=" * 70)
         print("\nLangkah selanjutnya:")
         print("  1. Copy prompt di atas -> paste ke ChatGPT")
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(prompt, encoding="utf-8")
+        print(f"Prompt disimpan ke: {output_path}")
+        print("\nLangkah selanjutnya:")
+        print(f"  1. Buka {output_path} dan copy isinya")
 
     raw_dir = Path("data/ground_truth_raw")
     raw_dir.mkdir(parents=True, exist_ok=True)

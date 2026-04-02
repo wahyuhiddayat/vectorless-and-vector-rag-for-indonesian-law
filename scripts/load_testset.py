@@ -8,6 +8,7 @@ File format: pickle dict with structure:
   {
     "q001": {
       "query": str,
+      "reference_mode": "none|legal_ref|doc_only|both",
       "gold_anchor_granularity": "ayat",
       "gold_anchor_node_id": str,
       "gold_node_id": str,
@@ -72,12 +73,14 @@ def show_stats(data: dict):
     """Print comprehensive statistics about the testset."""
     doc_counts = defaultdict(int)
     anchor_nodes = defaultdict(set)
+    reference_mode_counts = defaultdict(int)
 
     for item in data.values():
         doc_id = item.get("gold_doc_id", "?")
         node_id = item.get("gold_anchor_node_id") or item.get("gold_node_id", "?")
         doc_counts[doc_id] += 1
         anchor_nodes[doc_id].add(node_id)
+        reference_mode_counts[item.get("reference_mode", "(missing)")] += 1
 
     print("\n" + "=" * 70)
     print("TESTSET STATISTICS")
@@ -91,6 +94,12 @@ def show_stats(data: dict):
         count = doc_counts[doc_id]
         unique_nodes = len(anchor_nodes[doc_id])
         print(f"  {doc_id:30s}  {count:3d} questions  ({unique_nodes} unique anchors)")
+
+    print(f"\nReference mode distribution:")
+    for ref_mode in ["none", "legal_ref", "doc_only", "both", "(missing)"]:
+        count = reference_mode_counts.get(ref_mode, 0)
+        if count:
+            print(f"  {ref_mode:15s}  {count:3d}")
 
     print()
 
@@ -109,6 +118,7 @@ def show_preview(data: dict, num_items: int = 3):
         print(f"  Doc ID       : {item.get('gold_doc_id', '?')}")
         print(f"  Anchor       : {item.get('gold_anchor_node_id', item.get('gold_node_id', '?'))}")
         print(f"  Granularity  : {item.get('gold_anchor_granularity', '?')}")
+        print(f"  Ref mode     : {item.get('reference_mode', '?')}")
         print(f"  Path         : {item.get('navigation_path', '?')}")
         if item.get("answer_hint"):
             print(f"  Answer hint  : {item['answer_hint'][:80]}")
@@ -130,6 +140,7 @@ def show_full(data: dict):
         print(f"  Doc ID       : {item.get('gold_doc_id', '?')}")
         print(f"  Anchor       : {item.get('gold_anchor_node_id', item.get('gold_node_id', '?'))}")
         print(f"  Granularity  : {item.get('gold_anchor_granularity', '?')}")
+        print(f"  Ref mode     : {item.get('reference_mode', '?')}")
         print(f"  Path         : {item.get('navigation_path', '?')}")
         if item.get("answer_hint"):
             print(f"  Answer hint  : {item['answer_hint']}")

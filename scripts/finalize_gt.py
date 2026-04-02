@@ -2,8 +2,9 @@
 Ground Truth Finalizer.
 
 Converts data/ground_truth.json (ayat-anchored annotations produced by
-gt_collect.py) into data/validated_testset.pkl, which stores gold node ID
-sets for all three index granularities: pasal, ayat, and full_split.
+gt_collect.py) into data/validated_testset.pkl, which stores reference_mode
+plus gold node ID sets for all three index granularities: pasal, ayat, and
+full_split.
 
 EVALUATION USAGE (in your retrieval eval script):
   if granularity == "pasal":
@@ -28,6 +29,7 @@ Usage:
 import argparse
 import json
 import pickle
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +41,19 @@ TESTSET_FILE = Path("data/validated_testset.pkl")
 INDEX_PASAL = Path("data/index_pasal")
 INDEX_AYAT = Path("data/index_ayat")
 INDEX_FULL_SPLIT = Path("data/index_full_split")
+VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
+LEGAL_REFERENCE_RE = re.compile(r"\b(pasal|ayat|huruf|angka)\b", re.IGNORECASE)
+DOC_REFERENCE_RE = re.compile(
+    r"\b("
+    r"peraturan pemerintah pengganti undang-?undang|perpu|"
+    r"undang-?undang|uu|"
+    r"peraturan pemerintah|pp|"
+    r"peraturan presiden|perpres|"
+    r"peraturan menteri(?:\s+[a-z][a-z-]*){0,4}|"
+    r"pmk|permen[a-z-]+"
+    r")\b",
+    re.IGNORECASE,
+)
 
 # Cache to avoid re-reading the same index JSON multiple times
 _doc_cache: dict[str, dict] = {}
@@ -96,6 +111,21 @@ def get_anchor_node_id(item: dict) -> str:
 def get_anchor_granularity(item: dict) -> str:
     """Return the anchor granularity from a merged GT item."""
     return item.get("gold_anchor_granularity", "ayat")
+
+
+def infer_reference_mode(query: str) -> str:
+    """Infer reference_mode from query text for backward compatibility."""
+    query = query or ""
+    has_legal = bool(LEGAL_REFERENCE_RE.search(query))
+    has_doc = bool(DOC_REFERENCE_RE.search(query))
+
+    if has_legal and has_doc:
+        return "both"
+    if has_legal:
+        return "legal_ref"
+    if has_doc:
+        return "doc_only"
+    return "none"
 
 
 def derive_pasal_node_id(anchor_node_id: str, doc_id: str) -> str:
@@ -170,10 +200,18 @@ def finalize(check_only: bool = False) -> dict:
         doc_id = item["gold_doc_id"]
         anchor_granularity = get_anchor_granularity(item)
         anchor_node_id = get_anchor_node_id(item)
+        reference_mode = item.get("reference_mode") or infer_reference_mode(item.get("query", ""))
 
         if anchor_granularity != "ayat":
             errors.append(
                 f"{qid}: gold_anchor_granularity must be 'ayat', got '{anchor_granularity}'"
+            )
+            continue
+
+        if reference_mode not in VALID_REFERENCE_MODES:
+            errors.append(
+                f"{qid}: reference_mode must be one of {sorted(VALID_REFERENCE_MODES)}, "
+                f"got '{reference_mode}'"
             )
             continue
 
@@ -206,6 +244,7 @@ def finalize(check_only: bool = False) -> dict:
             "query": item["query"],
             "query_style": item.get("query_style", ""),
             "difficulty": item.get("difficulty", ""),
+            "reference_mode": reference_mode,
             "gold_doc_id": doc_id,
             "gold_anchor_granularity": "ayat",
             "gold_anchor_node_id": anchor_node_id,
@@ -276,6 +315,7 @@ def print_stats() -> None:
     style_counts: dict[str, int] = {}
     diff_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
+    reference_mode_counts: dict[str, int] = {}
     total_full_ids = 0
     multi_full = 0
 
@@ -291,6 +331,9 @@ def print_stats() -> None:
 
         anchor = item.get("gold_anchor_granularity") or "(missing)"
         anchor_counts[anchor] = anchor_counts.get(anchor, 0) + 1
+
+        ref_mode = item.get("reference_mode") or "(missing)"
+        reference_mode_counts[ref_mode] = reference_mode_counts.get(ref_mode, 0) + 1
 
         full_ids = item.get("gold_full_split_node_ids", set())
         total_full_ids += len(full_ids)
@@ -310,6 +353,12 @@ def print_stats() -> None:
     for style in sorted(style_counts.keys()):
         count = style_counts[style]
         print(f"    {style:15s}  {count:4d}  ({count/total*100:.1f}%)")
+
+    print("\n  Reference mode distribution:")
+    for ref_mode in ["none", "legal_ref", "doc_only", "both", "(missing)"]:
+        count = reference_mode_counts.get(ref_mode, 0)
+        if count:
+            print(f"    {ref_mode:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
     print("\n  Difficulty distribution:")
     for diff in ["easy", "medium", "tricky", "(missing)"]:

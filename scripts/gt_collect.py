@@ -6,7 +6,7 @@ ground_truth.json dataset. The benchmark is ayat-anchored: each accepted
 item must point to exactly one leaf node from data/index_ayat.
 
 Required fields (hard validation):
-  query, gold_node_id, gold_doc_id, navigation_path,
+  query, reference_mode, gold_node_id, gold_doc_id, navigation_path,
   gold_anchor_granularity, gold_anchor_node_id
 
 Optional fields (soft validation):
@@ -40,14 +40,33 @@ DATA_INDEX = Path("data/index_ayat")
 
 VALID_QUERY_STYLES = {"formal", "natural", "paraphrase", "vague"}
 VALID_DIFFICULTIES = {"easy", "medium", "tricky"}
+VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
 REQUIRED_FIELDS = {
     "query",
+    "reference_mode",
     "gold_node_id",
     "gold_doc_id",
     "navigation_path",
     "gold_anchor_granularity",
     "gold_anchor_node_id",
 }
+
+LEGAL_REFERENCE_RE = re.compile(r"\b(pasal|ayat|huruf|angka)\b", re.IGNORECASE)
+DOC_REFERENCE_RE = re.compile(
+    r"\b("
+    r"peraturan pemerintah pengganti undang-?undang|perpu|"
+    r"undang-?undang|uu|"
+    r"peraturan pemerintah|pp|"
+    r"peraturan presiden|perpres|"
+    r"peraturan menteri(?:\s+[a-z][a-z-]*){0,4}|"
+    r"pmk|permen[a-z-]+"
+    r")\b",
+    re.IGNORECASE,
+)
+ANCHOR_CROSS_REFERENCE_RE = re.compile(
+    r"\bayat\s*\(\d+\)|\bpasal\s+\d+[A-Z]*",
+    re.IGNORECASE,
+)
 
 CONTEXT_WARNING_PATTERNS = [
     ("coreference phrase", re.compile(r"\b(aturan|ketentuan|pasal|ayat|hal|sanksi|pidana)\s+(ini|itu|tersebut)\b", re.IGNORECASE)),
@@ -126,6 +145,20 @@ def parse_raw_json(path: Path) -> list[dict]:
     return data
 
 
+def infer_reference_mode(query: str) -> str:
+    """Infer reference_mode from the query text."""
+    has_legal = bool(LEGAL_REFERENCE_RE.search(query or ""))
+    has_doc = bool(DOC_REFERENCE_RE.search(query or ""))
+
+    if has_legal and has_doc:
+        return "both"
+    if has_legal:
+        return "legal_ref"
+    if has_doc:
+        return "doc_only"
+    return "none"
+
+
 def detect_context_warnings(query: str) -> list[str]:
     """Return soft warnings for suspicious context-dependent phrasing."""
     warnings = []
@@ -200,6 +233,20 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
         if len(query) < 10:
             item_errors.append("Query too short (< 10 chars)")
 
+        reference_mode = item.get("reference_mode")
+        if reference_mode not in VALID_REFERENCE_MODES:
+            item_errors.append(
+                f"reference_mode must be one of {sorted(VALID_REFERENCE_MODES)}, "
+                f"got '{reference_mode}'"
+            )
+        else:
+            inferred_reference_mode = infer_reference_mode(query)
+            if reference_mode != inferred_reference_mode:
+                item_warnings.append(
+                    f"reference_mode mismatch: declared '{reference_mode}', "
+                    f"inferred '{inferred_reference_mode}'"
+                )
+
         if "query_style" in item:
             if item["query_style"] not in VALID_QUERY_STYLES:
                 item_warnings.append(
@@ -224,6 +271,13 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
                 item_warnings.append(
                     "navigation_path does not match ayat index exactly "
                     f"(expected: {actual_path})"
+                )
+
+            anchor_text = leaf_map[anchor_node_id].get("text", "")
+            if ANCHOR_CROSS_REFERENCE_RE.search(anchor_text):
+                item_warnings.append(
+                    "Anchor ayat text cites other provisions; manually verify the query "
+                    "is answerable from this ayat alone"
                 )
 
         item_warnings.extend(detect_context_warnings(query))
@@ -252,6 +306,8 @@ def load_existing_gt() -> dict:
             item["gold_anchor_granularity"] = "ayat"
         if "gold_anchor_node_id" not in item and "gold_node_id" in item:
             item["gold_anchor_node_id"] = item["gold_node_id"]
+        if "reference_mode" not in item and "query" in item:
+            item["reference_mode"] = infer_reference_mode(item["query"])
 
     return data
 
@@ -281,6 +337,7 @@ def print_stats(gt: dict) -> None:
     style_counts: dict[str, int] = {}
     difficulty_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
+    reference_mode_counts: dict[str, int] = {}
 
     for item in gt.values():
         doc_id = item["gold_doc_id"]
@@ -294,6 +351,9 @@ def print_stats(gt: dict) -> None:
 
         anchor = item.get("gold_anchor_granularity") or "(missing)"
         anchor_counts[anchor] = anchor_counts.get(anchor, 0) + 1
+
+        ref_mode = item.get("reference_mode") or "(missing)"
+        reference_mode_counts[ref_mode] = reference_mode_counts.get(ref_mode, 0) + 1
 
     print(f"\nGround truth stats: {GT_FILE}")
     print(f"  Total questions   : {total}")
@@ -310,6 +370,14 @@ def print_stats(gt: dict) -> None:
         count = style_counts[style]
         pct = count / total * 100
         print(f"    {style:15s}  {count:4d}  ({pct:.1f}%)")
+
+    print("\n  Reference mode distribution:")
+    for ref_mode in ["none", "legal_ref", "doc_only", "both", "(missing)"]:
+        count = reference_mode_counts.get(ref_mode, 0)
+        if count == 0:
+            continue
+        pct = count / total * 100
+        print(f"    {ref_mode:15s}  {count:4d}  ({pct:.1f}%)")
 
     print("\n  Difficulty distribution:")
     for diff in ["easy", "medium", "tricky", "(missing)"]:
@@ -435,6 +503,7 @@ def main() -> None:
             "query": item["query"],
             "query_style": item.get("query_style", ""),
             "difficulty": item.get("difficulty", ""),
+            "reference_mode": item["reference_mode"],
             "gold_anchor_granularity": item["gold_anchor_granularity"],
             "gold_anchor_node_id": item["gold_anchor_node_id"],
             "gold_node_id": item["gold_node_id"],

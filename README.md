@@ -268,6 +268,10 @@ for name, fn in strategies.items():
 Ground truth annotation now uses **ayat-index leaves as the semantic anchor**.
 Each benchmark query must be **self-contained**: vague wording is allowed, but
 context-dependent/coreferential queries are not part of the main benchmark.
+The main benchmark should also use a **balanced mix** of query reference styles:
+no legal reference, legal reference only, document only, and both.
+By default, `gt_prompt.py` now writes the prompt to `tmp_gt_<doc_id>.txt` in
+the project root so long prompts are easy to inspect and delete.
 
 ```bash
 # List available documents from data/index_ayat
@@ -276,6 +280,7 @@ python scripts/gt_prompt.py --list
 # Generate prompt for ChatGPT/Claude
 python scripts/gt_prompt.py perpu-1-2016
 python scripts/gt_prompt.py perpu-1-2016 --out %TEMP%\\gt_perpu-1-2016.txt
+python scripts/gt_prompt.py perpu-1-2016 --stdout
 
 # Validate raw annotation files
 python scripts/gt_collect.py --check-only
@@ -292,12 +297,17 @@ python scripts/load_testset.py --stats
 
 Semantics of `validated_testset.pkl`:
 
+- `reference_mode` - one of `none`, `legal_ref`, `doc_only`, `both`
 - `gold_pasal_node_ids` - parent pasal of the correct ayat anchor
 - `gold_ayat_node_ids` - exact ayat anchor
 - `gold_full_split_node_ids` - descendant leaves under that ayat anchor in `index_full_split`
 
 This keeps retrieval-method comparisons fair while making pasal vs ayat vs
-full_split evaluation sharper than the older pasal-anchored scheme.
+full_split evaluation sharper than the older pasal-anchored scheme. Mentioning
+the document name is optional; the important rule is that each query stays
+self-contained and answerable by one ayat anchor. Older GT batches that were
+generated under a more restrictive prompt should be regenerated before being
+treated as the final main benchmark.
 
 ---
 
