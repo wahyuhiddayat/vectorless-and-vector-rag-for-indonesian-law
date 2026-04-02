@@ -13,6 +13,7 @@ vectorless-and-vector-rag-for-indonesian-law/
   vector/               # Vector RAG system (comparison baseline)
   data/                 # Shared data layer (gitignored)
     raw/                # Scraper output: metadata JSONs + PDFs
+    index_status.json   # Central manifest for indexing progress/status
     index_pasal/        # Pasal-level index + catalog.json
     index_ayat/         # Ayat-level index
     index_full_split/   # Full-split index (finest granularity)
@@ -59,7 +60,7 @@ python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 | `--doc-id ID` | all docs | Operate on a single document, e.g. `--doc-id uu-20-2025` |
 | `--parse-only` | off | Pass 1 only: PDF parsing, no LLM. Use when iterating parser fixes |
 | `--llm-only` | off | Pass 2 only: LLM cleanup on already-parsed docs. Resumes after network failure |
-| `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, or comma-separated doc_ids |
+| `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, `stale`, or comma-separated doc_ids |
 | `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`full_split` |
 | `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM â†’ ayat resplit â†’ full_split resplit â†’ verify |
 | `--no-llm` | â€” | *(legacy)* Alias for `--parse-only` |
@@ -76,7 +77,7 @@ python -m vectorless.indexing.build --granularity pasal --full-pipeline
 
 # Two-pass workflow: parse first, then run LLM cleanup separately
 python -m vectorless.indexing.build --granularity pasal --parse-only
-python -m vectorless.indexing.build --granularity pasal --llm-only
+python -m vectorless.indexing.build --granularity pasal --llm-only --rebuild uncleaned
 
 # Quick test: parse one doc without LLM cleanup
 python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --parse-only
@@ -87,9 +88,37 @@ python -m vectorless.indexing.build --granularity pasal --rebuild uu-20-2025,uu-
 # Re-index all docs
 python -m vectorless.indexing.build --granularity pasal --rebuild all
 
+# Re-index only stale docs after a parser-version bump
+python -m vectorless.indexing.build --granularity pasal --rebuild stale
+
 # Fast: re-split ayat/full_split from existing pasal index (~0.2s, no LLM)
-python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild all
-python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild stale
+
+# Inspect central indexing status
+python -m vectorless.indexing.status
+python -m vectorless.indexing.status --refresh-verify
+```
+
+### Incremental workflow
+
+The indexing pipeline now maintains `data/index_status.json` as the operational
+source of truth for parse progress, LLM cleanup, stale derived outputs, and
+verify summaries.
+
+```bash
+# 1) Parse everything offline first
+python -m vectorless.indexing.build --granularity pasal --parse-only
+
+# 2) Spend Gemini budget only on docs that still need cleanup
+python -m vectorless.indexing.build --granularity pasal --llm-only --rebuild uncleaned
+
+# 3) After parser fixes, rebuild only stale pasal docs
+python -m vectorless.indexing.build --granularity pasal --rebuild stale
+
+# 4) Then refresh derived granularities from pasal only
+python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild stale
 ```
 
 ### Parser pipeline (internal)

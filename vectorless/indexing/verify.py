@@ -4,11 +4,21 @@ import re
 import sys
 from pathlib import Path
 
+from .status import (
+    apply_verify_results,
+    load_registry,
+    load_status_manifest,
+    sync_manifest_from_indexes,
+    write_status_manifest,
+)
+
 GRANULARITY_INDEX_MAP = {
     "pasal": Path("data/index_pasal"),
     "ayat": Path("data/index_ayat"),
     "full_split": Path("data/index_full_split"),
 }
+PARSER_VERSION = "2026-04-02"
+LLM_CLEANUP_VERSION = "2026-04-02"
 
 # Detect recurring PDF headers that survive OCR cleanup and bleed into node text.
 # Negative lookbehind/lookahead exclude legitimate uses:
@@ -484,6 +494,15 @@ def main():
         sys.exit(1)
 
     granularities = list(GRANULARITY_INDEX_MAP.keys()) if args.all else [args.granularity]
+    registry = load_registry()
+    manifest = load_status_manifest(PARSER_VERSION, LLM_CLEANUP_VERSION)
+    sync_manifest_from_indexes(
+        manifest,
+        registry,
+        PARSER_VERSION,
+        LLM_CLEANUP_VERSION,
+        doc_ids=[args.doc_id] if args.doc_id else None,
+    )
 
     all_results = {}
     # Run verification on each requested granularity.
@@ -494,6 +513,7 @@ def main():
             continue
         results = verify_index(index_dir, args.doc_id)
         all_results[gran] = results
+        apply_verify_results(manifest, gran, results, registry=registry)
 
         if not args.json:
             print_report(results, index_dir)
@@ -531,6 +551,8 @@ def main():
         for gran, results in all_results.items():
             output[gran] = results
         print(json.dumps(output, ensure_ascii=False, indent=2))
+
+    write_status_manifest(manifest)
 
 
 if __name__ == "__main__":

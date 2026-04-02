@@ -18,6 +18,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, UTC
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,9 +31,24 @@ from .parser import (parse_legal_pdf, parse_penjelasan, attach_penjelasan,
                      extract_pages, clean_page_text, find_penjelasan_page,
                      iter_leaves, ayat_split_leaves, deep_split_leaves,
                      strip_ocr_headers, apply_llm_cleanup)
+from .status import (
+    apply_verify_results,
+    clear_doc_error,
+    is_cleanup_stale,
+    load_status_manifest,
+    set_doc_error,
+    sync_manifest_from_indexes,
+    write_status_manifest,
+)
 
 DATA_RAW = Path("data/raw")
 REGISTRY_PATH = DATA_RAW / "registry.json"
+PARSER_VERSION = "2026-04-02"
+LLM_CLEANUP_VERSION = "2026-04-02"
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def load_registry() -> dict:
@@ -169,7 +185,8 @@ GRANULARITY_INDEX_MAP = {
 }
 
 
-def _resplit_from_pasal(granularity: str, doc_id: str | None, force: bool):
+def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | None,
+                        manifest: dict, registry: dict):
     """Re-split pasal index to ayat/full_split without PDF parse or LLM calls."""
     import copy
 
@@ -177,7 +194,7 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, force: bool):
     target_dir = GRANULARITY_INDEX_MAP[granularity]
     split_fn = ayat_split_leaves if granularity == "ayat" else deep_split_leaves
 
-    log.info(f"re-split from pasal to {granularity}  output {target_dir}  force {'on' if force else 'off'}")
+    log.info(f"re-split from pasal to {granularity}  output {target_dir}  rebuild {rebuild or 'missing'}")
 
     pasal_files = sorted(pasal_dir.rglob("*.json"))
     pasal_files = [f for f in pasal_files if f.name != "catalog.json"]
@@ -202,7 +219,13 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, force: bool):
         out_path = target_dir / rel
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if out_path.exists() and not force:
+        status_entry = manifest.get("docs", {}).get(did, {})
+        if status_entry.get("stale_parse"):
+            log.info(f"  skip  {did:30s}  pasal parse is stale, rebuild pasal first")
+            skipped += 1
+            continue
+
+        if out_path.exists() and not _should_resplit_doc(out_path, rebuild, did, status_entry):
             skipped += 1
             continue
 
@@ -212,12 +235,25 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, force: bool):
         strip_ocr_headers(structure)
 
         doc["structure"] = structure
+        doc["parser_version"] = doc.get("parser_version") or PARSER_VERSION
+        doc["source_pasal_parser_version"] = doc["parser_version"]
+        doc["source_pasal_parse_updated_at"] = doc.get("parse_updated_at") or now_iso()
+        doc["derived_updated_at"] = now_iso()
 
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
 
         leaves = sum(1 for _ in iter_leaves(structure))
         log.info(f"  {did:30s}  {leaves:5d} leaves  {out_path}")
+        clear_doc_error(manifest, did, registry.get(did))
+        sync_manifest_from_indexes(
+            manifest,
+            registry,
+            PARSER_VERSION,
+            LLM_CLEANUP_VERSION,
+            doc_ids=[did],
+        )
+        write_status_manifest(manifest)
         success += 1
 
     # Rebuild target catalog after re-splitting.
@@ -253,14 +289,59 @@ def _output_path(data_index: Path, doc_id: str) -> Path:
     return data_index / category / f"{doc_id}.json"
 
 
-def _should_rebuild(output_path: Path, rebuild: str | None, doc_id: str) -> bool:
-    """Return True if this doc should be (re)built according to --rebuild."""
+def _targeted_doc_ids(rebuild: str | None) -> set[str]:
+    if rebuild and rebuild not in ("all", "uncleaned", "stale"):
+        return {doc_id.strip() for doc_id in rebuild.split(",") if doc_id.strip()}
+    return set()
+
+
+def _should_parse_doc(output_path: Path, rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
+    """Return True if a parse pass should run for this document."""
     if rebuild == "all":
         return True
-    if rebuild and rebuild not in ("all", "uncleaned"):
-        # Comma-separated list of doc_ids
-        return doc_id in {d.strip() for d in rebuild.split(",")}
-    # Default behavior: rebuild only when output does not exist.
+    if rebuild == "stale":
+        return (status_entry or {}).get("stale_parse", False) or not output_path.exists()
+    if rebuild == "uncleaned":
+        return not output_path.exists()
+    if rebuild:
+        return doc_id in _targeted_doc_ids(rebuild)
+    return not output_path.exists()
+
+
+def _should_force_llm(rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
+    """Return True if LLM cleanup should re-run even on already-clean docs."""
+    entry = status_entry or {}
+    if rebuild == "all":
+        return True
+    if rebuild == "stale":
+        return bool(
+            entry.get("pasal_exists")
+            and entry.get("llm_cleaned")
+            and not entry.get("stale_parse")
+            and entry.get("llm_cleanup_version") != LLM_CLEANUP_VERSION
+        )
+    if rebuild == "uncleaned":
+        return bool(
+            entry.get("pasal_exists")
+            and entry.get("llm_cleaned")
+            and entry.get("llm_cleanup_version") != LLM_CLEANUP_VERSION
+            and not entry.get("stale_parse")
+        )
+    if rebuild:
+        return doc_id in _targeted_doc_ids(rebuild)
+    return False
+
+
+def _should_resplit_doc(output_path: Path, rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
+    """Return True if ayat/full_split should be regenerated from pasal."""
+    if rebuild == "all":
+        return True
+    if rebuild == "stale":
+        return (status_entry or {}).get("stale_derived", False) or not output_path.exists()
+    if rebuild == "uncleaned":
+        return not output_path.exists()
+    if rebuild:
+        return doc_id in _targeted_doc_ids(rebuild)
     return not output_path.exists()
 
 
@@ -285,7 +366,7 @@ def _load_pdf_for_doc(entry: dict, metadata: dict | None,
 # Pass 1 parses PDFs and saves llm_cleaned as false.
 
 def _parse_pass(data_index: Path, docs: dict, granularity: str,
-                rebuild: str | None) -> tuple[int, int, int]:
+                rebuild: str | None, manifest: dict) -> tuple[int, int, int]:
     """Parse PDFs into tree JSON and save with llm_cleaned=false.
 
     Fully offline (no network calls). Skips existing outputs unless targeted by --rebuild.
@@ -299,9 +380,10 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
         output_path = _output_path(data_index, doc_id)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        status_entry = manifest.get("docs", {}).get(doc_id, {})
 
         # Skip existing files unless they are selected for rebuild.
-        if output_path.exists() and not _should_rebuild(output_path, rebuild, doc_id):
+        if output_path.exists() and not _should_parse_doc(output_path, rebuild, doc_id, status_entry):
             log.info(f"[{i}/{len(docs)}] skip  {doc_id}")
             skipped += 1
             continue
@@ -319,6 +401,8 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
         log.info(f"pdf  {pdf_path.name}")
         if err:
             log.error(f"{err}")
+            set_doc_error(manifest, doc_id, err, entry)
+            write_status_manifest(manifest)
             failed += 1
             continue
 
@@ -329,6 +413,8 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
                                            granularity=granularity)
         except Exception as e:
             log.error(f"parse failed: {e}")
+            set_doc_error(manifest, doc_id, f"parse failed: {e}", entry)
+            write_status_manifest(manifest)
             failed += 1
             continue
 
@@ -366,10 +452,23 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
 
         enriched = enrich_doc(parse_result, entry, metadata)
         enriched["llm_cleaned"] = False
+        enriched["parser_version"] = PARSER_VERSION
+        enriched["llm_cleanup_version"] = None
+        enriched["parse_updated_at"] = now_iso()
+        enriched["llm_cleaned_at"] = None
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(enriched, f, ensure_ascii=False, indent=2)
         log.info("saved (pending LLM cleanup)")
+        clear_doc_error(manifest, doc_id, entry)
+        sync_manifest_from_indexes(
+            manifest,
+            docs,
+            PARSER_VERSION,
+            LLM_CLEANUP_VERSION,
+            doc_ids=[doc_id],
+        )
+        write_status_manifest(manifest)
         success += 1
 
     total_elapsed = time.time() - t_total
@@ -379,7 +478,8 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
 
 # Pass 2 runs LLM cleanup and updates llm_cleaned to true.
 
-def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, int, int]:
+def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
+              manifest: dict) -> tuple[int, int, int]:
     """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
 
     Creates a fresh genai.Client per doc to survive SSL connection drops.
@@ -400,9 +500,12 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, i
 
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
         output_path = _output_path(data_index, doc_id)
+        status_entry = manifest.get("docs", {}).get(doc_id, {})
 
         if not output_path.exists():
             log.warning(f"[{i}/{len(docs)}] missing {doc_id}, run parse pass first")
+            set_doc_error(manifest, doc_id, "missing parsed output, run parse pass first", entry)
+            write_status_manifest(manifest)
             failed += 1
             continue
 
@@ -410,9 +513,13 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, i
             doc = json.load(f)
 
         already_cleaned = doc.get("llm_cleaned", False)
+        if status_entry.get("stale_parse"):
+            log.warning(f"[{i}/{len(docs)}] skip  {doc_id} (parse stale, rerun parse pass first)")
+            skipped += 1
+            continue
 
         # Re-run cleanup when requested by rebuild targeting.
-        force_this = _should_rebuild(output_path, rebuild, doc_id)
+        force_this = _should_force_llm(rebuild, doc_id, status_entry)
 
         if already_cleaned and not force_this:
             log.info(f"[{i}/{len(docs)}] skip  {doc_id} (already cleaned)")
@@ -438,6 +545,8 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, i
             # Keep processing other docs if one doc fails unexpectedly.
             log.error(f"LLM cleanup failed: {e.__class__.__name__}: {e}")
             log.warning("doc kept with llm_cleaned=false, retry with --llm-only")
+            set_doc_error(manifest, doc_id, f"LLM cleanup failed: {e.__class__.__name__}: {e}", entry)
+            write_status_manifest(manifest)
             failed += 1
             continue
 
@@ -449,6 +558,8 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, i
         if penjelasan_proxy:
             doc["penjelasan_umum"] = penjelasan_proxy["umum"]
         doc["llm_cleaned"] = True
+        doc["llm_cleanup_version"] = LLM_CLEANUP_VERSION
+        doc["llm_cleaned_at"] = now_iso()
         if llm_failures:
             existing = doc.get("warnings", [])
             doc["warnings"] = existing + llm_failures
@@ -460,6 +571,15 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None) -> tuple[int, i
             log.warning(f"LLM done ({elapsed:.1f}s)  {n_failures} batch(es) kept as raw OCR")
         else:
             log.info(f"LLM done ({elapsed:.1f}s)  all batches cleaned")
+        clear_doc_error(manifest, doc_id, entry)
+        sync_manifest_from_indexes(
+            manifest,
+            docs,
+            PARSER_VERSION,
+            LLM_CLEANUP_VERSION,
+            doc_ids=[doc_id],
+        )
+        write_status_manifest(manifest)
         success += 1
 
     total_elapsed = time.time() - t_total
@@ -499,6 +619,9 @@ Examples:
   Rebuild only uncleaned docs:
     python -m vectorless.indexing.build --granularity pasal --rebuild uncleaned
 
+  Rebuild only stale docs after a parser-version bump:
+    python -m vectorless.indexing.build --granularity pasal --rebuild stale
+
   Full pipeline across all granularities + verify:
     python -m vectorless.indexing.build --granularity pasal --full-pipeline
 """)
@@ -515,6 +638,7 @@ Examples:
                         "What to rebuild. Options: "
                         "'all' = force-rebuild everything; "
                         "'uncleaned' = redo docs with llm_cleaned=false; "
+                        "'stale' = rebuild docs whose parser/derived versions are stale; "
                         "'doc1,doc2,...' = specific doc_ids. "
                         "Default: only build missing files."
                     ))
@@ -536,14 +660,17 @@ Examples:
         args.rebuild = "all"
 
     granularity = args.granularity
+    registry = load_registry()
+    manifest = load_status_manifest(PARSER_VERSION, LLM_CLEANUP_VERSION)
+    sync_manifest_from_indexes(manifest, registry, PARSER_VERSION, LLM_CLEANUP_VERSION)
+    write_status_manifest(manifest)
 
     # Fast re-split mode for ayat/full_split from existing pasal outputs.
     if args.from_pasal:
         if granularity == "pasal":
             log.error("--from-pasal only works with ayat or full_split")
             sys.exit(1)
-        force = args.rebuild == "all" or args.force
-        _resplit_from_pasal(granularity, args.doc_id, force)
+        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry)
         return
 
     # Full pipeline mode across all granularities, then verification.
@@ -551,13 +678,12 @@ Examples:
         if granularity != "pasal":
             log.error("--full-pipeline must be started with --granularity pasal")
             sys.exit(1)
-        _run_full_pipeline(args)
+        _run_full_pipeline(args, registry, manifest)
         return
 
     data_index = GRANULARITY_INDEX_MAP[granularity]
     data_index.mkdir(parents=True, exist_ok=True)
 
-    registry = load_registry()
     docs = _resolve_docs(registry, args.rebuild, args.doc_id)
     log.info(f"granularity {granularity}  output {data_index}  docs {len(docs)}")
     if args.rebuild:
@@ -568,10 +694,10 @@ Examples:
     run_llm   = not args.parse_only
 
     if run_parse:
-        _parse_pass(data_index, docs, granularity, rebuild=args.rebuild)
+        _parse_pass(data_index, docs, granularity, rebuild=args.rebuild, manifest=manifest)
 
     if run_llm:
-        _llm_pass(data_index, docs, rebuild=args.rebuild)
+        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest)
 
     # Rebuild catalog after pass execution.
     log.info("building catalog")
@@ -580,13 +706,20 @@ Examples:
     with open(catalog_path, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
     log.info(f"catalog  {len(catalog)} documents  {catalog_path}")
+    sync_manifest_from_indexes(
+        manifest,
+        registry,
+        PARSER_VERSION,
+        LLM_CLEANUP_VERSION,
+        doc_ids=list(docs.keys()),
+    )
+    write_status_manifest(manifest)
 
 
-def _run_full_pipeline(args):
+def _run_full_pipeline(args, registry: dict, manifest: dict):
     """Run pasal parse+LLM, then ayat/full_split resplit, then verify."""
     from .verify import verify_index, print_report
 
-    registry = load_registry()
     docs = _resolve_docs(registry, args.rebuild, args.doc_id)
     rebuild = args.rebuild
 
@@ -594,8 +727,8 @@ def _run_full_pipeline(args):
     pasal_index = GRANULARITY_INDEX_MAP["pasal"]
     pasal_index.mkdir(parents=True, exist_ok=True)
 
-    _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild)
-    _llm_pass(pasal_index, docs, rebuild=rebuild)
+    _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild, manifest=manifest)
+    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest)
 
     catalog = build_catalog(pasal_index)
     with open(pasal_index / "catalog.json", "w", encoding="utf-8") as f:
@@ -604,7 +737,7 @@ def _run_full_pipeline(args):
 
     # Ayat and full_split phases resplit from pasal outputs.
     for gran in ("ayat", "full_split"):
-        _resplit_from_pasal(gran, args.doc_id, force=(rebuild == "all"))
+        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry)
 
     # Verify all granularities.
     log.info("verify all granularities")
@@ -614,8 +747,17 @@ def _run_full_pipeline(args):
         results = verify_index(idx, args.doc_id)
         if results:
             print_report(results, idx)
+            apply_verify_results(manifest, gran, results, registry=registry)
             if any(r["status"] != "OK" for r in results):
                 all_ok = False
+    sync_manifest_from_indexes(
+        manifest,
+        registry,
+        PARSER_VERSION,
+        LLM_CLEANUP_VERSION,
+        doc_ids=list(docs.keys()),
+    )
+    write_status_manifest(manifest)
 
     log.info(f"pipeline complete  {'all checks passed' if all_ok else 'some issues found, check output above'}")
 
