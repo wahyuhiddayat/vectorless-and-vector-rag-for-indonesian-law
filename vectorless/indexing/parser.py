@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import time
+import warnings
 import fitz
 from pathlib import Path
 
@@ -1592,14 +1593,40 @@ def _llm_timeout() -> int:
     return _env_int("VECTORLESS_LLM_TIMEOUT", _DEFAULT_LLM_TIMEOUT)
 
 
-def _make_genai_client(api_key: str | None = None):
-    from google import genai
+def _disable_proxy_env_if_needed():
+    """Temporarily clear proxy vars for Gemini requests on flaky Windows setups.
+
+    IMPORTANT: this is a temporary operational workaround. The newer
+    `google.genai` SDK proved unreliable in this environment, so LLM cleanup
+    currently uses the older stable SDK path and disables proxy vars by
+    default unless explicitly opted out.
+    """
+    if os.environ.get("VECTORLESS_GEMINI_DISABLE_PROXY", "1") != "1":
+        return
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ[key] = ""
+
+
+def _make_genai_model(api_key: str | None = None):
+    """Create a Gemini model handle via the older stable SDK.
+
+    IMPORTANT: temporary workaround until `google.genai` becomes reliable in
+    this Windows environment. Keep the rest of the cleanup pipeline unchanged
+    so we can swap the adapter back later.
+    """
+    _disable_proxy_env_if_needed()
 
     if api_key is None:
         api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY environment variable is not set")
-    return genai.Client(api_key=api_key, http_options={"timeout": _llm_timeout()})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 LLM_CLEANUP_PROMPT = """\
 You are an OCR correction tool for Indonesian legal documents.
@@ -1651,10 +1678,10 @@ def _process_batch(batch: dict[str, str], batch_idx: int, total: int, verbose: b
     # Retry up to max_retries times, backing off linearly on rate limit or network errors.
     for attempt in range(max_retries):
         try:
-            client = _make_genai_client(api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
+            model = _make_genai_model(api_key)
+            response = model.generate_content(
+                prompt,
+                request_options={"timeout": _llm_timeout()},
             )
             last_err = None
             break
@@ -1687,14 +1714,17 @@ def _process_batch(batch: dict[str, str], batch_idx: int, total: int, verbose: b
         _lbl = _label or f"{batch_idx + 1}/{total}"
         return batch, 0, 0, f"batch {_lbl}: unexpected retry exit"
 
-    usage = response.usage_metadata
-    input_tok = usage.prompt_token_count or 0
-    output_tok = usage.candidates_token_count or 0
+    usage = getattr(response, "usage_metadata", None)
+    input_tok = getattr(usage, "prompt_token_count", 0) or 0
+    output_tok = getattr(usage, "candidates_token_count", 0) or 0
     _lbl = _label or f"{batch_idx + 1}/{total}"
     if verbose:
-        log.info(f"batch {_lbl}: {input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
+        if input_tok or output_tok:
+            log.info(f"batch {_lbl}: {input_tok + output_tok:,} tokens ({input_tok:,} in, {output_tok:,} out)")
+        else:
+            log.info(f"batch {_lbl}: response received")
 
-    response_text = response.text.strip()
+    response_text = getattr(response, "text", "").strip()
     # Remove markdown code fences that the model sometimes wraps around JSON.
     if response_text.startswith("```"):
         lines = response_text.split("\n")

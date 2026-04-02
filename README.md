@@ -130,7 +130,20 @@ LLM cleanup now defaults to conservative settings for reliability:
 
 - sequential batches by default (`VECTORLESS_LLM_MAX_WORKERS=1`)
 - smaller batch size (`VECTORLESS_LLM_BATCH_SIZE=20000`)
-- per-batch fresh Gemini clients
+- per-batch fresh Gemini model handles
+
+IMPORTANT TEMPORARY NOTE:
+
+- LLM cleanup currently uses `google-generativeai` as a workaround because the
+  newer `google.genai` SDK was timing out repeatedly in the current Windows
+  environment even on tiny requests.
+- This is an operational workaround for thesis progress, not the preferred
+  long-term SDK choice.
+- Install it if needed with:
+
+```powershell
+python -m pip install google-generativeai
+```
 
 If the connection is stable and you want more speed, you can tune it explicitly:
 
