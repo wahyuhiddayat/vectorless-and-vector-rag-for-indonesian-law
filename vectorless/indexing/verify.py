@@ -8,6 +8,7 @@ from .status import (
     apply_verify_results,
     load_registry,
     load_status_manifest,
+    normalize_categories,
     sync_manifest_from_indexes,
     write_status_manifest,
 )
@@ -377,13 +378,14 @@ def verify_doc(doc: dict) -> dict:
     }
 
 
-def verify_index(index_dir: Path, doc_id: str | None = None) -> list[dict]:
+def verify_index(index_dir: Path, doc_id: str | None = None, category: str | None = None) -> list[dict]:
     """Verify all (or one specific) documents in an index directory.
 
     Loads each JSON file, runs verify_doc(), and returns a list of report dicts.
     Skips catalog.json and documents that don't match doc_id (when specified).
     """
     results = []
+    categories = normalize_categories(category)
     # Walk all JSON files in the index directory.
     for path in sorted(index_dir.rglob("*.json")):
         if path.name == "catalog.json":
@@ -392,6 +394,10 @@ def verify_index(index_dir: Path, doc_id: str | None = None) -> list[dict]:
             doc = json.load(f)
         if doc_id and doc["doc_id"] != doc_id:
             continue
+        if categories:
+            doc_category = (doc.get("jenis_folder") or doc["doc_id"].split("-")[0]).upper()
+            if doc_category not in categories:
+                continue
         results.append(verify_doc(doc))
     return results
 
@@ -486,6 +492,7 @@ def main():
                     help="Granularity to verify")
     ap.add_argument("--all", action="store_true", help="Verify all granularities + cross-compare")
     ap.add_argument("--doc-id", type=str, help="Verify single document")
+    ap.add_argument("--category", type=str, help="Verify only selected categories, e.g. UU,PP,PMK")
     ap.add_argument("--json", action="store_true", help="Output as JSON")
     args = ap.parse_args()
 
@@ -511,7 +518,7 @@ def main():
         if not index_dir.exists():
             print(f"SKIP {gran}: {index_dir} does not exist")
             continue
-        results = verify_index(index_dir, args.doc_id)
+        results = verify_index(index_dir, args.doc_id, args.category)
         all_results[gran] = results
         apply_verify_results(manifest, gran, results, registry=registry)
 
@@ -527,7 +534,12 @@ def main():
             for path in pasal_dir.rglob("*.json"):
                 if path.name != "catalog.json":
                     with open(path, encoding="utf-8") as f:
-                        doc_ids.add(json.load(f)["doc_id"])
+                        doc = json.load(f)
+                        if args.category:
+                            doc_category = (doc.get("jenis_folder") or doc["doc_id"].split("-")[0]).upper()
+                            if doc_category not in normalize_categories(args.category):
+                                continue
+                        doc_ids.add(doc["doc_id"])
 
             cross_issues = []
             # Check each document for leaf count inversions between granularities.

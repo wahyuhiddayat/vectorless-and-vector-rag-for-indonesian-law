@@ -270,15 +270,29 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
 
 # Shared helpers for parse and LLM passes.
 
-def _resolve_docs(registry: dict, rebuild: str | None, doc_id: str | None) -> dict:
-    """Return the filtered docs dict based on --rebuild and --doc-id flags."""
+def _normalize_categories(category: str | None) -> set[str]:
+    if not category:
+        return set()
+    return {part.strip().upper() for part in category.split(",") if part.strip()}
+
+
+def _resolve_docs(registry: dict, rebuild: str | None, doc_id: str | None,
+                  category: str | None = None) -> dict:
+    """Return the filtered docs dict based on --rebuild, --doc-id, and --category flags."""
     docs = {k: v for k, v in registry.items() if v.get("has_pdf")}
+    categories = _normalize_categories(category)
 
     if doc_id:
         if doc_id not in docs:
             log.error(f"doc_id '{doc_id}' not found in registry (or has no PDF)")
             sys.exit(1)
         return {doc_id: docs[doc_id]}
+
+    if categories:
+        docs = {
+            k: v for k, v in docs.items()
+            if (v.get("jenis_folder") or k.split("-")[0]).upper() in categories
+        }
 
     return docs
 
@@ -482,10 +496,8 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
               manifest: dict) -> tuple[int, int, int]:
     """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
 
-    Creates a fresh genai.Client per doc to survive SSL connection drops.
     Returns (success, skipped, failed).
     """
-    from google import genai
     import os
 
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -529,9 +541,6 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
         judul = entry.get("judul", "")
         log.info(f"[{i}/{len(docs)}] {doc_id}  {judul}")
 
-        # Use a fresh client per doc to isolate transient connection failures.
-        client = genai.Client(api_key=api_key, http_options={"timeout": 300})
-
         structure = doc["structure"]
         penjelasan_umum = doc.get("penjelasan_umum")
         # Mutable proxy so apply_llm_cleanup can write the cleaned penjelasan_umum back.
@@ -539,8 +548,7 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
 
         t0 = time.time()
         try:
-            llm_failures = apply_llm_cleanup(structure, penjelasan_proxy,
-                                             verbose=True, client=client)
+            llm_failures = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
         except Exception as e:
             # Keep processing other docs if one doc fails unexpectedly.
             log.error(f"LLM cleanup failed: {e.__class__.__name__}: {e}")
@@ -629,6 +637,8 @@ Examples:
                     help="Leaf node granularity: pasal (coarsest), ayat (mid), full_split (finest)")
     ap.add_argument("--doc-id", type=str,
                     help="Operate on a single document by doc_id (overrides --rebuild)")
+    ap.add_argument("--category", type=str,
+                    help="Filter docs by kategori/folder, e.g. UU,PP,PMK,PERMENAKER")
     ap.add_argument("--parse-only", action="store_true",
                     help="Run only Pass 1 (PDF parsing, no LLM). Good for iterating parser fixes.")
     ap.add_argument("--llm-only", action="store_true",
@@ -684,10 +694,12 @@ Examples:
     data_index = GRANULARITY_INDEX_MAP[granularity]
     data_index.mkdir(parents=True, exist_ok=True)
 
-    docs = _resolve_docs(registry, args.rebuild, args.doc_id)
+    docs = _resolve_docs(registry, args.rebuild, args.doc_id, args.category)
     log.info(f"granularity {granularity}  output {data_index}  docs {len(docs)}")
     if args.rebuild:
         log.info(f"rebuild {args.rebuild}")
+    if args.category:
+        log.info(f"category {args.category}")
 
     # Determine active passes.
     run_parse = not args.llm_only
@@ -720,7 +732,7 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
     """Run pasal parse+LLM, then ayat/full_split resplit, then verify."""
     from .verify import verify_index, print_report
 
-    docs = _resolve_docs(registry, args.rebuild, args.doc_id)
+    docs = _resolve_docs(registry, args.rebuild, args.doc_id, args.category)
     rebuild = args.rebuild
 
     # Pasal phase runs parse and LLM cleanup.

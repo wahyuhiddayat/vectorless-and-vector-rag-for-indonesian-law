@@ -31,6 +31,12 @@ def load_registry() -> dict:
         return json.load(f)
 
 
+def normalize_categories(category: str | None) -> set[str]:
+    if not category:
+        return set()
+    return {part.strip().upper() for part in category.split(",") if part.strip()}
+
+
 def _empty_verify_status() -> dict:
     return {gran: "MISSING" for gran in GRANULARITY_INDEX_MAP}
 
@@ -281,6 +287,7 @@ def _refresh_verify_into_manifest(manifest: dict, doc_id: str | None = None):
 def main():
     ap = argparse.ArgumentParser(description="Show indexing progress/status manifest")
     ap.add_argument("--doc-id", type=str, help="Show status for one document")
+    ap.add_argument("--category", type=str, help="Show only selected categories, e.g. UU,PP,PMK")
     ap.add_argument("--json", action="store_true", help="Output status summary as JSON")
     ap.add_argument("--refresh-verify", action="store_true",
                     help="Refresh verify_status in the manifest before printing")
@@ -290,11 +297,24 @@ def main():
 
     registry = load_registry()
     manifest = load_status_manifest(args.parser_version, args.llm_cleanup_version)
-    doc_ids = [args.doc_id] if args.doc_id else None
+    categories = normalize_categories(args.category)
+    if args.doc_id:
+        doc_ids = [args.doc_id]
+    elif categories:
+        doc_ids = [
+            doc_id for doc_id, entry in registry.items()
+            if entry.get("has_pdf") and (entry.get("jenis_folder") or doc_id.split("-")[0]).upper() in categories
+        ]
+    else:
+        doc_ids = None
     sync_manifest_from_indexes(manifest, registry, args.parser_version, args.llm_cleanup_version, doc_ids=doc_ids)
 
     if args.refresh_verify:
-        _refresh_verify_into_manifest(manifest, args.doc_id)
+        if doc_ids:
+            for did in doc_ids:
+                _refresh_verify_into_manifest(manifest, did)
+        else:
+            _refresh_verify_into_manifest(manifest, None)
 
     write_status_manifest(manifest)
 
@@ -311,6 +331,8 @@ def main():
 
     print("Index Status")
     print(f"Manifest: {STATUS_PATH}")
+    if args.category:
+        print(f"Category filter: {args.category}")
     print(f"Total docs: {summary['total_docs']}")
     print(f"Pasal: {summary['pasal_exists']}  |  Ayat: {summary['ayat_exists']}  |  Full split: {summary['full_split_exists']}")
     print(f"LLM cleaned current: {summary['llm_cleaned']}")

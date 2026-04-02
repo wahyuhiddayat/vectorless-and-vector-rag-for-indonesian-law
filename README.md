@@ -58,6 +58,7 @@ python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 |------|---------|--------------|
 | `--granularity` | *(required)* | Leaf node granularity: `pasal`, `ayat`, or `full_split` |
 | `--doc-id ID` | all docs | Operate on a single document, e.g. `--doc-id uu-20-2025` |
+| `--category CAT` | all categories | Filter docs by category/folder, e.g. `UU`, `PP`, `PMK`, `PERMENAKER` |
 | `--parse-only` | off | Pass 1 only: PDF parsing, no LLM. Use when iterating parser fixes |
 | `--llm-only` | off | Pass 2 only: LLM cleanup on already-parsed docs. Resumes after network failure |
 | `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, `stale`, or comma-separated doc_ids |
@@ -81,6 +82,10 @@ python -m vectorless.indexing.build --granularity pasal --llm-only --rebuild unc
 
 # Quick test: parse one doc without LLM cleanup
 python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --parse-only
+
+# Run per category
+python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
+python -m vectorless.indexing.status --category PMK --refresh-verify
 
 # Re-index specific docs after a parser fix
 python -m vectorless.indexing.build --granularity pasal --rebuild uu-20-2025,uu-1-2026
@@ -119,6 +124,20 @@ python -m vectorless.indexing.build --granularity pasal --rebuild stale
 # 4) Then refresh derived granularities from pasal only
 python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild stale
 python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild stale
+```
+
+LLM cleanup now defaults to conservative settings for reliability:
+
+- sequential batches by default (`VECTORLESS_LLM_MAX_WORKERS=1`)
+- smaller batch size (`VECTORLESS_LLM_BATCH_SIZE=20000`)
+- per-batch fresh Gemini clients
+
+If the connection is stable and you want more speed, you can tune it explicitly:
+
+```powershell
+$env:VECTORLESS_LLM_MAX_WORKERS="2"
+$env:VECTORLESS_LLM_BATCH_SIZE="30000"
+python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 ```
 
 ### Parser pipeline (internal)

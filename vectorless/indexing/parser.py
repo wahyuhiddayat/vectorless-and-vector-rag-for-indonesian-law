@@ -1562,8 +1562,44 @@ def _extract_node_text(
 # 6. LLM TEXT CLEANUP
 # ============================================================
 
-# ~50K chars is about ~12K tokens; smaller batches give more reliable Gemini JSON output.
-_LLM_BATCH_SIZE = 50_000
+# Conservative defaults prioritize reliability over throughput.
+# Can be overridden via env vars when the connection/API is stable.
+_DEFAULT_LLM_BATCH_SIZE = 20_000
+_DEFAULT_LLM_MAX_WORKERS = 1
+_DEFAULT_LLM_TIMEOUT = 300
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        log.warning(f"invalid {name}={raw!r}, using default {default}")
+        return default
+
+
+def _llm_batch_size() -> int:
+    return _env_int("VECTORLESS_LLM_BATCH_SIZE", _DEFAULT_LLM_BATCH_SIZE)
+
+
+def _llm_max_workers() -> int:
+    return _env_int("VECTORLESS_LLM_MAX_WORKERS", _DEFAULT_LLM_MAX_WORKERS)
+
+
+def _llm_timeout() -> int:
+    return _env_int("VECTORLESS_LLM_TIMEOUT", _DEFAULT_LLM_TIMEOUT)
+
+
+def _make_genai_client(api_key: str | None = None):
+    from google import genai
+
+    if api_key is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable is not set")
+    return genai.Client(api_key=api_key, http_options={"timeout": _llm_timeout()})
 
 LLM_CLEANUP_PROMPT = """\
 You are an OCR correction tool for Indonesian legal documents.
@@ -1600,7 +1636,8 @@ _CLOSING_TEXT_RE = re.compile(
     r'[\s\S]*$',
 )
 
-def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, verbose: bool, _label: str | None = None):
+def _process_batch(batch: dict[str, str], batch_idx: int, total: int, verbose: bool,
+                   api_key: str | None = None, _label: str | None = None):
     """Send one batch to Gemini and return the cleaned texts with token counts.
 
     Returns a 4-tuple: (cleaned_dict, input_tokens, output_tokens, error_message).
@@ -1614,6 +1651,7 @@ def _process_batch(client, batch: dict[str, str], batch_idx: int, total: int, ve
     # Retry up to max_retries times, backing off linearly on rate limit or network errors.
     for attempt in range(max_retries):
         try:
+            client = _make_genai_client(api_key)
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
@@ -1682,13 +1720,12 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
     (cleaned_dict mapping node_id to cleaned text, list of failure messages).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from google import genai
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable is not set")
 
-    if client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is not set")
-        client = genai.Client(api_key=api_key, http_options={"timeout": 300})
+    batch_size = _llm_batch_size()
+    max_workers = _llm_max_workers()
 
     batches: list[dict[str, str]] = []
     current_batch: dict[str, str] = {}
@@ -1697,7 +1734,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
     # Pack texts greedily into batches, flushing when the size limit is reached.
     for node_id, text in texts:
         text_len = len(text)
-        if current_size + text_len > _LLM_BATCH_SIZE and current_batch:
+        if current_size + text_len > batch_size and current_batch:
             batches.append(current_batch)
             current_batch = {}
             current_size = 0
@@ -1708,7 +1745,11 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
         batches.append(current_batch)
 
     if verbose:
-        log.info(f"{len(texts)} nodes in {len(batches)} batch(es), processing in parallel")
+        worker_label = "sequentially" if max_workers == 1 else f"with {min(len(batches), max_workers)} worker(s)"
+        log.info(
+            f"{len(texts)} nodes in {len(batches)} batch(es), "
+            f"batch_size={batch_size:,}, timeout={_llm_timeout()}s, processing {worker_label}"
+        )
 
     results: dict[str, str] = {}
     failed_batches: list[tuple[int, dict[str, str]]] = []
@@ -1716,9 +1757,9 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
     total_output_tokens = 0
 
     # Submit all batches to a thread pool and collect results as they complete.
-    with ThreadPoolExecutor(max_workers=min(len(batches), 4)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(batches), max_workers)) as executor:
         futures = {
-            executor.submit(_process_batch, client, batch, i, len(batches), verbose): i
+            executor.submit(_process_batch, batch, i, len(batches), verbose, api_key): i
             for i, batch in enumerate(batches)
         }
         for future in as_completed(futures):
@@ -1745,7 +1786,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
                 sub_batch = dict(sub_items)
                 sub_label = f"{batch_i + 1}{'ab'[sub_idx]}"
                 sub_cleaned, in_tok, out_tok, sub_err = _process_batch(
-                    client, sub_batch, batch_i, len(batches), verbose, _label=sub_label
+                    sub_batch, batch_i, len(batches), verbose, api_key, _label=sub_label
                 )
                 results.update(sub_cleaned)
                 total_input_tokens += in_tok
