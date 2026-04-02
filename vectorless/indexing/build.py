@@ -186,15 +186,18 @@ GRANULARITY_INDEX_MAP = {
 
 
 def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | None,
-                        manifest: dict, registry: dict):
+                        manifest: dict, registry: dict, category: str | None = None):
     """Re-split pasal index to ayat/full_split without PDF parse or LLM calls."""
     import copy
 
     pasal_dir = GRANULARITY_INDEX_MAP["pasal"]
     target_dir = GRANULARITY_INDEX_MAP[granularity]
     split_fn = ayat_split_leaves if granularity == "ayat" else deep_split_leaves
+    categories = _normalize_categories(category)
 
     log.info(f"re-split from pasal to {granularity}  output {target_dir}  rebuild {rebuild or 'missing'}")
+    if category:
+        log.info(f"category {category}")
 
     pasal_files = sorted(pasal_dir.rglob("*.json"))
     pasal_files = [f for f in pasal_files if f.name != "catalog.json"]
@@ -213,6 +216,10 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
         did = doc["doc_id"]
         if doc_id and did != doc_id:
             continue
+        if categories:
+            doc_category = (doc.get("jenis_folder") or did.split("-")[0]).upper()
+            if doc_category not in categories:
+                continue
 
         # Preserve pasal directory layout in target index.
         rel = pf.relative_to(pasal_dir)
@@ -680,7 +687,7 @@ Examples:
         if granularity == "pasal":
             log.error("--from-pasal only works with ayat or full_split")
             sys.exit(1)
-        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry)
+        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry, args.category)
         return
 
     # Full pipeline mode across all granularities, then verification.
@@ -749,7 +756,7 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
 
     # Ayat and full_split phases resplit from pasal outputs.
     for gran in ("ayat", "full_split"):
-        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry)
+        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry, args.category)
 
     # Verify all granularities.
     log.info("verify all granularities")

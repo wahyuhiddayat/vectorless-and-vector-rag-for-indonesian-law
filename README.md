@@ -85,6 +85,8 @@ python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --pa
 
 # Run per category
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
+python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild stale
 python -m vectorless.indexing.status --category PMK --refresh-verify
 
 # Re-index specific docs after a parser fix
