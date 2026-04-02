@@ -245,6 +245,7 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
         doc["parser_version"] = doc.get("parser_version") or PARSER_VERSION
         doc["source_pasal_parser_version"] = doc["parser_version"]
         doc["source_pasal_parse_updated_at"] = doc.get("parse_updated_at") or now_iso()
+        doc["source_pasal_updated_at"] = doc.get("pasal_updated_at") or now_iso()
         doc["derived_updated_at"] = now_iso()
 
         with open(out_path, "w", encoding="utf-8") as f:
@@ -476,6 +477,7 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
         enriched["parser_version"] = PARSER_VERSION
         enriched["llm_cleanup_version"] = None
         enriched["parse_updated_at"] = now_iso()
+        enriched["pasal_updated_at"] = enriched["parse_updated_at"]
         enriched["llm_cleaned_at"] = None
 
         with open(output_path, "w", encoding="utf-8") as f:
@@ -574,6 +576,7 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
             doc["penjelasan_umum"] = penjelasan_proxy["umum"]
         doc["llm_cleaned"] = True
         doc["llm_cleanup_version"] = LLM_CLEANUP_VERSION
+        doc["pasal_updated_at"] = now_iso()
         doc["llm_cleaned_at"] = now_iso()
         if llm_failures:
             existing = doc.get("warnings", [])

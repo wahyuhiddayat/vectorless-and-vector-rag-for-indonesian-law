@@ -79,6 +79,7 @@ def ensure_doc_entry(manifest: dict, doc_id: str, registry_entry: dict | None = 
         "parser_version": None,
         "llm_cleanup_version": None,
         "parse_updated_at": None,
+        "pasal_updated_at": None,
         "llm_cleaned_at": None,
         "verify_status": _empty_verify_status(),
         "warning_count": _empty_warning_count(),
@@ -147,6 +148,7 @@ def sync_doc_from_indexes(
         entry["parser_version"] = None
         entry["llm_cleanup_version"] = None
         entry["parse_updated_at"] = None
+        entry["pasal_updated_at"] = None
         entry["llm_cleaned_at"] = None
         entry["stale_parse"] = False
         entry["stale_derived"] = False
@@ -160,6 +162,7 @@ def sync_doc_from_indexes(
         or (current_llm_cleanup_version if entry["llm_cleaned"] else None)
     )
     entry["parse_updated_at"] = pasal_doc.get("parse_updated_at") or entry.get("parse_updated_at") or mtime_iso(pasal_path)
+    entry["pasal_updated_at"] = pasal_doc.get("pasal_updated_at") or mtime_iso(pasal_path)
     entry["llm_cleaned_at"] = (
         pasal_doc.get("llm_cleaned_at")
         or entry.get("llm_cleaned_at")
@@ -183,10 +186,19 @@ def sync_doc_from_indexes(
             or derived_doc.get("parse_updated_at")
             or mtime_iso(paths_by_granularity[granularity])
         )
+        source_pasal_updated_at = (
+            derived_doc.get("source_pasal_updated_at")
+            or source_parse_updated_at
+        )
+        derived_updated_at = derived_doc.get("derived_updated_at")
         if source_parser_version != entry["parser_version"]:
             stale_derived = True
         if source_parse_updated_at != entry["parse_updated_at"]:
-            stale_derived = True
+            if not (derived_updated_at and entry["pasal_updated_at"] and derived_updated_at >= entry["pasal_updated_at"]):
+                stale_derived = True
+        if source_pasal_updated_at != entry["pasal_updated_at"]:
+            if not (derived_updated_at and entry["pasal_updated_at"] and derived_updated_at >= entry["pasal_updated_at"]):
+                stale_derived = True
     entry["stale_derived"] = stale_derived
 
 
