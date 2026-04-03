@@ -335,8 +335,9 @@ Each benchmark query must be **self-contained**: vague wording is allowed, but
 context-dependent/coreferential queries are not part of the main benchmark.
 The main benchmark should also use a **balanced mix** of query reference styles:
 no legal reference, legal reference only, document only, and both.
-By default, `gt_prompt.py` now writes the prompt to `tmp_gt_<doc_id>.txt` in
-the project root so long prompts are easy to inspect and delete.
+By default, `gt_prompt.py` now writes the prompt to `tmp/gt_<doc_id>.txt` in
+the project root so long prompts are easy to inspect and temporary files stay
+out of Git.
 
 ```bash
 # List available documents from data/index_ayat

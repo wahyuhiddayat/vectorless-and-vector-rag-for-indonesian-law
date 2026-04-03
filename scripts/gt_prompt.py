@@ -203,8 +203,8 @@ Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 
 
 def default_output_path(doc_id: str) -> Path:
-    """Return the default temp prompt path in the project root."""
-    return Path(f"tmp_gt_{doc_id}.txt")
+    """Return the default temp prompt path under the repo-local tmp folder."""
+    return Path("tmp") / f"gt_{doc_id}.txt"
 
 
 def find_doc(doc_id: str) -> Path | None:

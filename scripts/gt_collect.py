@@ -168,6 +168,25 @@ def detect_context_warnings(query: str) -> list[str]:
     return warnings
 
 
+def strip_self_heading(anchor_text: str, title: str) -> str:
+    """Remove the node's own heading from the beginning of anchor text before cross-ref checks."""
+    text = (anchor_text or "").lstrip()
+    node_title = (title or "").strip()
+    if not text or not node_title:
+        return text
+
+    # Most leaf texts begin with their own title, e.g. "Pasal 1" or "Pasal 81 Ayat (2)".
+    # That self-heading should not count as a cross-reference to another provision.
+    if text.lower().startswith(node_title.lower()):
+        return text[len(node_title):].lstrip()
+
+    first_line, _, rest = text.partition("\n")
+    if first_line.strip().lower() == node_title.lower():
+        return rest.lstrip()
+
+    return text
+
+
 def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
     """
     Validate a single raw GT file.
@@ -273,8 +292,10 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
                     f"(expected: {actual_path})"
                 )
 
-            anchor_text = leaf_map[anchor_node_id].get("text", "")
-            if ANCHOR_CROSS_REFERENCE_RE.search(anchor_text):
+            anchor_meta = leaf_map[anchor_node_id]
+            anchor_text = anchor_meta.get("text", "")
+            anchor_body = strip_self_heading(anchor_text, anchor_meta.get("title", ""))
+            if ANCHOR_CROSS_REFERENCE_RE.search(anchor_body):
                 item_warnings.append(
                     "Anchor ayat text cites other provisions; manually verify the query "
                     "is answerable from this ayat alone"

@@ -1,4 +1,9 @@
 data/
+tmp/
+temp/
+status.json
+gt_*.txt
+tmp_gt_*.txt
 CLAUDE.md
 AGENTS.md
 CHANGELOG.md
