@@ -46,6 +46,8 @@ Parses scraped PDFs into hierarchical tree indices. Single command with `--granu
 python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
 ```
 
+For the day-to-day operational guide, see [vectorless/indexing/README.md](vectorless/indexing/README.md).
+
 | Granularity | Leaf node = | Output |
 |-------------|-------------|--------|
 | `pasal` | Pasal (coarsest) | `data/index_pasal/` |
