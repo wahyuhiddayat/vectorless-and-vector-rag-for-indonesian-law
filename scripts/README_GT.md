@@ -223,6 +223,12 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Resolve-Path "data\ground_truth_raw\permenaker-1-2026.json"), ($content -join "`n"), $utf8NoBom)
 ```
 
+Helper script version:
+
+```powershell
+python scripts/pretty_json.py data\ground_truth_raw\permenaker-1-2026.json --indent 4
+```
+
 ## Recommended habit
 
 - work from docs with `ayat = OK`
