@@ -67,7 +67,14 @@ Review later subset:
 
 ## Step 1. Generate prompt for one document
 
-Default output goes to `tmp/gt_<doc_id>.txt`.
+Default behavior:
+
+- if the document is small enough, generate one file: `tmp/gt_<doc_id>.txt`
+- if the document is too large, generate multiple full-text prompt files:
+  - `tmp/gt_<doc_id>_part01.txt`
+  - `tmp/gt_<doc_id>_part02.txt`
+  - ...
+  - plus a manifest file in `tmp/`
 
 ```powershell
 python scripts/gt_prompt.py permenaker-1-2026
@@ -81,9 +88,17 @@ python scripts/gt_prompt.py permenaker-1-2026 --out "$env:TEMP\gt_permenaker-1-2
 python scripts/gt_prompt.py --list
 ```
 
+Notes:
+
+- Long documents are now split automatically so the annotator always sees full node text.
+- Leaf nodes are never truncated and never split across prompt parts.
+- If a document becomes multipart, do not use `--stdout`; let the files be written to `tmp/`.
+
 ## Step 2. Send prompt to LLM and save raw JSON
 
 Recommended workflow:
+
+If output is a single prompt:
 
 1. Open `tmp/gt_<doc_id>.txt`
 2. Paste into ChatGPT or another annotator LLM
@@ -93,10 +108,28 @@ Recommended workflow:
 data/ground_truth_raw/<doc_id>.json
 ```
 
-Example:
+If output is multipart:
+
+1. Open each prompt file in `tmp/`
+2. Paste each part into the annotator LLM separately
+3. Save each JSON array to:
 
 ```text
-data/ground_truth_raw/permenaker-1-2026.json
+data/ground_truth_parts/<doc_id>/part01.json
+data/ground_truth_parts/<doc_id>/part02.json
+...
+```
+
+4. Merge them:
+
+```powershell
+python scripts/merge_gt_parts.py <doc_id>
+```
+
+Example:
+
+```powershell
+python scripts/merge_gt_parts.py permenaker-13-2025 --pretty
 ```
 
 ## Step 3. Validate raw GT file
@@ -227,6 +260,12 @@ Helper script version:
 
 ```powershell
 python scripts/pretty_json.py data\ground_truth_raw\permenaker-1-2026.json --indent 4
+```
+
+Multipart merge helper:
+
+```powershell
+python scripts/merge_gt_parts.py permenaker-13-2025 --pretty
 ```
 
 ## Recommended habit

@@ -336,9 +336,12 @@ context-dependent/coreferential queries are not part of the main benchmark.
 The main benchmark should also use a **balanced mix** of query reference styles:
 no legal reference, legal reference only, document only, and both.
 For the detailed operational guide, see [scripts/README_GT.md](scripts/README_GT.md).
-By default, `gt_prompt.py` now writes the prompt to `tmp/gt_<doc_id>.txt` in
-the project root so long prompts are easy to inspect and temporary files stay
-out of Git.
+By default, `gt_prompt.py` now writes either:
+
+- one full-text prompt file to `tmp/gt_<doc_id>.txt`, or
+- multiple full-text prompt files plus a manifest in `tmp/` for long documents.
+
+Long GT prompts are no longer built by truncating node text.
 
 ```bash
 # List available documents from data/index_ayat
@@ -348,6 +351,9 @@ python scripts/gt_prompt.py --list
 python scripts/gt_prompt.py perpu-1-2016
 python scripts/gt_prompt.py perpu-1-2016 --out %TEMP%\\gt_perpu-1-2016.txt
 python scripts/gt_prompt.py perpu-1-2016 --stdout
+
+# Merge multipart raw GT outputs when a doc was split into several prompt parts
+python scripts/merge_gt_parts.py permenaker-13-2025 --pretty
 
 # Validate raw annotation files
 python scripts/gt_collect.py --check-only

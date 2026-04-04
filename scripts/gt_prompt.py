@@ -1,27 +1,25 @@
 """
 Ground Truth Prompt Generator.
 
-Generates a copy-paste prompt for ChatGPT to create self-contained,
-ayat-anchored ground truth question-answer pairs for Indonesian legal
-QA evaluation, with a balanced mix of reference styles.
+Generates one or more copy-paste prompts for an annotator LLM to create
+self-contained, ayat-anchored ground truth question-answer pairs for
+Indonesian legal retrieval evaluation.
 
-Workflow:
-  1. Run: python scripts/gt_prompt.py <doc_id>
-  2. Copy the printed prompt
-  3. Paste into ChatGPT (NOT Gemini - avoid retrieval bias)
-  4. Copy the JSON output -> save to data/ground_truth_raw/<doc_id>.json
-  5. Run: python scripts/gt_collect.py  (validates + merges all raw files)
+Long documents are split into multiple prompt files automatically so the
+annotator always sees full node text. Leaf nodes are never truncated and
+never split across prompt parts.
 
 Usage:
     python scripts/gt_prompt.py perpu-1-2016
     python scripts/gt_prompt.py perpu-1-2016 --questions 15
-    python scripts/gt_prompt.py perpu-1-2016 --out prompt.txt
+    python scripts/gt_prompt.py perpu-1-2016 --out tmp/custom_prompt.txt
     python scripts/gt_prompt.py perpu-1-2016 --stdout
     python scripts/gt_prompt.py --list
 """
 
 import argparse
 import json
+import math
 import sys
 from collections import OrderedDict
 from pathlib import Path
@@ -31,25 +29,29 @@ if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DATA_INDEX = Path("data/index_ayat")
+TMP_DIR = Path("tmp")
+DEFAULT_PROMPT_CHAR_BUDGET = 45000
+PROMPT_BUDGET_GROWTH = 1.25
 
 # Preamble section names to exclude from GT (they are not substantive law text)
 PREAMBLE_KEYWORDS = ["Menimbang", "Mengingat", "Menetapkan", "Pembukaan"]
 
 # Full prompt template sent verbatim to ChatGPT.
-# Placeholders: {judul}, {doc_id}, {leaf_blocks_grouped}, {N}
 PROMPT_TEMPLATE = """\
 Kamu adalah asisten ahli hukum yang membantu membuat dataset evaluasi sistem \
 temu kembali (retrieval) dokumen hukum Indonesia.
 
 Dokumen: {judul}
 doc_id: {doc_id}
-
+{part_header}
 === LEAF NODE INDEX AYAT (dikelompokkan per Bab/Bagian) ===
 {leaf_blocks_grouped}
 
 === INSTRUKSI UTAMA ===
 
 Buat tepat {N} pertanyaan dalam bahasa Indonesia berdasarkan leaf node di atas.
+Gunakan HANYA leaf node yang ditampilkan pada prompt ini. Jangan membuat item \
+dengan `gold_anchor_node_id` di luar node yang muncul pada prompt ini.
 
 ATURAN WAJIB:
 1. Setiap pertanyaan harus SELF-CONTAINED: harus bisa dipahami sendirian tanpa \
@@ -203,8 +205,34 @@ Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 
 
 def default_output_path(doc_id: str) -> Path:
-    """Return the default temp prompt path under the repo-local tmp folder."""
-    return Path("tmp") / f"gt_{doc_id}.txt"
+    """Return the default single-prompt path under the repo-local tmp folder."""
+    return TMP_DIR / f"gt_{doc_id}.txt"
+
+
+def default_output_prefix(doc_id: str) -> Path:
+    """Return the default multipart prefix under the repo-local tmp folder."""
+    return TMP_DIR / f"gt_{doc_id}"
+
+
+def manifest_path_from_prefix(prefix: Path) -> Path:
+    """Return the manifest path for a multipart prompt run."""
+    return prefix.parent / f"{prefix.name}_manifest.json"
+
+
+def part_path_from_prefix(prefix: Path, part_index: int) -> Path:
+    """Return the prompt file path for one part."""
+    return prefix.parent / f"{prefix.name}_part{part_index:02d}.txt"
+
+
+def make_output_target(doc_id: str, out_arg: str | None, multipart: bool) -> Path:
+    """Resolve output file/prefix for single or multipart prompt generation."""
+    if not out_arg:
+        return default_output_prefix(doc_id) if multipart else default_output_path(doc_id)
+
+    out_path = Path(out_arg)
+    if multipart:
+        return out_path.parent / out_path.stem
+    return out_path
 
 
 def find_doc(doc_id: str) -> Path | None:
@@ -237,7 +265,7 @@ def collect_leaf_nodes(
                 "node_id": node["node_id"],
                 "title": node.get("title", ""),
                 "navigation_path": node_path,
-                "text": node["text"],
+                "text": node["text"].strip(),
             })
     return results
 
@@ -257,93 +285,196 @@ def compute_adaptive_n(leaf_count: int) -> int:
 
     Formula: max(10, min(leaf_count, 20))
     - Minimum 10 ensures statistical significance even for short documents.
-    - Cap at 20 keeps prompts within a reasonable ChatGPT context window.
+    - Cap at 20 keeps annotation effort manageable.
     """
     return max(10, min(leaf_count, 20))
 
 
-def group_leaves_by_section(leaf_nodes: list[dict]) -> dict[str, list[dict]]:
+def section_name(leaf: dict) -> str:
+    """Return the top-level section for a leaf node."""
+    nav = leaf.get("navigation_path", "")
+    if " > " in nav:
+        return nav.split(" > ")[0].strip()
+    return "Lainnya"
+
+
+def render_leaf_block(leaf: dict) -> str:
+    """Render one full, untruncated leaf block for the prompt."""
+    return (
+        f"[node_id: {leaf['node_id']}]\n"
+        f"Judul: {leaf['title']}\n"
+        f"Path: {leaf['navigation_path']}\n"
+        f"Teks:\n{leaf['text']}"
+    )
+
+
+def render_grouped_blocks(leaf_nodes: list[dict]) -> str:
     """
-    Group ayat-index leaf nodes by their top-level section (Bab/Bagian/Paragraf).
-
-    The top-level section is the first path component before " > " in navigation_path.
-    Nodes without " > " in their path fall into a catch-all "Lainnya" bucket.
-
-    Returns an OrderedDict preserving the order sections first appear.
-    This grouping is shown in the prompt to help ChatGPT distribute queries
-    across different parts of the document.
-    """
-    groups: dict[str, list[dict]] = OrderedDict()
-    for leaf in leaf_nodes:
-        nav = leaf.get("navigation_path", "")
-        if " > " in nav:
-            section = nav.split(" > ")[0].strip()
-        else:
-            section = "Lainnya"
-        if section not in groups:
-            groups[section] = []
-        groups[section].append(leaf)
-    return groups
-
-
-def truncate_text(text: str, max_chars: int = 800) -> str:
-    """Truncate text for prompt, preserving the beginning."""
-    text = text.strip()
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "\n[...terpotong]"
-
-
-def render_grouped_blocks(groups: dict[str, list[dict]]) -> str:
-    """
-    Render ayat-index leaves grouped by section into a formatted string for the prompt.
+    Render full ayat-index leaves grouped by top-level section.
 
     Each section starts with a header line "--- SECTION TITLE ---" followed by
-    individual leaf blocks showing node_id, title, navigation path, and text.
+    individual leaf blocks.
     """
+    groups: dict[str, list[str]] = OrderedDict()
+    for leaf in leaf_nodes:
+        sec = section_name(leaf)
+        groups.setdefault(sec, [])
+        groups[sec].append(render_leaf_block(leaf))
+
     section_parts = []
-    for section_title, leaves in groups.items():
-        leaf_blocks = []
-        for leaf in leaves:
-            block = (
-                f"[node_id: {leaf['node_id']}]\n"
-                f"Judul: {leaf['title']}\n"
-                f"Path: {leaf['navigation_path']}\n"
-                f"Teks:\n{truncate_text(leaf['text'])}"
-            )
-            leaf_blocks.append(block)
-        section_block = f"\n--- {section_title} ---\n\n" + "\n\n".join(leaf_blocks)
-        section_parts.append(section_block)
+    for section_title, blocks in groups.items():
+        section_parts.append(f"\n--- {section_title} ---\n\n" + "\n\n".join(blocks))
     return "\n".join(section_parts)
 
 
-def build_prompt(doc: dict, n_questions: int | None = None) -> tuple[str, int]:
-    """
-    Build the copy-paste prompt for ChatGPT.
+def render_part_header(part_index: int, total_parts: int, quota: int, leaf_count: int) -> str:
+    """Render part metadata shown to the annotator."""
+    if total_parts <= 1:
+        return ""
+    return (
+        "=== PART INFO ===\n"
+        f"Part: {part_index} of {total_parts}\n"
+        f"Question quota for this part: {quota}\n"
+        f"Leaf nodes in this part: {leaf_count}\n\n"
+    )
 
-    Args:
-        doc: Loaded document JSON from index_ayat/.
-        n_questions: Override question count. If None, computed adaptively via
-            compute_adaptive_n(leaf_count).
 
-    Returns:
-        Tuple of (prompt_string, n_used) where n_used is the actual count
-        injected into the prompt.
-    """
-    leaves = collect_leaf_nodes(doc["structure"])
-    leaf_nodes = filter_preamble(leaves)
-
-    n = n_questions if n_questions is not None else compute_adaptive_n(len(leaf_nodes))
-    groups = group_leaves_by_section(leaf_nodes)
-    leaf_blocks_grouped = render_grouped_blocks(groups)
-
+def build_prompt(doc: dict, leaf_nodes: list[dict], n_questions: int, part_index: int = 1, total_parts: int = 1) -> str:
+    """Build one prompt for a specific part."""
     prompt = PROMPT_TEMPLATE.format(
         judul=doc["judul"],
         doc_id=doc["doc_id"],
-        leaf_blocks_grouped=leaf_blocks_grouped,
-        N=n,
+        part_header=render_part_header(part_index, total_parts, n_questions, len(leaf_nodes)),
+        leaf_blocks_grouped=render_grouped_blocks(leaf_nodes),
+        N=n_questions,
     )
-    return prompt, n
+    return prompt
+
+
+def pack_prompt_parts(doc: dict, leaf_nodes: list[dict], total_questions: int, base_budget: int = DEFAULT_PROMPT_CHAR_BUDGET) -> tuple[list[list[dict]], int]:
+    """
+    Split the document into prompt parts using whole-node packing.
+
+    The budget may grow automatically if needed so that each part can still
+    receive at least one question.
+    """
+    if not leaf_nodes:
+        return [[]], base_budget
+
+    budget = base_budget
+    parts: list[list[dict]] = []
+
+    while True:
+        parts = []
+        current: list[dict] = []
+        for leaf in leaf_nodes:
+            trial = current + [leaf]
+            # Use a placeholder quota of 1 here; final quotas are assigned later.
+            trial_prompt = build_prompt(doc, trial, n_questions=1)
+            if current and len(trial_prompt) > budget:
+                parts.append(current)
+                current = [leaf]
+            else:
+                current = trial
+        if current:
+            parts.append(current)
+
+        if len(parts) <= max(total_questions, 1):
+            return parts, budget
+        budget = math.ceil(budget * PROMPT_BUDGET_GROWTH)
+
+
+def allocate_question_quotas(parts: list[list[dict]], total_questions: int) -> list[int]:
+    """Allocate total question count proportionally across prompt parts."""
+    if not parts:
+        return []
+    if len(parts) == 1:
+        return [total_questions]
+
+    leaf_counts = [len(part) for part in parts]
+    total_leaves = sum(leaf_counts)
+    quotas = [1 for _ in parts]
+    remaining = total_questions - len(parts)
+    if remaining < 0:
+        raise ValueError("Cannot allocate at least one question per part")
+
+    if remaining == 0:
+        return quotas
+
+    raw_extra = [remaining * (count / total_leaves) for count in leaf_counts]
+    base_extra = [math.floor(x) for x in raw_extra]
+    quotas = [q + extra for q, extra in zip(quotas, base_extra)]
+    assigned = sum(quotas)
+    leftovers = total_questions - assigned
+
+    remainders = sorted(
+        ((raw_extra[i] - base_extra[i], i) for i in range(len(parts))),
+        reverse=True,
+    )
+    for _, idx in remainders[:leftovers]:
+        quotas[idx] += 1
+
+    return quotas
+
+
+def build_prompt_parts(doc: dict, n_questions: int, char_budget: int = DEFAULT_PROMPT_CHAR_BUDGET) -> tuple[list[dict], int]:
+    """Build single or multipart prompt payloads for one document."""
+    leaves = collect_leaf_nodes(doc["structure"])
+    leaf_nodes = filter_preamble(leaves)
+    parts, final_budget = pack_prompt_parts(doc, leaf_nodes, n_questions, base_budget=char_budget)
+    quotas = allocate_question_quotas(parts, n_questions)
+    total_parts = len(parts)
+
+    prompt_parts = []
+    for idx, (part_leaves, quota) in enumerate(zip(parts, quotas), start=1):
+        prompt_parts.append({
+            "part_index": idx,
+            "total_parts": total_parts,
+            "question_quota": quota,
+            "leaf_count": len(part_leaves),
+            "node_ids": [leaf["node_id"] for leaf in part_leaves],
+            "prompt": build_prompt(doc, part_leaves, n_questions=quota, part_index=idx, total_parts=total_parts),
+        })
+    return prompt_parts, final_budget
+
+
+def write_single_prompt(output_path: Path, prompt: str) -> None:
+    """Write one prompt file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(prompt, encoding="utf-8")
+
+
+def write_multipart_prompts(prefix: Path, doc: dict, prompt_parts: list[dict], total_questions: int, final_budget: int) -> tuple[list[Path], Path]:
+    """Write multipart prompt files plus a manifest."""
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+
+    part_paths = []
+    for part in prompt_parts:
+        path = part_path_from_prefix(prefix, part["part_index"])
+        path.write_text(part["prompt"], encoding="utf-8")
+        part_paths.append(path)
+
+    manifest = {
+        "doc_id": doc["doc_id"],
+        "judul": doc["judul"],
+        "total_parts": len(prompt_parts),
+        "total_questions": total_questions,
+        "prompt_char_budget": final_budget,
+        "parts": [
+            {
+                "part_index": part["part_index"],
+                "question_quota": part["question_quota"],
+                "leaf_count": part["leaf_count"],
+                "node_ids": part["node_ids"],
+                "prompt_file": str(path),
+                "expected_raw_part_file": f"data/ground_truth_parts/{doc['doc_id']}/part{part['part_index']:02d}.json",
+            }
+            for part, path in zip(prompt_parts, part_paths)
+        ],
+    }
+    manifest_path = manifest_path_from_prefix(prefix)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return part_paths, manifest_path
 
 
 def list_available_docs() -> None:
@@ -373,15 +504,19 @@ def main() -> None:
     )
     ap.add_argument(
         "--out", "-o", type=str, default=None,
-        help="Save prompt to file instead of printing to stdout",
+        help="Save prompt to file; for multipart output this acts as a filename prefix",
     )
     ap.add_argument(
         "--stdout", action="store_true",
-        help="Print prompt to stdout instead of writing the default temp txt file",
+        help="Print prompt to stdout (single-prompt docs only)",
     )
     ap.add_argument(
         "--list", "-l", action="store_true",
         help="List all available doc_ids",
+    )
+    ap.add_argument(
+        "--char-budget", type=int, default=DEFAULT_PROMPT_CHAR_BUDGET,
+        help=f"Approximate prompt-size budget before automatic multipart splitting (default: {DEFAULT_PROMPT_CHAR_BUDGET})",
     )
     args = ap.parse_args()
 
@@ -405,6 +540,9 @@ def main() -> None:
     adaptive_n = compute_adaptive_n(len(leaf_nodes))
     n_used = args.questions if args.questions is not None else adaptive_n
 
+    prompt_parts, final_budget = build_prompt_parts(doc, n_questions=n_used, char_budget=args.char_budget)
+    multipart = len(prompt_parts) > 1
+
     print(f"\nDokumen    : {doc['judul'][:80]}")
     print(f"doc_id     : {doc['doc_id']}")
     print(f"Leaf nodes : {len(leaf_nodes)} ayat-index leaf nodes")
@@ -412,32 +550,56 @@ def main() -> None:
     if args.questions is not None:
         print(f"  [override: --questions {args.questions}]", end="")
     print()
-    output_path = Path(args.out) if args.out else default_output_path(doc["doc_id"])
-    output_label = "stdout (copy-paste)" if args.stdout else str(output_path)
-    print(f"Output     : {output_label}\n")
+    print(f"Prompt mode: {'multipart full-text' if multipart else 'single full-text'}")
+    print(f"Budget     : {final_budget} chars")
 
-    prompt, _ = build_prompt(doc, n_questions=args.questions)
+    if multipart and args.stdout:
+        print("\nERROR: Prompt multipart terlalu besar untuk --stdout.")
+        print("Jalankan tanpa --stdout agar file part otomatis disimpan ke tmp/.")
+        sys.exit(1)
 
-    if args.stdout:
-        print("=" * 70)
-        print("COPY PROMPT DI BAWAH INI KE CHATGPT (BUKAN Gemini):")
-        print("=" * 70)
-        print(prompt)
-        print("=" * 70)
-        print("\nLangkah selanjutnya:")
-        print("  1. Copy prompt di atas -> paste ke ChatGPT")
-    else:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(prompt, encoding="utf-8")
+    if not multipart:
+        output_path = make_output_target(doc["doc_id"], args.out, multipart=False)
+        output_label = "stdout (copy-paste)" if args.stdout else str(output_path)
+        print(f"Output     : {output_label}\n")
+
+        if args.stdout:
+            print("=" * 70)
+            print("COPY PROMPT DI BAWAH INI KE CHATGPT (BUKAN Gemini):")
+            print("=" * 70)
+            print(prompt_parts[0]["prompt"])
+            print("=" * 70)
+            print("\nLangkah selanjutnya:")
+            print("  1. Copy prompt di atas -> paste ke ChatGPT")
+            print("  2. Copy JSON output dari ChatGPT")
+            print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
+            print("  4. Jalankan: python scripts/gt_collect.py")
+            return
+
+        write_single_prompt(output_path, prompt_parts[0]["prompt"])
         print(f"Prompt disimpan ke: {output_path}")
         print("\nLangkah selanjutnya:")
         print(f"  1. Buka {output_path} dan copy isinya")
+        print("  2. Copy JSON output dari ChatGPT")
+        print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
+        print("  4. Jalankan: python scripts/gt_collect.py")
+        return
 
-    raw_dir = Path("data/ground_truth_raw")
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    print("  2. Copy JSON output dari ChatGPT")
-    print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
-    print("  4. Jalankan: python scripts/gt_collect.py")
+    prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
+    part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget)
+
+    print(f"Output     : {len(part_paths)} part files + manifest")
+    for part, path in zip(prompt_parts, part_paths):
+        print(f"  - part {part['part_index']:02d}: {path}  [{part['question_quota']} pertanyaan, {part['leaf_count']} leaf]")
+    print(f"  - manifest: {manifest_path}")
+
+    parts_dir = Path("data/ground_truth_parts") / doc["doc_id"]
+    print("\nLangkah selanjutnya:")
+    print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
+    print(f"  2. Simpan output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
+    print(f"  3. Jalankan: python scripts/merge_gt_parts.py {doc['doc_id']}")
+    print(f"  4. Jalankan: python scripts/gt_collect.py --check-only --file \"data\\ground_truth_raw\\{doc['doc_id']}.json\"")
+    print("  5. Jika valid, merge dengan gt_collect.py seperti biasa")
 
 
 if __name__ == "__main__":
