@@ -19,7 +19,7 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 - main benchmark queries are **single-hop**
 - main benchmark queries must be **self-contained**
 - every query must be answerable by **exactly one ayat anchor**
-- `vague` is allowed, but it must still be uniquely answerable by one anchor
+- `colloquial` queries must still be uniquely answerable by one anchor — vague/underspecified queries are not allowed
 - context-dependent or conversational carry-over queries are not allowed
 - multihop queries are out of scope for the main benchmark
 - document mention is optional
@@ -216,12 +216,12 @@ What to check:
 - total question count
 - documents covered
 - balanced `reference_mode`
-- balanced `query_style`
+- balanced `query_style` (~50% formal, ~50% colloquial)
 - average gold set sizes make sense
 - no metadata-only questions
 - no preamble questions
 - no multihop queries
-- `vague` items are still self-contained and uniquely anchored
+- `colloquial` items are still self-contained and uniquely anchored
 
 ## Current raw GT schema
 
@@ -230,8 +230,8 @@ Each raw item should look like:
 ```json
 {
   "query": "...",
-  "query_style": "formal|natural|paraphrase|vague",
-  "difficulty": "easy|medium|tricky",
+  "query_style": "formal|colloquial",
+  "difficulty": "easy|medium|hard",
   "reference_mode": "none|legal_ref|doc_only|both",
   "gold_anchor_granularity": "ayat",
   "gold_anchor_node_id": "...",

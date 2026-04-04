@@ -10,8 +10,8 @@ Required fields (hard validation):
   gold_anchor_granularity, gold_anchor_node_id
 
 Optional fields (soft validation):
-  query_style  - one of: formal, natural, paraphrase, vague
-  difficulty   - one of: easy, medium, tricky
+  query_style  - one of: formal, colloquial
+  difficulty   - one of: easy, medium, hard
   answer_hint  - short text excerpt
 
 Output:
@@ -38,8 +38,8 @@ RAW_DIR = Path("data/ground_truth_raw")
 GT_FILE = Path("data/ground_truth.json")
 DATA_INDEX = Path("data/index_ayat")
 
-VALID_QUERY_STYLES = {"formal", "natural", "paraphrase", "vague"}
-VALID_DIFFICULTIES = {"easy", "medium", "tricky"}
+VALID_QUERY_STYLES = {"formal", "colloquial"}
+VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
 REQUIRED_FIELDS = {
     "query",
@@ -401,7 +401,7 @@ def print_stats(gt: dict) -> None:
         print(f"    {ref_mode:15s}  {count:4d}  ({pct:.1f}%)")
 
     print("\n  Difficulty distribution:")
-    for diff in ["easy", "medium", "tricky", "(missing)"]:
+    for diff in ["easy", "medium", "hard", "(missing)"]:
         count = difficulty_counts.get(diff, 0)
         if count == 0:
             continue

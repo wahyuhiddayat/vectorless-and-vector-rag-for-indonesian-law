@@ -142,35 +142,36 @@ Sebelum mengembalikan JSON final, lakukan pengecekan internal:
 
 === JENIS PERTANYAAN (query_style) ===
 
-Distribusi target: masing-masing sekitar 25% dari total pertanyaan.
+Ada tepat 2 jenis pertanyaan yang mencerminkan persona pengguna RAG hukum.
+Distribusi target: ~50% formal, ~50% colloquial.
 
-1. formal - bahasa hukum resmi, seperti yang digunakan dalam dokumen atau persidangan.
-   Contoh: "Apa yang dimaksud dengan 'kebiri kimia' sebagaimana diatur dalam Pasal 81 ayat (7)?"
+1. formal - bahasa hukum resmi, seperti yang digunakan oleh praktisi hukum, konsultan, \
+atau dalam dokumen resmi. Diksi presisi, struktur kalimat lengkap. Bisa menyebut \
+Pasal/ayat/huruf secara eksplisit, bisa juga tidak.
+   Contoh formal + legal_ref: "Apa yang dimaksud dengan 'kebiri kimia' sebagaimana \
+diatur dalam Pasal 81 ayat (7)?"
+   Contoh formal + none: "Apa tujuan pembentukan P2K3?"
+   Contoh formal + doc_only: "Dalam Peraturan Menteri Ketenagakerjaan Nomor 13 Tahun \
+2025, siapa yang melakukan pembinaan terhadap P2K3?"
 
-2. natural - bahasa sehari-hari orang awam yang tidak berlatar hukum.
-   Contoh: "Kalau ada yang melakukan kekerasan seksual terhadap anak, hukumannya apa?"
-
-3. paraphrase - kata-kata berbeda tapi maknanya sama. Hindari menggunakan kata kunci \
-yang persis sama dengan teks node.
-   Contoh: "Berapa lama sanksi tambahan dapat diterapkan setelah narapidana selesai \
-menjalani hukuman pokoknya?"
-
-4. vague - wording lebih umum atau lebih awam, seperti pertanyaan dari orang yang \
-belum tahu istilah hukumnya, TETAPI tetap self-contained dan tetap harus uniquely \
-answerable by ONE leaf node.
-   `vague` TIDAK berarti conversational, underspecified, atau referential.
-   Jika query vague masih bisa cocok ke lebih dari satu leaf node dalam dokumen yang \
-   sama, query itu INVALID dan harus ditulis ulang sampai unik.
-   Valid vague: "Apa aturan soal pembaruan susunan P2K3 kalau ketua atau sekretaris berubah?"
-   Valid vague: "Apa aturan soal hukuman tambahan buat pelaku kejahatan terhadap anak?"
-   Invalid vague: "Bagaimana aturannya?"
-   Invalid vague: "Kalau ada perubahan, apa yang harus dilakukan?"
-   Invalid vague: "Apa ketentuannya soal itu?"
+2. colloquial - bahasa sehari-hari orang awam yang tidak berlatar hukum. Boleh \
+informal, boleh pakai singkatan, boleh colloquial Indonesian. Hindari menggunakan \
+kata kunci yang persis sama dengan teks node — lebih baik parafrasa.
+   TETAPI tetap self-contained dan uniquely answerable by ONE leaf node.
+   `colloquial` TIDAK berarti conversational, underspecified, atau referential.
+   Jika query colloquial masih bisa cocok ke lebih dari satu leaf node dalam dokumen \
+   yang sama, query itu INVALID dan harus ditulis ulang sampai unik.
+   Contoh valid: "Kalau ada yang melakukan kekerasan seksual terhadap anak, hukumannya apa?"
+   Contoh valid: "Perusahaan wajib bikin P2K3 itu kalau kondisi karyawannya gimana?"
+   Contoh valid: "Berapa lama verifikasi dokumen buat perpanjangan P2K3?"
+   Invalid: "Bagaimana aturannya?"
+   Invalid: "Kalau ada perubahan, apa yang harus dilakukan?"
+   Invalid: "Apa ketentuannya soal itu?"
    Disallowed context-dependent: "Kalau begitu, aturan ini juga berlaku nggak?"
 
 === TINGKAT KESULITAN (difficulty) ===
 
-Distribusi target: 40% easy, 40% medium, 20% tricky.
+Distribusi target: 40% easy, 40% medium, 20% hard.
 
 1. easy - jawabannya ada dalam satu kalimat atau frasa eksplisit. Orang bisa menjawab \
 langsung tanpa membaca keseluruhan node.
@@ -180,9 +181,9 @@ langsung tanpa membaca keseluruhan node.
 Jawaban tidak ada dalam satu kalimat saja, mungkin ada kondisi atau pengecualian.
    Contoh: "Siapa saja yang dapat dikenai pidana tambahan?"
 
-3. tricky - butuh membedakan kondisi spesifik, atau mudah tertukar dengan ayat lain \
+3. hard - butuh membedakan kondisi spesifik, atau mudah tertukar dengan ayat lain \
 yang mirip. Pertanyaan yang sepertinya sederhana tapi jawabannya membutuhkan ketelitian.
-   CATATAN: Pertanyaan tricky tetap harus dijawab oleh SATU ayat anchor.
+   CATATAN: Pertanyaan hard tetap harus dijawab oleh SATU ayat anchor.
    Contoh: "Dalam kondisi apa sanksi A berlaku, bukan sanksi B?" (jika keduanya ada di \
 ayat yang berbeda dalam pasal yang sama)
 
@@ -193,8 +194,8 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
 [ 
   {{
     "query": "pertanyaan dalam bahasa Indonesia",
-    "query_style": "formal|natural|paraphrase|vague",
-    "difficulty": "easy|medium|tricky",
+    "query_style": "formal|colloquial",
+    "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
     "gold_anchor_granularity": "ayat",
     "gold_anchor_node_id": "node_id leaf index ayat yang menjawab",
@@ -205,8 +206,8 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
   }}
 ]
 
-Buat tepat {N} item. Gunakan distribusi query_style ~25% tiap jenis dan difficulty \
-~40% easy, ~40% medium, ~20% tricky. Gunakan distribusi reference_mode yang \
+Buat tepat {N} item. Gunakan distribusi query_style ~50% formal dan ~50% colloquial, \
+dan difficulty ~40% easy, ~40% medium, ~20% hard. Gunakan distribusi reference_mode yang \
 seimbang seperti di atas. Benchmark ini untuk retrieval stateless, jadi query \
 harus membantu menguji document discovery, bukan cuma pencocokan kata `Pasal/ayat`. \
 Pastikan semua query self-contained, single-hop, tidak terlalu didominasi explicit legal \
