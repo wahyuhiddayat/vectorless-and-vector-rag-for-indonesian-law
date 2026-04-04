@@ -82,6 +82,10 @@ eksplisit di query yang sama, sehingga query tetap self-contained.
 12. Pertanyaan INVALID jika ayat anchor hanya bisa menjawab dengan cara menunjuk \
 ke ayat/pasal lain. Jika teks ayat hanya berkata "sebagaimana dimaksud pada ayat ..." \
 dan detail jawabannya sebenarnya ada di sibling ayat, JANGAN pakai ayat itu sebagai GT.
+13. Main benchmark ini HANYA untuk single-hop retrieval. Jika menjawab query \
+memerlukan penggabungan informasi dari lebih dari satu ayat/pasal, query itu INVALID.
+14. Main benchmark ini hanya mencakup body text dokumen. Jangan buat query yang \
+bergantung pada metadata top-level dokumen atau bagian pembukaan.
 
 === REFERENCE MODE (reference_mode) ===
 
@@ -151,10 +155,17 @@ yang persis sama dengan teks node.
    Contoh: "Berapa lama sanksi tambahan dapat diterapkan setelah narapidana selesai \
 menjalani hukuman pokoknya?"
 
-4. vague - agak umum atau ambigu, seperti pertanyaan dari orang yang belum tahu \
-pasti istilahnya, TETAPI tetap self-contained dan tidak boleh bergantung pada \
-konteks percakapan sebelumnya.
-   Allowed vague: "Apa aturan soal hukuman tambahan buat pelaku kejahatan terhadap anak?"
+4. vague - wording lebih umum atau lebih awam, seperti pertanyaan dari orang yang \
+belum tahu istilah hukumnya, TETAPI tetap self-contained dan tetap harus uniquely \
+answerable by ONE leaf node.
+   `vague` TIDAK berarti conversational, underspecified, atau referential.
+   Jika query vague masih bisa cocok ke lebih dari satu leaf node dalam dokumen yang \
+   sama, query itu INVALID dan harus ditulis ulang sampai unik.
+   Valid vague: "Apa aturan soal pembaruan susunan P2K3 kalau ketua atau sekretaris berubah?"
+   Valid vague: "Apa aturan soal hukuman tambahan buat pelaku kejahatan terhadap anak?"
+   Invalid vague: "Bagaimana aturannya?"
+   Invalid vague: "Kalau ada perubahan, apa yang harus dilakukan?"
+   Invalid vague: "Apa ketentuannya soal itu?"
    Disallowed context-dependent: "Kalau begitu, aturan ini juga berlaku nggak?"
 
 === TINGKAT KESULITAN (difficulty) ===
@@ -198,8 +209,9 @@ Buat tepat {N} item. Gunakan distribusi query_style ~25% tiap jenis dan difficul
 ~40% easy, ~40% medium, ~20% tricky. Gunakan distribusi reference_mode yang \
 seimbang seperti di atas. Benchmark ini untuk retrieval stateless, jadi query \
 harus membantu menguji document discovery, bukan cuma pencocokan kata `Pasal/ayat`. \
-Pastikan semua query self-contained, tidak terlalu didominasi explicit legal \
-references, dan semua gold node mengacu ke leaf node pada index ayat.
+Pastikan semua query self-contained, single-hop, tidak terlalu didominasi explicit legal \
+references, tidak mencakup metadata/pembukaan, dan semua gold node mengacu ke leaf \
+node pada index ayat.
 Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 """
 

@@ -11,11 +11,28 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 ## GT policy
 
 - GT is **ayat-anchored**
+- main benchmark covers **body text only**
+- substantive pasal/ayat content is in scope
+- closing provisions in the body such as `mulai berlaku` are in scope if they appear as body nodes
+- top-level document metadata is out of scope for the main benchmark
+- preamble sections (`Pembukaan`, `Menimbang`, `Mengingat`, `Menetapkan`) are out of scope
+- main benchmark queries are **single-hop**
 - main benchmark queries must be **self-contained**
-- `vague` is allowed
+- every query must be answerable by **exactly one ayat anchor**
+- `vague` is allowed, but it must still be uniquely answerable by one anchor
 - context-dependent or conversational carry-over queries are not allowed
+- multihop queries are out of scope for the main benchmark
 - document mention is optional
 - legal reference mention is optional
+
+Methodology notes:
+
+- `gold_node_id` intentionally mirrors `gold_anchor_node_id` in raw GT as a compatibility alias
+- cross-granularity gold sets are derived later by `finalize_gt.py`
+- `answer_hint` is a short evidence snippet for reviewer sanity-checking, not a full gold answer and not the main basis for automated scoring
+- GT generation is a curated one-shot annotator workflow: rerunning the same prompt may produce different outputs, so consistency is enforced through prompt constraints, validation, and manual review
+- Main benchmark queries must be single-hop retrieval queries. If answering the query requires combining information from more than one ayat/pasal, the query is invalid for this GT.
+- Metadata/preamble retrieval and multihop retrieval can be added later as separate benchmark tracks, but they are intentionally excluded from the current main evaluation setup
 
 For the main GT set, prefer documents with:
 
@@ -93,6 +110,7 @@ Notes:
 - Long documents are now split automatically so the annotator always sees full node text.
 - Leaf nodes are never truncated and never split across prompt parts.
 - If a document becomes multipart, do not use `--stdout`; let the files be written to `tmp/`.
+- The main benchmark still excludes metadata-only, preamble-only, and multihop queries even when a long document is split across multiple prompt parts.
 
 ## Step 2. Send prompt to LLM and save raw JSON
 
@@ -200,6 +218,10 @@ What to check:
 - balanced `reference_mode`
 - balanced `query_style`
 - average gold set sizes make sense
+- no metadata-only questions
+- no preamble questions
+- no multihop queries
+- `vague` items are still self-contained and uniquely anchored
 
 ## Current raw GT schema
 
@@ -224,6 +246,8 @@ Notes:
 
 - `gold_node_id` must match `gold_anchor_node_id`
 - `gold_anchor_granularity` must be `ayat`
+- `gold_node_id` mirrors the ayat anchor in raw GT; cross-granularity gold sets are derived later during finalization
+- `answer_hint` should stay short and evidence-like; it is not meant to be a full canonical answer span
 - raw GT should be saved as a JSON array
 
 ## Reset and rebuild GT from scratch

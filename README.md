@@ -333,6 +333,13 @@ for name, fn in strategies.items():
 Ground truth annotation now uses **ayat-index leaves as the semantic anchor**.
 Each benchmark query must be **self-contained**: vague wording is allowed, but
 context-dependent/coreferential queries are not part of the main benchmark.
+The main benchmark is also intentionally limited to **single-hop retrieval over
+body text**: substantive pasal/ayat content and closing provisions in the body
+are in scope, while top-level metadata and preamble sections
+(`Pembukaan` / `Menimbang` / `Mengingat` / `Menetapkan`) are out of scope.
+If answering a query requires combining information from more than one
+ayat/pasal, the query is invalid for the main GT and should be treated as a
+future secondary benchmark instead.
 The main benchmark should also use a **balanced mix** of query reference styles:
 no legal reference, legal reference only, document only, and both.
 For the detailed operational guide, see [scripts/README_GT.md](scripts/README_GT.md).
@@ -378,7 +385,7 @@ Semantics of `validated_testset.pkl`:
 This keeps retrieval-method comparisons fair while making pasal vs ayat vs
 full_split evaluation sharper than the older pasal-anchored scheme. Mentioning
 the document name is optional; the important rule is that each query stays
-self-contained and answerable by one ayat anchor. Older GT batches that were
+self-contained, single-hop, and answerable by one ayat anchor. Older GT batches that were
 generated under a more restrictive prompt should be regenerated before being
 treated as the final main benchmark.
 
