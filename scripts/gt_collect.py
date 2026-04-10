@@ -213,6 +213,7 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
         return [], hard_errors, warnings
 
     valid_items: list[dict] = []
+    seen_anchor_ids: set[str] = set()
 
     for i, item in enumerate(data, 1):
         if not isinstance(item, dict):
@@ -242,6 +243,14 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
             item_errors.append(
                 f"gold_anchor_node_id '{anchor_node_id}' not found as leaf node in ayat index"
             )
+
+        if anchor_node_id:
+            if anchor_node_id in seen_anchor_ids:
+                item_errors.append(
+                    f"Duplicate gold_anchor_node_id within this batch: '{anchor_node_id}'"
+                )
+            else:
+                seen_anchor_ids.add(anchor_node_id)
 
         if item.get("gold_node_id") != anchor_node_id:
             item_errors.append(
@@ -458,6 +467,10 @@ def main() -> None:
     existing_gt = load_existing_gt()
     existing_queries = {item["query"].lower() for item in existing_gt.values()}
     existing_doc_ids = {item["gold_doc_id"] for item in existing_gt.values()}
+    existing_anchors: dict[tuple[str, str], str] = {
+        (item["gold_doc_id"], item.get("gold_anchor_node_id", item.get("gold_node_id", ""))): qid
+        for qid, item in existing_gt.items()
+    }
 
     all_valid: list[dict] = []
     total_hard_errors = 0
@@ -474,10 +487,17 @@ def main() -> None:
         dup_errors: list[str] = []
         for item in valid_items:
             q_lower = item["query"].lower()
+            anchor_key = (item.get("gold_doc_id", ""), item.get("gold_anchor_node_id", ""))
             if q_lower in existing_queries:
                 dup_errors.append(f"  Duplicate query: '{item['query'][:60]}'")
+            elif anchor_key[1] and anchor_key in existing_anchors:
+                dup_errors.append(
+                    f"  Duplicate anchor ({anchor_key[0]}, {anchor_key[1]}) "
+                    f"already in GT as {existing_anchors[anchor_key]}"
+                )
             else:
                 existing_queries.add(q_lower)
+                existing_anchors[anchor_key] = item["query"][:40]
                 accepted.append(item)
 
         all_errors_for_file = hard_errors + dup_errors

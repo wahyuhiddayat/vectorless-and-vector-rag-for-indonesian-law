@@ -2,6 +2,7 @@
 
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -60,40 +61,57 @@ def _get_client():
     return _client
 
 
-def llm_call(prompt: str, max_retries: int = 3) -> dict:
+def llm_call(prompt: str, max_retries: int = 5) -> dict:
     """Send prompt to Gemini 2.5 Flash, return parsed JSON."""
     global _total_input_tokens, _total_output_tokens, _total_calls
     client = _get_client()
 
+    _RETRYABLE = ("rate", "429", "503", "500", "quota", "resource_exhausted",
+                  "deadline_exceeded", "service unavailable", "overloaded")
+
+    last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
             )
-            break
+            # Track tokens
+            usage = response.usage_metadata
+            _total_input_tokens += usage.prompt_token_count or 0
+            _total_output_tokens += usage.candidates_token_count or 0
+            _total_calls += 1
+
+            # Parse JSON from response (retry if Gemini returns non-JSON)
+            text = response.text.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1])
+
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as json_err:
+                last_exc = json_err
+                if attempt < max_retries - 1:
+                    wait = min(300, 15 * (2 ** attempt)) + random.uniform(0, 10)
+                    sys.stderr.write(f"  Gemini returned non-JSON (attempt {attempt+1}), retrying in {wait:.0f}s...\n")
+                    time.sleep(wait)
+                    continue
+                raise
+
+        except json.JSONDecodeError:
+            raise
         except Exception as e:
+            last_exc = e
             err = str(e).lower()
-            if ("rate" in err or "429" in err) and attempt < max_retries - 1:
-                wait = 30 * (attempt + 1)
-                print(f"  Rate limited, retrying in {wait}s...")
+            if any(tok in err for tok in _RETRYABLE) and attempt < max_retries - 1:
+                wait = min(300, 15 * (2 ** attempt)) + random.uniform(0, 10)
+                sys.stderr.write(f"  Gemini error (attempt {attempt+1}): {e!r} — retrying in {wait:.0f}s...\n")
                 time.sleep(wait)
             else:
                 raise
 
-    # Track tokens
-    usage = response.usage_metadata
-    _total_input_tokens += usage.prompt_token_count or 0
-    _total_output_tokens += usage.candidates_token_count or 0
-    _total_calls += 1
-
-    # Parse JSON from response
-    text = response.text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1])
-
-    return json.loads(text)
+    raise RuntimeError(f"llm_call failed after {max_retries} attempts") from last_exc
 
 
 def reset_token_counters():

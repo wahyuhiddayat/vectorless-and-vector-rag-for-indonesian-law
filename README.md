@@ -373,6 +373,11 @@ python scripts/finalize_gt.py
 
 # Inspect the final pickle
 python scripts/load_testset.py --stats
+
+# Evaluate current vectorless systems on the validated GT
+python scripts/evaluate_vectorless.py
+python scripts/evaluate_vectorless.py --doc-id permenaker-1-2026 --query-limit 5 --verbose
+python scripts/evaluate_vectorless.py --systems bm25-flat,hybrid --granularities ayat
 ```
 
 Semantics of `validated_testset.pkl`:
@@ -404,3 +409,11 @@ Optional env vars:
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `DATA_INDEX` | `data/index_pasal` | Which granularity index retrieval modules read from. Set to `data/index_ayat` or `data/index_full_split` to switch. |
+
+Evaluation artifacts are written to `data/eval_runs/<timestamp>_<label>/` and include:
+
+- `config.json`
+- `per_query.jsonl`
+- `summary_overall.json`
+- `summary_by_system_granularity.csv`
+- `summary_by_slice.csv`

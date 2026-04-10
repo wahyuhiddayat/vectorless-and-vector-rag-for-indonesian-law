@@ -21,7 +21,6 @@ import argparse
 import json
 import math
 import sys
-from collections import OrderedDict
 from pathlib import Path
 
 # Force UTF-8 output on Windows (navigation paths contain Unicode chars like em-dash)
@@ -35,6 +34,9 @@ PROMPT_BUDGET_GROWTH = 1.25
 
 # Preamble section names to exclude from GT (they are not substantive law text)
 PREAMBLE_KEYWORDS = ["Menimbang", "Mengingat", "Menetapkan", "Pembukaan"]
+
+# Minimum body leaf nodes required for GT generation (short docs produce unavoidable duplicates)
+MIN_LEAF_FOR_GT = 5
 
 # Full prompt template sent verbatim to ChatGPT.
 PROMPT_TEMPLATE = """\
@@ -139,6 +141,11 @@ Sebelum mengembalikan JSON final, lakukan pengecekan internal:
 5. Jika `none` < 3, tambahkan query `none`.
 6. Pastikan tidak ada query yang hanya bagus karena terlalu eksplisit menyebut \
    Pasal/ayat padahal bisa ditulis lebih natural.
+7. Periksa apakah ada gold_anchor_node_id yang sama pada lebih dari satu item. \
+   Jika ada duplikat, HAPUS item yang lebih lemah atau ganti anchornya dengan node \
+   lain. Setiap gold_anchor_node_id dalam batch ini harus UNIK.
+8. Untuk setiap item berlabel "hard", konfirmasi ada leaf sibling di pasal yang sama \
+   yang bisa tertukar. Jika tidak ada, turunkan ke "medium".
 
 === JENIS PERTANYAAN (query_style) ===
 
@@ -155,8 +162,12 @@ diatur dalam Pasal 81 ayat (7)?"
 2025, siapa yang melakukan pembinaan terhadap P2K3?"
 
 2. colloquial - bahasa sehari-hari orang awam yang tidak berlatar hukum. Boleh \
-informal, boleh pakai singkatan, boleh colloquial Indonesian. Hindari menggunakan \
-kata kunci yang persis sama dengan teks node — lebih baik parafrasa.
+informal, boleh pakai singkatan, boleh colloquial Indonesian.
+   DILARANG menggunakan kata atau frasa yang sama persis dengan teks yang akan kamu \
+jadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda — bayangkan \
+seseorang yang belum membaca dokumen ini mencari informasinya, mereka tidak tahu \
+istilah teknisnya. Jika istilah teknis spesifik benar-benar tidak ada sinonimnya, \
+boleh disebut — tapi JANGAN menyalin struktur kalimat dari teks node.
    TETAPI tetap self-contained dan uniquely answerable by ONE leaf node.
    `colloquial` TIDAK berarti conversational, underspecified, atau referential.
    Jika query colloquial masih bisa cocok ke lebih dari satu leaf node dalam dokumen \
@@ -181,11 +192,14 @@ langsung tanpa membaca keseluruhan node.
 Jawaban tidak ada dalam satu kalimat saja, mungkin ada kondisi atau pengecualian.
    Contoh: "Siapa saja yang dapat dikenai pidana tambahan?"
 
-3. hard - butuh membedakan kondisi spesifik, atau mudah tertukar dengan ayat lain \
-yang mirip. Pertanyaan yang sepertinya sederhana tapi jawabannya membutuhkan ketelitian.
+3. hard - query yang mudah tertukar dengan LEAF NODE SIBLING yang lain di pasal yang \
+sama. WAJIB: Sebelum memberi label "hard", identifikasi leaf node lain di parent pasal \
+yang sama yang bisa menjawab query secara plausibel tapi SALAH. Jika tidak ada sibling \
+yang bisa tertukar, gunakan "medium" saja.
    CATATAN: Pertanyaan hard tetap harus dijawab oleh SATU ayat anchor.
-   Contoh: "Dalam kondisi apa sanksi A berlaku, bukan sanksi B?" (jika keduanya ada di \
-ayat yang berbeda dalam pasal yang sama)
+   Contoh VALID: Node 0005_a2 vs 0005_a3 sama-sama tentang persyaratan peserta dengan \
+kondisi berbeda — query spesifik ke salah satunya.
+   Contoh INVALID: "Hard" hanya karena jawabannya panjang atau banyak item — itu medium.
 
 === FORMAT OUTPUT ===
 
@@ -296,11 +310,16 @@ def compute_adaptive_n(leaf_count: int) -> int:
     """
     Compute the adaptive question count based on number of ayat-index leaf nodes.
 
-    Formula: max(10, min(leaf_count, 20))
-    - Minimum 10 ensures statistical significance even for short documents.
+    Returns 0 only if leaf_count == 0 (pure preamble / no body content) — skip signal.
+
+    Formula: min(leaf_count, 20)
+    - n <= leaf_count guarantees no forced anchor reuse (1 question per leaf at most).
+    - Duplicate anchor detection in gt_collect.py catches any ChatGPT errors.
     - Cap at 20 keeps annotation effort manageable.
     """
-    return max(10, min(leaf_count, 20))
+    if leaf_count == 0:
+        return 0
+    return min(leaf_count, 20)
 
 
 def section_name(leaf: dict) -> str:
@@ -323,21 +342,22 @@ def render_leaf_block(leaf: dict) -> str:
 
 def render_grouped_blocks(leaf_nodes: list[dict]) -> str:
     """
-    Render full ayat-index leaves grouped by top-level section.
+    Render full ayat-index leaves with section headers inserted inline,
+    preserving document order (depth-first traversal order from the index).
 
-    Each section starts with a header line "--- SECTION TITLE ---" followed by
-    individual leaf blocks.
+    A new "--- SECTION ---" header is emitted whenever the section name changes.
+    This avoids reordering nodes (e.g. single-leaf pasals would otherwise all
+    be batched into one "Lainnya" block that appears before multi-ayat pasals).
     """
-    groups: dict[str, list[str]] = OrderedDict()
+    parts: list[str] = []
+    current_section: str | None = None
     for leaf in leaf_nodes:
         sec = section_name(leaf)
-        groups.setdefault(sec, [])
-        groups[sec].append(render_leaf_block(leaf))
-
-    section_parts = []
-    for section_title, blocks in groups.items():
-        section_parts.append(f"\n--- {section_title} ---\n\n" + "\n\n".join(blocks))
-    return "\n".join(section_parts)
+        if sec != current_section:
+            parts.append(f"\n--- {sec} ---\n")
+            current_section = sec
+        parts.append(render_leaf_block(leaf))
+    return "\n".join(parts)
 
 
 def render_part_header(part_index: int, total_parts: int, quota: int, leaf_count: int) -> str:
@@ -513,7 +533,7 @@ def main() -> None:
     ap.add_argument("doc_id", nargs="?", help="Document ID (e.g. perpu-1-2016)")
     ap.add_argument(
         "--questions", "-q", type=int, default=None,
-        help="Override question count (default: adaptive, max(10, min(leaf_count, 20)))",
+        help="Override question count (default: adaptive min(leaf_count, 20), skips docs with < 5 body leaves)",
     )
     ap.add_argument(
         "--out", "-o", type=str, default=None,
@@ -553,6 +573,14 @@ def main() -> None:
     adaptive_n = compute_adaptive_n(len(leaf_nodes))
     n_used = args.questions if args.questions is not None else adaptive_n
 
+    if n_used == 0:
+        print(f"\nDokumen    : {doc['judul'][:80]}")
+        print(f"doc_id     : {doc['doc_id']}")
+        print(f"Leaf nodes : {len(leaf_nodes)} body leaf nodes (setelah filter preamble)")
+        print(f"\n[SKIP] Dokumen tidak memiliki body leaf nodes setelah filter preamble.")
+        print("Kemungkinan dokumen ini hanya berisi preamble (Menimbang/Mengingat) tanpa pasal substantif.")
+        sys.exit(0)
+
     prompt_parts, final_budget = build_prompt_parts(doc, n_questions=n_used, char_budget=args.char_budget)
     multipart = len(prompt_parts) > 1
 
@@ -591,11 +619,24 @@ def main() -> None:
 
         write_single_prompt(output_path, prompt_parts[0]["prompt"])
         print(f"Prompt disimpan ke: {output_path}")
+
+        raw_dir = Path("data/ground_truth_raw")
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        placeholder = raw_dir / f"{args.doc_id}.json"
+        if not placeholder.exists():
+            placeholder.write_text("[]", encoding="utf-8")
+            print(f"Placeholder : {placeholder}  ← paste output ChatGPT ke sini")
+        else:
+            print(f"Target      : {placeholder}  (sudah ada — overwrite dengan output ChatGPT)")
+
         print("\nLangkah selanjutnya:")
-        print(f"  1. Buka {output_path} dan copy isinya")
-        print("  2. Copy JSON output dari ChatGPT")
-        print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
-        print("  4. Jalankan: python scripts/gt_collect.py")
+        print(f"  1. Buka {output_path} dan copy isinya → paste ke ChatGPT")
+        print(f"  2. Paste output JSON ChatGPT ke: {placeholder}")
+        print(f"  3. python scripts/gt_collect.py --check-only --file \"{placeholder}\"")
+        print(f"     → fix hard errors, copy baris [WARN]")
+        print(f"  4. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
+        print(f"     → replace isi {placeholder} dengan ---CLEANED--- output Copilot")
+        print(f"  5. python scripts/gt_collect.py --file \"{placeholder}\"")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
@@ -607,12 +648,19 @@ def main() -> None:
     print(f"  - manifest: {manifest_path}")
 
     parts_dir = Path("data/ground_truth_parts") / doc["doc_id"]
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    raw_placeholder = Path("data/ground_truth_raw") / f"{doc['doc_id']}.json"
+    Path("data/ground_truth_raw").mkdir(parents=True, exist_ok=True)
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
     print(f"  2. Simpan output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
-    print(f"  3. Jalankan: python scripts/merge_gt_parts.py {doc['doc_id']}")
-    print(f"  4. Jalankan: python scripts/gt_collect.py --check-only --file \"data\\ground_truth_raw\\{doc['doc_id']}.json\"")
-    print("  5. Jika valid, merge dengan gt_collect.py seperti biasa")
+    print(f"  3. python scripts/merge_gt_parts.py {doc['doc_id']}")
+    print(f"     → menghasilkan: {raw_placeholder}")
+    print(f"  4. python scripts/gt_collect.py --check-only --file \"{raw_placeholder}\"")
+    print(f"     → fix hard errors, copy baris [WARN]")
+    print(f"  5. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
+    print(f"     → replace isi {raw_placeholder} dengan ---CLEANED--- output Copilot")
+    print(f"  6. python scripts/gt_collect.py --file \"{raw_placeholder}\"")
 
 
 if __name__ == "__main__":
