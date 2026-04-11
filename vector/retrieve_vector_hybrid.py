@@ -1,13 +1,15 @@
 """
 Hybrid vector retrieval: BM25 (sparse) + Qdrant (dense) for Indonesian legal documents.
 
-Sparse: BM25 keyword search on chunk texts
-Dense: gemini-embedding-001 + Qdrant cosine similarity
-Merge: concatenate dense + sparse results, deduplicate
+Sparse: BM25 keyword search on all chunk texts loaded from Qdrant
+Dense:  configured embedding model + Qdrant cosine similarity
+Merge:  dense first (semantic priority), then sparse (keyword), deduplicated
+
+Configuration via env vars (see retrieve_common.py):
+    VECTOR_EMBEDDING_MODEL, VECTOR_COLLECTION, QDRANT_PATH / QDRANT_URL, VECTOR_GRANULARITY
 
 Usage:
     python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?"
-    python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?" --top_k 5
     python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?" --top_k 10
 """
 
@@ -15,12 +17,13 @@ import argparse
 import re
 import time
 
-from qdrant_client import QdrantClient
 from rank_bm25 import BM25Okapi
 
 from .retrieve_common import (
     embed_query, reset_token_counters, get_token_stats,
-    generate_answer, save_log, COLLECTION_NAME, QDRANT_URL,
+    generate_answer, save_log,
+    COLLECTION_NAME, GRANULARITY, EMBEDDING_MODEL,
+    get_qdrant_client,
 )
 
 
@@ -49,7 +52,7 @@ def tokenize(text: str) -> list[str]:
 
 def load_all_chunks() -> list[dict]:
     """Load all chunks from Qdrant for BM25 corpus building."""
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = get_qdrant_client()
     all_points = []
     offset = None
 
@@ -130,7 +133,7 @@ def dense_search(query: str, top_k: int = 5, verbose: bool = True) -> list[dict]
     """Dense vector search: embed query -> Qdrant cosine similarity -> top-K."""
     query_vec = embed_query(query)
 
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = get_qdrant_client()
     response = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vec,
@@ -170,7 +173,7 @@ def merge_results(sparse: list[dict], dense: list[dict],
 
     Dense first (semantic priority), then sparse (keyword priority).
     """
-    seen = set()
+    seen: set = set()
     merged = []
 
     for r in dense:
@@ -204,6 +207,7 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         print(f"{'='*60}")
         print(f"Query: {query}")
         print(f"Strategy: vector-hybrid (top_k={top_k})")
+        print(f"Model: {EMBEDDING_MODEL}  Collection: {COLLECTION_NAME}")
         print(f"{'='*60}")
 
     # Load all chunks for BM25
@@ -219,8 +223,7 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     merged = merge_results(sparse_results, dense_results, verbose)
 
     if not merged:
-        return {"query": query, "strategy": "vector-hybrid",
-                "error": "No results found"}
+        return {"query": query, "strategy": "vector-hybrid", "error": "No results found"}
 
     # Answer generation
     answer_result = generate_answer(query, merged, verbose)
@@ -247,12 +250,14 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     result = {
         "query": query,
         "strategy": "vector-hybrid",
-        "chunking": "pasal",
+        "chunking": GRANULARITY,
+        "embedding_model": EMBEDDING_MODEL,
+        "collection": COLLECTION_NAME,
         "sparse_search": {"rankings": sparse_results},
         "dense_search": {"rankings": dense_results},
         "merged_count": len(merged),
         "answer": answer_result.get("answer", ""),
-        "cited_pasals": answer_result.get("cited_pasals", []),
+        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
     }

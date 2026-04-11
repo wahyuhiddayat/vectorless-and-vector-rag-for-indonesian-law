@@ -1,23 +1,24 @@
 """
 Pure vector (dense) retrieval for Indonesian legal documents.
 
-Embed query with gemini-embedding-001, cosine similarity search in Qdrant,
-LLM generates answer from retrieved chunks.
+Embed query -> Qdrant cosine similarity -> LLM answer generation.
+
+Configuration via env vars (see retrieve_common.py):
+    VECTOR_EMBEDDING_MODEL, VECTOR_COLLECTION, QDRANT_PATH / QDRANT_URL, VECTOR_GRANULARITY
 
 Usage:
     python -m vector.retrieve_vector "Apa syarat penyadapan?"
-    python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
     python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
 """
 
 import argparse
 import time
 
-from qdrant_client import QdrantClient
-
 from .retrieve_common import (
     embed_query, reset_token_counters, get_token_stats,
-    generate_answer, save_log, COLLECTION_NAME, QDRANT_URL,
+    generate_answer, save_log,
+    COLLECTION_NAME, GRANULARITY, EMBEDDING_MODEL,
+    get_qdrant_client,
 )
 
 
@@ -29,7 +30,7 @@ def vector_search(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     """Dense vector search: embed query -> Qdrant cosine similarity -> top-K."""
     query_vec = embed_query(query)
 
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = get_qdrant_client()
     response = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vec,
@@ -41,6 +42,7 @@ def vector_search(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         p = hit.payload
         rankings.append({
             "score": hit.score,
+            "score_type": "cosine",
             "doc_id": p["doc_id"],
             "doc_title": p["doc_title"],
             "node_id": p["node_id"],
@@ -71,6 +73,7 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         print(f"{'='*60}")
         print(f"Query: {query}")
         print(f"Strategy: vector-dense (top_k={top_k})")
+        print(f"Model: {EMBEDDING_MODEL}  Collection: {COLLECTION_NAME}")
         print(f"{'='*60}")
 
     # Step 1: Vector search
@@ -78,22 +81,22 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     rankings = search_result["rankings"]
 
     if not rankings:
-        return {"query": query, "strategy": "vector-dense",
-                "error": "No results found"}
+        return {"query": query, "strategy": "vector-dense", "error": "No results found"}
 
     # Step 2: Generate answer
     answer_result = generate_answer(query, rankings, verbose=verbose)
 
     # Build sources
-    sources = []
-    for r in rankings:
-        sources.append({
+    sources = [
+        {
             "doc_id": r["doc_id"],
             "node_id": r["node_id"],
             "title": r["title"],
             "navigation_path": r["navigation_path"],
             "cosine_score": r["score"],
-        })
+        }
+        for r in rankings
+    ]
 
     elapsed = time.time() - t_start
     stats = get_token_stats()
@@ -101,10 +104,12 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     result = {
         "query": query,
         "strategy": "vector-dense",
-        "chunking": "pasal",
+        "chunking": GRANULARITY,
+        "embedding_model": EMBEDDING_MODEL,
+        "collection": COLLECTION_NAME,
         "vector_search": search_result,
         "answer": answer_result.get("answer", ""),
-        "cited_pasals": answer_result.get("cited_pasals", []),
+        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
     }

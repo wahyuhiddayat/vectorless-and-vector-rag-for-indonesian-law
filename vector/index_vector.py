@@ -1,24 +1,31 @@
 """
 Vector indexing pipeline for Indonesian legal documents.
 
-Reads the same index JSON files used by vectorless-rag, chunks by Pasal (leaf node),
-embeds each chunk using Google gemini-embedding-001, and stores in Qdrant.
+Reads the same index JSON files used by vectorless-rag, collects all leaf nodes,
+embeds each chunk using the chosen embedding model, and stores in Qdrant.
 
-Core logic (same as lexin-baseline):
-- Embedding model: gemini-embedding-001 (successor to text-embedding-004)
-- Each Pasal = 1 chunk (same granularity as tree leaf nodes for fair comparison)
-- Metadata stored as Qdrant payload (doc_id, title, navigation_path, text)
+Supported embedding models (all local via SentenceTransformer):
+    bge-m3                          (1024d, BAAI/bge-m3, MIRACL SOTA, 8K context)
+    multilingual-e5-large-instruct  (1024d, intfloat/..., MMTEB best public, 512-token)
+    all-indobert-base-v4            (768d,  LazarusNLP/..., Indonesian-specific, 128-token)
+
+Qdrant storage:
+    --qdrant-path ./qdrant_local    local file-based mode (no server needed)
+    (omit)                          server mode via QDRANT_URL env var
+
+Collection name is auto-derived as  law-{granularity}-{model_short}
+unless --collection is supplied explicitly.
 
 Usage:
-    python -m vector.index_vector
-    python -m vector.index_vector --source data/index_pasal
+    python -m vector.index_vector --source data/index_pasal --qdrant-path ./qdrant_local
+    python -m vector.index_vector --source data/index_pasal --model multilingual-e5-large-instruct --qdrant-path ./qdrant_local
+    python -m vector.index_vector --source data/index_ayat  --model all-indobert-base-v4 --qdrant-path ./qdrant_local
 """
 
 import argparse
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,28 +34,56 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 load_dotenv()
 
-EMBEDDING_MODEL = "gemini-embedding-001"
-EMBEDDING_DIM = 3072
-BATCH_SIZE = 50  # Google API batch limit
-DEFAULT_COLLECTION = "law-pasal"
-QDRANT_URL = "http://localhost:6333"
+BATCH_SIZE_ST = 64      # SentenceTransformer encode batch size
+UPSERT_BATCH = 100
 
-# Default: read from shared data/index_pasal/ at project root
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+
 DEFAULT_SOURCE = Path("data/index_pasal")
 
+# ============================================================
+# EMBEDDING MODEL REGISTRY
+# ============================================================
 
-def get_embed_client():
-    """Initialize Google GenAI client."""
-    from google import genai
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("ERROR: GEMINI_API_KEY not set.")
-        sys.exit(1)
-    return genai.Client(api_key=api_key)
+_EMBEDDING_MODEL_MAP: dict[str, dict] = {
+    # MIRACL SOTA, 8K context window, handles long pasal
+    "bge-m3": {
+        "model_id": "BAAI/bge-m3",
+        "dim": 1024,
+        "short": "bgem3",
+    },
+    # Indonesian-specific, 128-token limit
+    "all-indobert-base-v4": {
+        "model_id": "LazarusNLP/all-indobert-base-v4",
+        "dim": 768,
+        "short": "indobert",
+    },
+    # MMTEB best public multilingual, 512-token context
+    "multilingual-e5-large-instruct": {
+        "model_id": "intfloat/multilingual-e5-large-instruct",
+        "dim": 1024,
+        "short": "e5",
+    },
+}
 
+_SOURCE_TO_GRAN = {
+    "index_pasal": "pasal",
+    "index_ayat": "ayat",
+    "index_full_split": "full_split",
+}
+
+
+def _source_to_gran(source_dir: Path) -> str:
+    """Infer granularity label from source directory name."""
+    return _SOURCE_TO_GRAN.get(source_dir.name, source_dir.name)
+
+
+# ============================================================
+# CHUNK COLLECTION
+# ============================================================
 
 def collect_leaf_nodes(nodes: list[dict], doc_id: str, doc_title: str) -> list[dict]:
-    """Recursively collect all leaf nodes (Pasal) from a tree structure."""
+    """Recursively collect all leaf nodes from a document tree structure."""
     chunks = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
@@ -70,37 +105,59 @@ def collect_leaf_nodes(nodes: list[dict], doc_id: str, doc_title: str) -> list[d
     return chunks
 
 
-def embed_texts(client, texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using gemini-embedding-001. Handles batching."""
-    all_embeddings = []
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i:i + BATCH_SIZE]
-        for attempt in range(3):
-            try:
-                result = client.models.embed_content(
-                    model=EMBEDDING_MODEL,
-                    contents=batch,
-                )
-                break
-            except Exception as e:
-                if ("rate" in str(e).lower() or "429" in str(e)) and attempt < 2:
-                    wait = 30 * (attempt + 1)
-                    print(f"  Rate limited, retrying in {wait}s...")
-                    time.sleep(wait)
-                else:
-                    raise
+# ============================================================
+# EMBEDDING
+# ============================================================
 
-        for emb in result.embeddings:
-            all_embeddings.append([float(x) for x in emb.values])
+def embed_texts_st(texts: list[str], model_id: str) -> list[list[float]]:
+    """Embed texts using SentenceTransformer (local, no API calls).
 
-        if len(texts) > BATCH_SIZE:
-            print(f"  Embedded {min(i + BATCH_SIZE, len(texts))}/{len(texts)} chunks")
-
-    return all_embeddings
+    Passages are embedded without instruction prefix for all three models:
+    - BGE-M3: no prefix needed
+    - all-indobert-base-v4: no prefix needed
+    - multilingual-e5-large-instruct: instruction prefix is query-only; passages use raw text
+    """
+    from sentence_transformers import SentenceTransformer
+    print(f"  Loading SentenceTransformer: {model_id}")
+    st = SentenceTransformer(model_id)
+    vecs = st.encode(
+        texts,
+        batch_size=BATCH_SIZE_ST,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+    )
+    return [v.tolist() for v in vecs]
 
 
-def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
-    """Build Qdrant collection from all index JSON files."""
+# ============================================================
+# INDEX BUILD
+# ============================================================
+
+def build_index(
+    source_dir: Path,
+    collection_name: str | None = None,
+    model: str = "gemini-embedding-001",
+    qdrant_path: str | None = None,
+):
+    """Build Qdrant collection from all index JSON files in source_dir.
+
+    Args:
+        source_dir:      Path to index JSON directory (e.g. data/index_pasal)
+        collection_name: Qdrant collection name; auto-derived if None
+        model:           Embedding model key from _EMBEDDING_MODEL_MAP
+        qdrant_path:     Path to local Qdrant storage (None = use server URL)
+    """
+    model_cfg = _EMBEDDING_MODEL_MAP.get(model)
+    if not model_cfg:
+        print(f"ERROR: Unknown model {model!r}. Choose from: {list(_EMBEDDING_MODEL_MAP)}")
+        sys.exit(1)
+
+    if collection_name is None:
+        gran = _source_to_gran(source_dir)
+        collection_name = f"law-{gran}-{model_cfg['short']}"
+
+    embedding_dim = model_cfg["dim"]
+
     catalog_path = source_dir / "catalog.json"
     if not catalog_path.exists():
         print(f"ERROR: catalog.json not found at {catalog_path}")
@@ -110,9 +167,15 @@ def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
         catalog = json.load(f)
 
     print(f"Found {len(catalog)} documents in catalog")
+    print(f"Model:      {model} ({model_cfg['backend']}, {embedding_dim}d)")
+    print(f"Collection: {collection_name}")
+    if qdrant_path:
+        print(f"Qdrant:     local path {qdrant_path}")
+    else:
+        print(f"Qdrant:     server {QDRANT_URL}")
 
-    # Collect all chunks from all documents
-    all_chunks = []
+    # Collect all chunks
+    all_chunks: list[dict] = []
     for doc_meta in catalog:
         doc_id = doc_meta["doc_id"]
         category = doc_id.split("-")[0].upper()
@@ -126,7 +189,7 @@ def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
 
         chunks = collect_leaf_nodes(doc.get("structure", []), doc_id, doc_meta["judul"])
         all_chunks.extend(chunks)
-        print(f"  {doc_id}: {len(chunks)} chunks (Pasal)")
+        print(f"  {doc_id}: {len(chunks)} chunks")
 
     print(f"\nTotal chunks: {len(all_chunks)}")
 
@@ -134,29 +197,30 @@ def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
         print("ERROR: No chunks found")
         sys.exit(1)
 
-    # Embed all chunks
-    print(f"\nEmbedding with {EMBEDDING_MODEL}...")
-    embed_client = get_embed_client()
+    # Embed
     texts = [c["text"] for c in all_chunks]
-    embeddings = embed_texts(embed_client, texts)
+    print(f"\nEmbedding {len(texts)} chunks with {model}...")
+    embeddings = embed_texts_st(texts, model_cfg["model_id"])
 
-    # Create Qdrant collection
-    print(f"\nUploading to Qdrant ({QDRANT_URL})...")
-    qdrant = QdrantClient(url=QDRANT_URL)
+    # Connect to Qdrant
+    if qdrant_path:
+        qdrant = QdrantClient(path=qdrant_path)
+    else:
+        qdrant = QdrantClient(url=QDRANT_URL)
+        print(f"\nUploading to Qdrant ({QDRANT_URL})...")
 
-    # Recreate collection (drop if exists)
+    # Recreate collection (drops existing data)
     qdrant.recreate_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(
-            size=EMBEDDING_DIM,
+            size=embedding_dim,
             distance=Distance.COSINE,
         ),
     )
 
-    # Upload in batches
-    points = []
-    for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings)):
-        points.append(PointStruct(
+    # Build and upsert points
+    points = [
+        PointStruct(
             id=i,
             vector=embedding,
             payload={
@@ -167,10 +231,10 @@ def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
                 "navigation_path": chunk["navigation_path"],
                 "text": chunk["text"],
             },
-        ))
+        )
+        for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings))
+    ]
 
-    # Upsert in batches of 100
-    UPSERT_BATCH = 100
     for i in range(0, len(points), UPSERT_BATCH):
         batch = points[i:i + UPSERT_BATCH]
         qdrant.upsert(collection_name=collection_name, points=batch)
@@ -181,16 +245,40 @@ def build_index(source_dir: Path, collection_name: str = DEFAULT_COLLECTION):
     info = qdrant.get_collection(collection_name)
     print(f"\nDone!")
     print(f"  Collection: {collection_name}")
-    print(f"  Points: {info.points_count}")
-    print(f"  Vectors: {EMBEDDING_DIM}d, distance=Cosine")
-    print(f"  Status: {info.status}")
+    print(f"  Points:     {info.points_count}")
+    print(f"  Vectors:    {embedding_dim}d, distance=Cosine")
+    print(f"  Status:     {info.status}")
 
+
+# ============================================================
+# CLI
+# ============================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build Qdrant vector index from legal document index JSONs")
-    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE,
-                        help="Path to index JSON directory (default: data/index_pasal)")
-    parser.add_argument("--collection", default=DEFAULT_COLLECTION,
-                        help=f"Qdrant collection name (default: {DEFAULT_COLLECTION})")
+    parser = argparse.ArgumentParser(
+        description="Build Qdrant vector index from legal document index JSONs"
+    )
+    parser.add_argument(
+        "--source", type=Path, default=DEFAULT_SOURCE,
+        help="Path to index JSON directory (default: data/index_pasal)",
+    )
+    parser.add_argument(
+        "--model", default="gemini-embedding-001",
+        choices=list(_EMBEDDING_MODEL_MAP),
+        help="Embedding model to use (default: gemini-embedding-001)",
+    )
+    parser.add_argument(
+        "--collection", default=None,
+        help="Qdrant collection name (auto-derived from --source and --model if omitted)",
+    )
+    parser.add_argument(
+        "--qdrant-path", default=None,
+        help="Path to local Qdrant storage directory (uses server URL if omitted)",
+    )
     args = parser.parse_args()
-    build_index(args.source, collection_name=args.collection)
+    build_index(
+        source_dir=args.source,
+        collection_name=args.collection,
+        model=args.model,
+        qdrant_path=args.qdrant_path,
+    )
