@@ -50,16 +50,49 @@ def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: boo
 
 
 def _extract_page_text(page) -> str:
-    """Extract text from a single PyMuPDF page, preserving column reading order."""
+    """Extract text from a single PyMuPDF page, preserving column reading order.
+
+    Tables are extracted as pipe-delimited rows instead of jumbled sequential
+    text blocks. Requires PyMuPDF >= 1.23 for find_tables(); falls back to
+    plain text extraction on older versions or pages with no detectable tables.
+    """
     page_dict = page.get_text("dict")
     page_width = page_dict.get("width", 595)  # A4 default
+    page_height = page_dict.get("height", 842)
     raw_blocks = page_dict.get("blocks", [])
 
+    # Detect tables and build structured replacement text blocks.
+    table_blocks: list[dict] = []
+    table_rects: list[fitz.Rect] = []
+    try:
+        for tbl in page.find_tables():
+            tbl_rect = fitz.Rect(tbl.bbox)
+            table_rects.append(tbl_rect)
+            rows = tbl.extract()  # list[list[str | None]]
+            lines = []
+            for row in rows:
+                cells = [(cell or "").replace("\n", " ").strip() for cell in row]
+                lines.append(" | ".join(cells))
+            tbl_text = "\n".join(lines)
+            if tbl_text.strip():
+                table_blocks.append({
+                    "x0": tbl.bbox[0], "y0": tbl.bbox[1],
+                    "x1": tbl.bbox[2], "y1": tbl.bbox[3],
+                    "text": tbl_text + "\n",
+                })
+    except Exception:
+        pass  # graceful fallback: no table detection, proceed as plain text
+
     text_blocks = []
-    # Collect text blocks with their bounding boxes, skipping image blocks.
+    # Collect text blocks with their bounding boxes, skipping image blocks
+    # and any blocks whose region is already covered by a detected table.
     for b in raw_blocks:
         if b.get("type") != 0:  # 0 = text, 1 = image
             continue
+        if table_rects:
+            b_rect = fitz.Rect(b["bbox"])
+            if any(tbl_rect.intersects(b_rect) for tbl_rect in table_rects):
+                continue  # this block belongs to a table — skip raw text
         block_text = ""
         # Join all spans in each line, then append a newline after the line.
         for line in b.get("lines", []):
@@ -72,13 +105,13 @@ def _extract_page_text(page) -> str:
                 "text": block_text,
             })
 
-    if not text_blocks:
+    all_blocks = text_blocks + table_blocks
+    if not all_blocks:
         return ""
 
-    page_height = page_dict.get("height", 842)
     is_landscape = page_width > page_height
 
-    ordered = _detect_two_columns(text_blocks, page_width, is_landscape=is_landscape)
+    ordered = _detect_two_columns(all_blocks, page_width, is_landscape=is_landscape)
     return "".join(b["text"] for b in ordered)
 
 
