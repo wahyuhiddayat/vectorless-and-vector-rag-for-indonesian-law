@@ -620,7 +620,8 @@ def main() -> None:
         write_single_prompt(output_path, prompt_parts[0]["prompt"])
         print(f"Prompt disimpan ke: {output_path}")
 
-        raw_dir = Path("data/ground_truth_raw")
+        category = doc_path.parent.name  # e.g. "PERMENAKER"
+        raw_dir = Path("data/ground_truth_raw") / category
         raw_dir.mkdir(parents=True, exist_ok=True)
         placeholder = raw_dir / f"{args.doc_id}.json"
         if not placeholder.exists():
@@ -649,8 +650,9 @@ def main() -> None:
 
     parts_dir = Path("data/ground_truth_parts") / doc["doc_id"]
     parts_dir.mkdir(parents=True, exist_ok=True)
-    raw_placeholder = Path("data/ground_truth_raw") / f"{doc['doc_id']}.json"
-    Path("data/ground_truth_raw").mkdir(parents=True, exist_ok=True)
+    category = doc_path.parent.name  # e.g. "PERMENKES"
+    raw_placeholder = Path("data/ground_truth_raw") / category / f"{doc['doc_id']}.json"
+    (Path("data/ground_truth_raw") / category).mkdir(parents=True, exist_ok=True)
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
     print(f"  2. Simpan output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")

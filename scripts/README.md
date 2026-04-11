@@ -103,8 +103,10 @@ Open the generated prompt file and paste it into ChatGPT.
 Save the JSON array output to:
 
 ```text
-data/ground_truth_raw/<doc_id>.json
+data/ground_truth_raw/<KATEGORI>/<doc_id>.json
 ```
+
+`gt_prompt.py` creates this file as an empty placeholder (`[]`) automatically — just overwrite it with the ChatGPT output.
 
 **Multipart document:**
 

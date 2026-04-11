@@ -107,6 +107,10 @@ def get_leaf_meta_map(doc_id: str) -> dict[str, dict]:
     if doc is None:
         return {}
 
+    if not isinstance(doc, dict) or "structure" not in doc:
+        # Index file exists but has wrong format (e.g. accidentally overwritten with GT content)
+        return {}
+
     leaf_map: dict[str, dict] = {}
 
     def _walk(nodes: list[dict], parent_path: str = "") -> None:
@@ -456,9 +460,9 @@ def main() -> None:
     else:
         if not RAW_DIR.exists():
             print(f"Raw directory not found: {RAW_DIR}")
-            print("Simpan output ChatGPT ke data/ground_truth_raw/<doc_id>.json")
+            print("Simpan output ChatGPT ke data/ground_truth_raw/<KATEGORI>/<doc_id>.json")
             return
-        raw_files = sorted(RAW_DIR.glob("*.json"))
+        raw_files = sorted(RAW_DIR.rglob("*.json"))
 
     if not raw_files:
         print(f"Tidak ada file di {RAW_DIR}")
