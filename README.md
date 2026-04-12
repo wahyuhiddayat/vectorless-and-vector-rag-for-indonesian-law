@@ -34,6 +34,9 @@ python scraper/bpk_scraper.py --jenis 8 --pages 1-5
 
 # Resume interrupted scraping
 python scraper/bpk_scraper.py --jenis 8 --resume
+
+# Generate a Markdown report of the newest documents per category
+python scraper/bpk_topk_newest.py --k 3
 ```
 
 ---

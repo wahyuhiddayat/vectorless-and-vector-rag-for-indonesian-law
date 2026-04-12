@@ -14,6 +14,12 @@ pip install requests beautifulsoup4
 python scraper/bpk_scraper.py [OPTIONS]
 ```
 
+Laporan Markdown kategori terbaru:
+
+```bash
+python scraper/bpk_topk_newest.py [OPTIONS]
+```
+
 ### Opsi
 
 | Flag | Default | Keterangan |
@@ -58,6 +64,50 @@ python scraper/bpk_scraper.py --jenis 10 --pages 5
 
 # Debug mode
 python scraper/bpk_scraper.py --jenis 8 --pages 1 --skip-pdf --log-level DEBUG
+
+# Buat laporan Markdown top-k dokumen terbaru untuk semua kategori
+python scraper/bpk_topk_newest.py --k 3
+
+# Fokus ke satu group
+python scraper/bpk_topk_newest.py --group Pusat --k 5
+
+# Fokus ke jenis tertentu dan simpan ke file
+python scraper/bpk_topk_newest.py --jenis 8 36 10 --k 10 --output data/reports/bpk_topk_newest.md
+```
+
+## Laporan Top-K Terbaru
+
+`bpk_topk_newest.py` membuat ringkasan Markdown dokumen terbaru per kategori
+dengan urutan group `Pusat`, `Kementerian/Lembaga`, lalu `Daerah`.
+
+### Opsi
+
+| Flag | Default | Keterangan |
+|------|---------|------------|
+| `--k` | `3` | Jumlah dokumen terbaru per kategori |
+| `--group` | semua | Filter ke satu group besar |
+| `--jenis` | semua | Daftar `jenis_id` spesifik; override `--group` |
+| `--output` | `data/reports/bpk_topk_newest.md` | Simpan hasil Markdown ke file |
+| `--delay` | `1.5` | Jeda antar-request (detik) |
+| `--log-level` | `INFO` | Level logging: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+
+### Output
+
+Secara default script selalu menulis ke `data/reports/bpk_topk_newest.md` dan
+tidak mencetak isi Markdown ke terminal.
+
+Contoh struktur output file:
+
+```md
+# BPK Top-K Newest per Category
+
+## Pusat
+
+### Undang-undang (UU) - 1,923 dokumen
+
+1. [Undang-undang (UU) Nomor 1 Tahun 2026](https://peraturan.bpk.go.id/Details/337869/uu-no-1-tahun-2026) - Penyesuaian Pidana
+2. ...
+3. ...
 ```
 
 ## Struktur Output
