@@ -1,4 +1,5 @@
 data/
+qdrant_local/
 tmp/
 temp/
 status.json

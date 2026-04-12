@@ -136,16 +136,19 @@ def embed_texts_st(texts: list[str], model_id: str) -> list[list[float]]:
 def build_index(
     source_dir: Path,
     collection_name: str | None = None,
-    model: str = "gemini-embedding-001",
+    model: str = "bge-m3",
     qdrant_path: str | None = None,
+    catalog_filename: str = "catalog.json",
 ):
     """Build Qdrant collection from all index JSON files in source_dir.
 
     Args:
-        source_dir:      Path to index JSON directory (e.g. data/index_pasal)
-        collection_name: Qdrant collection name; auto-derived if None
-        model:           Embedding model key from _EMBEDDING_MODEL_MAP
-        qdrant_path:     Path to local Qdrant storage (None = use server URL)
+        source_dir:       Path to index JSON directory (e.g. data/index_pasal)
+        collection_name:  Qdrant collection name; auto-derived if None
+        model:            Embedding model key from _EMBEDDING_MODEL_MAP
+        qdrant_path:      Path to local Qdrant storage (None = use server URL)
+        catalog_filename: Catalog JSON filename inside source_dir (default: catalog.json).
+                          Use catalog_gt.json to embed only GT-verified documents.
     """
     model_cfg = _EMBEDDING_MODEL_MAP.get(model)
     if not model_cfg:
@@ -158,16 +161,16 @@ def build_index(
 
     embedding_dim = model_cfg["dim"]
 
-    catalog_path = source_dir / "catalog.json"
+    catalog_path = source_dir / catalog_filename
     if not catalog_path.exists():
-        print(f"ERROR: catalog.json not found at {catalog_path}")
+        print(f"ERROR: {catalog_filename} not found at {catalog_path}")
         sys.exit(1)
 
     with open(catalog_path, encoding="utf-8") as f:
         catalog = json.load(f)
 
     print(f"Found {len(catalog)} documents in catalog")
-    print(f"Model:      {model} ({model_cfg['backend']}, {embedding_dim}d)")
+    print(f"Model:      {model} (SentenceTransformer, {embedding_dim}d)")
     print(f"Collection: {collection_name}")
     if qdrant_path:
         print(f"Qdrant:     local path {qdrant_path}")
@@ -263,9 +266,9 @@ if __name__ == "__main__":
         help="Path to index JSON directory (default: data/index_pasal)",
     )
     parser.add_argument(
-        "--model", default="gemini-embedding-001",
+        "--model", default="bge-m3",
         choices=list(_EMBEDDING_MODEL_MAP),
-        help="Embedding model to use (default: gemini-embedding-001)",
+        help="Embedding model to use (default: bge-m3)",
     )
     parser.add_argument(
         "--collection", default=None,
@@ -275,10 +278,16 @@ if __name__ == "__main__":
         "--qdrant-path", default=None,
         help="Path to local Qdrant storage directory (uses server URL if omitted)",
     )
+    parser.add_argument(
+        "--catalog", default="catalog.json",
+        help="Catalog filename inside --source dir (default: catalog.json). "
+             "Use catalog_gt.json to embed only GT-verified documents.",
+    )
     args = parser.parse_args()
     build_index(
         source_dir=args.source,
         collection_name=args.collection,
         model=args.model,
         qdrant_path=args.qdrant_path,
+        catalog_filename=args.catalog,
     )
