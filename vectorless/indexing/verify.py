@@ -388,10 +388,12 @@ def verify_index(index_dir: Path, doc_id: str | None = None, category: str | Non
     categories = normalize_categories(category)
     # Walk all JSON files in the index directory.
     for path in sorted(index_dir.rglob("*.json")):
-        if path.name == "catalog.json":
+        if path.name.startswith("catalog"):
             continue
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
+        if not isinstance(doc, dict) or "doc_id" not in doc:
+            continue
         if doc_id and doc["doc_id"] != doc_id:
             continue
         if categories:

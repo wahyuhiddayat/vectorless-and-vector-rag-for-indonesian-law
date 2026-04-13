@@ -60,6 +60,20 @@ def load_status_manifest(current_parser_version: str, current_llm_cleanup_versio
     return manifest
 
 
+def prune_orphan_manifest_entries(manifest: dict, registry: dict) -> None:
+    """Drop stale manifest docs that are no longer in the registry and have no files."""
+    docs = manifest.get("docs", {})
+    to_remove = []
+    for doc_id in docs:
+        if doc_id in registry:
+            continue
+        has_any_index = any(_index_path(granularity, doc_id).exists() for granularity in GRANULARITY_INDEX_MAP)
+        if not has_any_index:
+            to_remove.append(doc_id)
+    for doc_id in to_remove:
+        docs.pop(doc_id, None)
+
+
 def write_status_manifest(manifest: dict):
     STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
     manifest["generated_at"] = now_iso()
@@ -209,6 +223,7 @@ def sync_manifest_from_indexes(
     current_llm_cleanup_version: str,
     doc_ids: list[str] | None = None,
 ):
+    prune_orphan_manifest_entries(manifest, registry)
     target_doc_ids = doc_ids or sorted(doc_id for doc_id, entry in registry.items() if entry.get("has_pdf"))
     for doc_id in target_doc_ids:
         sync_doc_from_indexes(

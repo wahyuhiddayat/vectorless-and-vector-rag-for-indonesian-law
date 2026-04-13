@@ -736,6 +736,59 @@ def _clean_heading_title(title: str) -> str:
     return title.strip()
 
 
+def _prev_nonempty_line(text: str, pos: int) -> str:
+    """Return the nearest previous non-empty line before pos."""
+    lines = text[:pos].splitlines()
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _next_nonempty_line(text: str, pos: int) -> str:
+    """Return the nearest next non-empty line after pos."""
+    lines = text[pos:].splitlines()
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _is_caps_heading_fragment(line: str) -> bool:
+    """Heuristic: line looks like an all-caps heading fragment, not body text."""
+    stripped = line.strip()
+    if not stripped or not any(ch.isalpha() for ch in stripped):
+        return False
+    if stripped != stripped.upper():
+        return False
+    if re.match(r'^(?:BAB|BAGIAN|PARAGRAF)\b', stripped):
+        return True
+    if re.match(r'^\(?\d+\)?[\.)]?\s', stripped):
+        return False
+    return True
+
+
+def _looks_like_nonstructural_pasal(text: str, match: re.Match[str]) -> bool:
+    """Return True when a Pasal regex hit is likely a title/reference leak."""
+    prev_line = _prev_nonempty_line(text, match.start())
+    next_line = _next_nonempty_line(text, match.end())
+
+    # Real Pasal headings are followed by ayat markers, definition text, or other
+    # sentence starts. Lowercase continuation strongly suggests the OCR split a
+    # phrase such as "Pajak Penghasilan Pasal 21 ditanggung pemerintah".
+    if next_line and next_line[0].islower():
+        return True
+    if next_line.startswith(("BAB ", "Bagian ", "Paragraf ")):
+        return True
+    if _is_caps_heading_fragment(prev_line) and _is_caps_heading_fragment(next_line):
+        return True
+    if prev_line.startswith(("BAB ", "Bagian ", "Paragraf ")) and _is_caps_heading_fragment(next_line):
+        return True
+    return False
+
+
 def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[dict]:
     """Extract structural elements from a single page's text.
 
@@ -815,6 +868,8 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
         raw = m.group(1).strip()
         pasal_num, suffix = _parse_pasal_number(raw)
         if pasal_num is None:
+            continue
+        if _looks_like_nonstructural_pasal(text, m):
             continue
         # Skip matches where the preceding word indicates a cross-reference, not a heading.
         preceding = text[:m.start()].rstrip()
@@ -917,6 +972,23 @@ def validate_pasal_sequence(elements: list[dict], is_perubahan: bool = False) ->
             num = int(re.match(r'(\d+)', elem["number"]).group(1))
         except (ValueError, AttributeError):
             continue
+
+        # Ignore obvious front-matter / chapter-title leaks before the real body
+        # sequence starts. These usually appear as a lone "Pasal N" citation near
+        # the top of the document and are followed shortly by Pasal 1.
+        if last_pasal_num == 0 and num > 20:
+            next_pasals = [
+                nxt for nxt in elements
+                if nxt["type"] == "pasal"
+                and (nxt["page_num"], nxt["char_offset"]) > (elem["page_num"], elem["char_offset"])
+            ]
+            if any(
+                re.match(r'(\d+)', nxt["number"])
+                and int(re.match(r'(\d+)', nxt["number"]).group(1)) == 1
+                and nxt["page_num"] - elem["page_num"] <= 2
+                for nxt in next_pasals[:5]
+            ):
+                continue
 
         if num < last_pasal_num:
             warnings.append(
@@ -1322,13 +1394,47 @@ def _clean_preamble_noise(raw_text: str) -> str:
         re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n'),
         re.compile(r'^\s*SAL[IT]NAN\s*\n', re.MULTILINE),
         re.compile(r'^\s*-\d+-\s*\n', re.MULTILINE),
-        re.compile(r'^\s*(?!Mengingat|Menetapkan)[A-Z]{3,8}\s*\n', re.MULTILINE),
+        re.compile(r'^\s*(?!BAHWA|Mengingat|Menetapkan|MEMUTUSKAN)[A-Z]{3,8}\s*\n', re.MULTILINE),
     ]
     cleaned_text = raw_text
     # Apply each pattern in order; every match collapses to a single newline.
     for pat in noise_patterns:
         cleaned_text = pat.sub('\n', cleaned_text)
     return re.sub(r'\n{3,}', '\n\n', cleaned_text).strip()
+
+
+def _clean_preamble_child_text(text: str, section: str) -> str:
+    """Normalize one preamble child after section-level splitting."""
+    cleaned = _clean_preamble_noise(text or "")
+    cleaned = re.sub(
+        r'(?im)^\s*(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)\s*$',
+        '',
+        cleaned,
+    )
+    cleaned = re.sub(
+        r'(?im)^\s*REP\S*\s+IND\S*\s*$',
+        '',
+        cleaned,
+    )
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+
+    if section == "menimbang":
+        cleaned = re.sub(r'(?is)\bMengingat\b\s*:?.*$', '', cleaned).strip()
+        if re.search(r'(?i)\bbahwa\b', cleaned):
+            cleaned = re.sub(r'(?is)(?:\n\s*[a-z]\.?\s*){2,}$', '', cleaned).strip()
+    elif section == "mengingat":
+        cleaned = re.sub(r'(?is)\b(?:MEMUTUSKAN|Menetapkan)\b\s*:?.*$', '', cleaned).strip()
+        cleaned = re.sub(r'(?is)(?:\n\s*\d+\.\s*){2,}$', '', cleaned).strip()
+    elif section == "menetapkan":
+        cleaned = re.sub(r'(?is)^\s*Menetapkan\s*:?\s*', '', cleaned).strip()
+        cleaned = re.sub(
+            r'(?is)\b(?:BAB\s+[IVXLC]+|Pasal\s+\d+|KETENTUAN\s+UMUM)\b.*$',
+            '',
+            cleaned,
+        ).strip()
+        cleaned = re.sub(r'(?im)\n\s*Menetapkan\s*$', '', cleaned).strip()
+
+    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
 
 def _strip_mengingat_prefix(candidate: str) -> str:
@@ -1440,6 +1546,8 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         after_menimbang = cleaned[menimbang_m.end():]
         # OCR block reordering can place "a. bahwa" content before the "Menimbang:" label; detect this and prepend the misplaced content.
         bahwa_before_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', before_menimbang)
+        if not bahwa_before_m:
+            bahwa_before_m = re.search(r'(?:^|\n)\s*bahwa\s', before_menimbang)
         if bahwa_before_m:
             after_menimbang = (
                 before_menimbang[bahwa_before_m.start():].lstrip('\n')
@@ -1493,7 +1601,7 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     # Finalize Menimbang text: remove a trailing "Mengingat" keyword (with any following colon
     # or OCR-garbled content) that bleeds in from margin noise at the end of the text.
     menimbang_text = re.sub(r'\s*\bMengingat\b\s*:?.*$', '', menimbang_text).strip()
-    menimbang_text = re.sub(r'\n{3,}', '\n\n', menimbang_text).strip()
+    menimbang_text = _clean_preamble_child_text(menimbang_text, "menimbang")
     if not menimbang_text:
         return None
 
@@ -1521,7 +1629,7 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
         # Remove isolated "Mengingat" lines and leading keyword inserted by OCR/parsing.
         mengingat_text = re.sub(r'^\s*Mengingat\s*$', '', mengingat_text, flags=re.MULTILINE)
         mengingat_text = _strip_mengingat_prefix(mengingat_text)
-        mengingat_text = re.sub(r'\n{3,}', '\n\n', mengingat_text).strip()
+        mengingat_text = _clean_preamble_child_text(mengingat_text, "mengingat")
         # Drop text that has no legal reference content — it is an OCR artifact (e.g. "Dengan", "2.").
         if not re.search(r'\b(?:Pasal|Undang|Peraturan)\b', mengingat_text):
             mengingat_text = ''
@@ -1535,7 +1643,7 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
             })
 
     if menetapkan_text:
-        menetapkan_text = re.sub(r'\n{3,}', '\n\n', menetapkan_text).strip()
+        menetapkan_text = _clean_preamble_child_text(menetapkan_text, "menetapkan")
         if menetapkan_text:
             children.append({
                 "title": "Menetapkan",
@@ -1680,6 +1788,10 @@ Input (JSON):
 _OCR_HEADER_PATTERNS = [
     re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
     re.compile(r'^PRESIDEN\s+REPUBLIK\s+INDONESIA\s*$', re.MULTILINE),
+    re.compile(r'^\s*(?:PRESIDEN|FRESIDEN|PNESIDEN|PRESTDEN|PTTESIDEN)\s*$', re.MULTILINE),
+    re.compile(r'^\s*(?:REPUBLIK|R,EPUBLIK|REPIJBUK|REPI,IBLIK|REP[A-Z]*K)\s+INDONESIA\s*$', re.MULTILINE),
+    re.compile(r'^\s*[A-Z]{1,4}\s+INDONESIA\s*$', re.MULTILINE),
+    re.compile(r'^\s*_[0-9OlIt-]+_\s*$', re.MULTILINE),
     re.compile(r'^LEMBARAN\s+NEGARA\s+REPUBLIK\s+INDONESIA.*$', re.MULTILINE),
     re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
 ]
@@ -2267,6 +2379,18 @@ def _strip_leading_junk(text: str) -> str:
     return re.sub(r'^[\s:;,\-]+', '', text)
 
 
+def _prepend_intro_to_first_child(sub_nodes: list[dict], intro: str) -> None:
+    """Preserve text before the first split marker by prepending it to child 1."""
+    if not intro or not sub_nodes:
+        return
+    intro = intro.strip()
+    if not intro:
+        return
+    first = sub_nodes[0]
+    existing = first.get("text", "").strip()
+    first["text"] = f"{intro}\n{existing}".strip() if existing else intro
+
+
 def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
     """Split text into Ayat sub-nodes without recursing into Huruf or Angka.
 
@@ -2293,6 +2417,7 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
             "_split_label": label,
         }
         sub_nodes.append(node)
+    _prepend_intro_to_first_child(sub_nodes, intro)
     _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
     for n in sub_nodes:
         n.pop("_split_label", None)
@@ -2371,6 +2496,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             else:
                 node["text"] = segment
             sub_nodes.append(node)
+        _prepend_intro_to_first_child(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
         for n in sub_nodes:
             n.pop("_split_label", None)
@@ -2400,6 +2526,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             else:
                 node["text"] = segment
             sub_nodes.append(node)
+        _prepend_intro_to_first_child(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "huruf")
         for n in sub_nodes:
             n.pop("_split_label", None)
@@ -2422,6 +2549,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
                 "text": segment,
                 "_split_label": label,
             })
+        _prepend_intro_to_first_child(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "angka")
         for n in sub_nodes:
             n.pop("_split_label", None)

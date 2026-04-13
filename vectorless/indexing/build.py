@@ -155,10 +155,13 @@ def build_catalog(index_dir: Path) -> list[dict]:
     """Build catalog.json summary from all indexed document JSON files."""
     catalog = []
     for path in sorted(index_dir.rglob("*.json")):
-        if path.name == "catalog.json":
+        if path.name.startswith("catalog"):
             continue
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
+        if not isinstance(doc, dict) or "doc_id" not in doc:
+            log.warning(f"skip non-document json while building catalog: {path}")
+            continue
         catalog.append({
             "doc_id": doc["doc_id"],
             "judul": doc["judul"],
@@ -200,7 +203,7 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
         log.info(f"category {category}")
 
     pasal_files = sorted(pasal_dir.rglob("*.json"))
-    pasal_files = [f for f in pasal_files if f.name != "catalog.json"]
+    pasal_files = [f for f in pasal_files if not f.name.startswith("catalog")]
 
     if not pasal_files:
         log.error(f"no pasal index files found in {pasal_dir}")
@@ -212,6 +215,10 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
     for pf in pasal_files:
         with open(pf, encoding="utf-8") as f:
             doc = json.load(f)
+        if not isinstance(doc, dict) or "doc_id" not in doc:
+            log.warning(f"skip non-document json: {pf}")
+            skipped += 1
+            continue
 
         did = doc["doc_id"]
         if doc_id and did != doc_id:
@@ -240,6 +247,7 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
         structure = copy.deepcopy(doc["structure"])
         structure = split_fn(structure)
         strip_ocr_headers(structure)
+        add_navigation_paths(structure)
 
         doc["structure"] = structure
         doc["parser_version"] = doc.get("parser_version") or PARSER_VERSION
