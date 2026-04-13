@@ -56,6 +56,7 @@ def check_nav_paths(nodes: list[dict], ancestors: list[str] | None = None) -> li
     if ancestors is None:
         ancestors = []
     issues = []
+    status_issues = []
     # Check each node's navigation_path against its reconstructed ancestor chain.
     for node in nodes:
         expected = " > ".join(ancestors + [node["title"]])
@@ -279,6 +280,7 @@ def verify_doc(doc: dict) -> dict:
     element_counts = doc.get("element_counts", {})
 
     issues = []
+    status_issues = []
     checks = {}
 
     # Check 1: Categorize parser warnings.
@@ -305,7 +307,9 @@ def verify_doc(doc: dict) -> dict:
         text = leaf.get("text", "")
         if not text:
             empty_text += 1
-            issues.append(f"Empty text: {leaf.get('node_id', '?')} ({leaf.get('title', '?')})")
+            issue = f"Empty text: {leaf.get('node_id', '?')} ({leaf.get('title', '?')})"
+            issues.append(issue)
+            status_issues.append(issue)
         elif len(text) < 20:
             short_text += 1
         elif len(text) > 10000:
@@ -323,9 +327,13 @@ def verify_doc(doc: dict) -> dict:
         "ocr_leaks": ocr_leaks,
     }
     if empty_text:
-        issues.append(f"{empty_text} leaf node(s) with empty text")
+        issue = f"{empty_text} leaf node(s) with empty text"
+        issues.append(issue)
+        status_issues.append(issue)
     if ocr_leaks:
-        issues.append(f"{ocr_leaks} leaf node(s) with OCR header leaks")
+        issue = f"{ocr_leaks} leaf node(s) with OCR header leaks"
+        issues.append(issue)
+        status_issues.append(issue)
 
     # Check 4: Navigation path consistency.
     nav_issues = check_nav_paths(structure)
@@ -340,8 +348,11 @@ def verify_doc(doc: dict) -> dict:
     checks["boundary_issues"] = len(boundary_issues)
     if boundary_issues:
         issues.extend(boundary_issues[:3])
+        status_issues.extend(boundary_issues[:3])
         if len(boundary_issues) > 3:
-            issues.append(f"...and {len(boundary_issues) - 3} more boundary issues")
+            more_issue = f"...and {len(boundary_issues) - 3} more boundary issues"
+            issues.append(more_issue)
+            status_issues.append(more_issue)
 
     # Check 6: Duplicate node IDs.
     all_ids = []
@@ -354,13 +365,16 @@ def verify_doc(doc: dict) -> dict:
     dupes = len(all_ids) - len(set(all_ids))
     if dupes:
         checks["duplicate_node_ids"] = dupes
-        issues.append(f"{dupes} duplicate node_id(s)")
+        issue = f"{dupes} duplicate node_id(s)"
+        issues.append(issue)
+        status_issues.append(issue)
 
     # Check 7: Preamble integrity (Menimbang/Mengingat/Menetapkan boundaries and content).
     preamble_issues = check_preamble(structure)
     checks["preamble_issues"] = len(preamble_issues)
     if preamble_issues:
         issues.extend(preamble_issues)
+        status_issues.extend(preamble_issues)
 
     # Determine overall status from issue severity.
     if empty_text or dupes or len(boundary_issues) > 0:
@@ -369,6 +383,9 @@ def verify_doc(doc: dict) -> dict:
         status = "WARN"
     else:
         status = "OK"
+
+    checks["issue_count"] = len(status_issues)
+    checks["diagnostic_issue_count"] = len(issues)
 
     return {
         "doc_id": doc_id,
@@ -449,14 +466,15 @@ def print_report(results: list[dict], index_dir: Path):
         status = r["status"]
         doc_id = r["doc_id"]
         leaves = r["checks"]["leaf_quality"]["total_leaves"]
-        warn_count = r["checks"]["warnings"]["count"]
+        parser_warn_count = r["checks"]["warnings"]["count"]
+        issue_count = r["checks"].get("issue_count", len(r["issues"]))
 
         if status == "OK":
             ok += 1
-            print(f"[OK]   {doc_id:30s}  {leaves:4d} leaves, {warn_count} warnings")
+            print(f"[OK]   {doc_id:30s}  {leaves:4d} leaves, {issue_count} issues, {parser_warn_count} parser warnings")
         elif status == "WARN":
             warn += 1
-            print(f"[WARN] {doc_id:30s}  {leaves:4d} leaves, {warn_count} warnings")
+            print(f"[WARN] {doc_id:30s}  {leaves:4d} leaves, {issue_count} issues, {parser_warn_count} parser warnings")
             # Build a compact summary of warning categories.
             cats = r["checks"]["warnings"]["categories"]
             lq = r["checks"]["leaf_quality"]
@@ -479,7 +497,7 @@ def print_report(results: list[dict], index_dir: Path):
                     print(f"           - {issue}")
         else:
             fail += 1
-            print(f"[FAIL] {doc_id:30s}  {leaves:4d} leaves, {warn_count} warnings")
+            print(f"[FAIL] {doc_id:30s}  {leaves:4d} leaves, {issue_count} issues, {parser_warn_count} parser warnings")
             for issue in r["issues"][:5]:
                 print(f"         - {issue}")
 

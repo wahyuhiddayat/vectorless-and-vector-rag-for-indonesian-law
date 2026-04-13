@@ -1387,11 +1387,14 @@ def _clean_preamble_noise(raw_text: str) -> str:
     markers, and isolated all-caps words that bleed in from adjacent columns,
     while preserving the preamble keywords Mengingat and Menetapkan.
     """
-    _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)'
+    _PRESIDEN_RE = r'(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN|FR,ESIDEN|MENTERI)'
     noise_patterns = [
         re.compile(r'^\s*Mengingat\s*\n\s*Menetapkan\s*$', re.MULTILINE),
         re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n\s*REP\S*\s+IND\S*\s*\n'),
+        re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s+REP\S*\s+IND\S*\s*\n'),
         re.compile(r'\n\s*' + _PRESIDEN_RE + r'\s*\n'),
+        re.compile(r'^\s*REP\S*\s+IND\S*\s*$', re.MULTILINE),
+        re.compile(r'^\s*(?:MENTERI|FR,ESIDEN)\s+REP\S*\s+IND\S*\s*$', re.MULTILINE),
         re.compile(r'^\s*SAL[IT]NAN\s*\n', re.MULTILINE),
         re.compile(r'^\s*-\d+-\s*\n', re.MULTILINE),
         re.compile(r'^\s*(?!BAHWA|Mengingat|Menetapkan|MEMUTUSKAN)[A-Z]{3,8}\s*\n', re.MULTILINE),
@@ -1407,7 +1410,12 @@ def _clean_preamble_child_text(text: str, section: str) -> str:
     """Normalize one preamble child after section-level splitting."""
     cleaned = _clean_preamble_noise(text or "")
     cleaned = re.sub(
-        r'(?im)^\s*(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN)\s*$',
+        r'(?im)^\s*(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN|FR,ESIDEN|MENTERI)\s*$',
+        '',
+        cleaned,
+    )
+    cleaned = re.sub(
+        r'(?im)^\s*(?:P(?:RE|NE|TT)?SI[DO]EN|FRESIDEN|PRESTDEN|FR,ESIDEN|MENTERI)\s+REP\S*\s+IND\S*\s*$',
         '',
         cleaned,
     )
@@ -1427,14 +1435,49 @@ def _clean_preamble_child_text(text: str, section: str) -> str:
         cleaned = re.sub(r'(?is)(?:\n\s*\d+\.\s*){2,}$', '', cleaned).strip()
     elif section == "menetapkan":
         cleaned = re.sub(r'(?is)^\s*Menetapkan\s*:?\s*', '', cleaned).strip()
+        cleaned = re.sub(r'(?im)^\s*REP\S*\s+IND\S*\s*$', '', cleaned)
         cleaned = re.sub(
-            r'(?is)\b(?:BAB\s+[IVXLC]+|Pasal\s+\d+|KETENTUAN\s+UMUM)\b.*$',
+            r'(?im)^\s*(?:BAB\s*[IVXLC]+|BAB[IVXLC]+|KETENTUAN\s+UMUM|Agar\s+setiap\s+orang|Agar|Pasal\s+[0-9IVXLC]+|Pasa[Il1]\s+[0-9IVXLCIl1]+)\b[\s\S]*$',
+            '',
+            cleaned,
+        ).strip()
+        cleaned = re.sub(
+            r'(?is)\b(?:Pasa[Il1l]\s+[0-9IVXLCIl1]+|Pasa[lI1]\s+[0-9IVXLCIl1]+)\b.*$',
             '',
             cleaned,
         ).strip()
         cleaned = re.sub(r'(?im)\n\s*Menetapkan\s*$', '', cleaned).strip()
 
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+
+
+def _looks_like_marker_only_text(text: str) -> bool:
+    """Return True when text collapses into bare list markers like 'a b c d'."""
+    lines = [line.strip(" .:;\t") for line in (text or "").splitlines() if line.strip()]
+    return bool(lines) and all(len(line) == 1 and line.isalpha() for line in lines)
+
+
+def _extract_menimbang_candidate(text: str) -> str | None:
+    """Recover misplaced Menimbang content that OCR placed before the label."""
+    for pattern in (
+        r'(?:^|\n)\s*a\.?\s*(?:\n\s*)?bahwa\b',
+        r'(?:^|\n)\s*a\s*(?:\n\s*)?bahwa\b',
+        r'(?:^|\n)\s*bahwa\b',
+    ):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return text[match.start():].lstrip('\n')
+    return None
+
+
+def _split_embedded_menetapkan(text: str) -> tuple[str, str | None]:
+    """Split Mengingat text when an embedded Menetapkan heading slipped into it."""
+    match = re.search(r'(?:^|\n)\s*Menetapkan\s*:?\s*(?:\n|(?=[A-Z]))', text)
+    if not match:
+        return text, None
+    before = text[:match.start()].strip()
+    after = text[match.end():].strip()
+    return before, after or None
 
 
 def _strip_mengingat_prefix(candidate: str) -> str:
@@ -1451,6 +1494,31 @@ def _strip_mengingat_prefix(candidate: str) -> str:
         after_kw = candidate[kw_m.end():]
         return re.sub(r'^\s*:?\s*\n?\s*', '', after_kw)
     return candidate
+
+
+def _recover_mengingat_tail(
+    menimbang_text: str,
+    mengingat_text: str | None,
+) -> tuple[str, str | None]:
+    """Move numbered legal references accidentally attached to Menimbang into Mengingat."""
+    if not re.search(r'(?i)\bbahwa\b', menimbang_text):
+        return menimbang_text, mengingat_text
+    ref_m = re.search(
+        r'(?:^|\n)((?:\d+\.\s+)?(?:Pasal\s+\d+|Undang-Undang|Peraturan(?:\s+Pemerintah)?))',
+        menimbang_text,
+    )
+    if not ref_m:
+        return menimbang_text, mengingat_text
+    split_at = ref_m.start(1)
+    moved_tail = menimbang_text[split_at:].strip()
+    kept = menimbang_text[:split_at].strip()
+    if not kept or not moved_tail:
+        return menimbang_text, mengingat_text
+    if mengingat_text:
+        merged = moved_tail.rstrip() + "\n" + mengingat_text.lstrip()
+    else:
+        merged = moved_tail
+    return kept, merged
 
 
 def _split_by_content_transition(body: str) -> tuple[str | None, str | None]:
@@ -1544,26 +1612,22 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     if menimbang_m:
         before_menimbang = cleaned[:menimbang_m.start()]
         after_menimbang = cleaned[menimbang_m.end():]
-        # OCR block reordering can place "a. bahwa" content before the "Menimbang:" label; detect this and prepend the misplaced content.
-        bahwa_before_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', before_menimbang)
-        if not bahwa_before_m:
-            bahwa_before_m = re.search(r'(?:^|\n)\s*bahwa\s', before_menimbang)
-        if bahwa_before_m:
+        # OCR block reordering can place Menimbang clauses before the "Menimbang:" label.
+        misplaced_menimbang = _extract_menimbang_candidate(before_menimbang)
+        if misplaced_menimbang and (
+            not re.search(r'(?i)\bbahwa\b', after_menimbang[:400])
+            or _looks_like_marker_only_text(after_menimbang[:120])
+        ):
             after_menimbang = (
-                before_menimbang[bahwa_before_m.start():].lstrip('\n')
-                + after_menimbang
+                misplaced_menimbang.rstrip() + "\n" + after_menimbang.lstrip()
             )
     else:
         # No Menimbang keyword; locate the preamble body via the first bahwa clause.
-        fallback_m = re.search(r'(?:^|\n)\s*a\.?\s+bahwa\s', cleaned)
-        if not fallback_m:
-            fallback_m = re.search(r'(?:^|\n)\s*a\.\s*\n\s*bahwa\s', cleaned)
-        if not fallback_m:
-            fallback_m = re.search(r'(?:^|\n)\s*bahwa\s', cleaned)
-        if not fallback_m:
+        fallback_text = _extract_menimbang_candidate(cleaned)
+        if not fallback_text:
             return None
-        before_menimbang = cleaned[:fallback_m.start()]
-        after_menimbang = cleaned[fallback_m.start():].lstrip('\n')
+        before_menimbang = cleaned[:cleaned.find(fallback_text)]
+        after_menimbang = fallback_text.lstrip('\n')
 
     # Locate MEMUTUSKAN to bound the preamble body and extract Menetapkan text.
     # The colon-terminated form ("MEMUTUSKAN:") is tried first; some documents omit the
@@ -1597,6 +1661,13 @@ def _split_preamble(text: str, start_page: int, end_page: int) -> list[dict] | N
     if menimbang_text is None:
         menimbang_text = preamble_body
         mengingat_text = None
+
+    menimbang_text, mengingat_text = _recover_mengingat_tail(menimbang_text, mengingat_text)
+
+    if not menetapkan_text and mengingat_text:
+        mengingat_text, embedded_menetapkan = _split_embedded_menetapkan(mengingat_text)
+        if embedded_menetapkan:
+            menetapkan_text = embedded_menetapkan
 
     # Finalize Menimbang text: remove a trailing "Mengingat" keyword (with any following colon
     # or OCR-garbled content) that bleeds in from margin noise at the end of the text.
@@ -1788,10 +1859,15 @@ Input (JSON):
 _OCR_HEADER_PATTERNS = [
     re.compile(r'PRESIDEN\s*\n\s*REPUBLIK\s+INDONESIA'),
     re.compile(r'^PRESIDEN\s+REPUBLIK\s+INDONESIA\s*$', re.MULTILINE),
-    re.compile(r'^\s*(?:PRESIDEN|FRESIDEN|PNESIDEN|PRESTDEN|PTTESIDEN)\s*$', re.MULTILINE),
+    re.compile(r'^\s*(?:PRESIDEN|FRESIDEN|PNESIDEN|PRESTDEN|PTTESIDEN|FR,ESIDEN|MENTERI)\s*$', re.MULTILINE),
     re.compile(r'^\s*(?:REPUBLIK|R,EPUBLIK|REPIJBUK|REPI,IBLIK|REP[A-Z]*K)\s+INDONESIA\s*$', re.MULTILINE),
+    re.compile(r'^\s*(?:FEPUEUK|IIEPUBUK|REP[A-Z,]*|[A-Z]{2,4}PUB[A-Z,]*)\s+IN[A-Z]{6,12}\s*$', re.MULTILINE),
+    re.compile(r'^\s*(?:PRESIDEN|FRESIDEN|PNESIDEN|PRESTDEN|PTTESIDEN|FR,ESIDEN|MENTERI)\s+REP\S*\s+IND\S*\s*$', re.MULTILINE),
+    re.compile(r'(?:PRESIDEN|FRESIDEN|PNESIDEN|PRESTDEN|PTTESIDEN|FR,ESIDEN|MENTERI)\s*\n\s*-?\d+\s*-\s*(?:\n\s*REP\S*\s+IND\S*)?', re.MULTILINE),
     re.compile(r'^\s*[A-Z]{1,4}\s+INDONESIA\s*$', re.MULTILINE),
     re.compile(r'^\s*_[0-9OlIt-]+_\s*$', re.MULTILINE),
+    re.compile(r'^\s*-?\d+\s*-?\s*$', re.MULTILINE),
+    re.compile(r'^SK\s+No\s+.*$', re.MULTILINE),
     re.compile(r'^LEMBARAN\s+NEGARA\s+REPUBLIK\s+INDONESIA.*$', re.MULTILINE),
     re.compile(r'^TAMBAHAN\s+LEMBARAN\s+NEGARA.*$', re.MULTILINE),
 ]
@@ -1807,6 +1883,73 @@ _CLOSING_TEXT_RE = re.compile(
     r')'
     r'[\s\S]*$',
 )
+
+_AMENDMENT_SPILLOVER_PATTERNS = [
+    re.compile(r'\n\s*\d+\.\s+Ketentuan\s+(?:Pasal|ayat|huruf)\b[\s\S]*$', re.IGNORECASE),
+    re.compile(r'\n\s*\d+\.\s+Di\s+antara\s+Pasal\b[\s\S]*$', re.IGNORECASE),
+    re.compile(r'\n\s*\d+\.\s+Penjelasan\b[\s\S]*$', re.IGNORECASE),
+    re.compile(r'\n\s*\d+\.\s+Setelah\b[\s\S]*$', re.IGNORECASE),
+    re.compile(r'\n\s*Ketentuan\s+(?:Pasal|ayat|huruf)\b[\s\S]*$', re.IGNORECASE),
+    re.compile(r'\n\s*Di\s+antara\s+Pasal\b[\s\S]*$', re.IGNORECASE),
+]
+
+
+def _dedupe_repeated_heading(text: str, title: str | None) -> str:
+    """Collapse OCR-induced duplicated headings at the start of a leaf."""
+    if not title:
+        return text
+    title = title.strip()
+    if not title:
+        return text
+    title_re = re.escape(title)
+    return re.sub(
+        rf'^\s*({title_re})\s*\n+\s*\1\b',
+        r'\1',
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
+def _trim_amendment_spillover(text: str, title: str | None) -> str:
+    """Trim duplicated amendment-intro text that bled into the previous Pasal leaf."""
+    if not title or not title.startswith("Pasal "):
+        return text
+    trimmed = text
+    for pattern in _AMENDMENT_SPILLOVER_PATTERNS:
+        trimmed = pattern.sub('', trimmed)
+    trimmed = re.sub(r'(?im)\n\s*Agar\s*$', '', trimmed)
+    return trimmed
+
+
+def _trim_trailing_structural_heading(text: str, title: str | None) -> str:
+    """Remove next-section headings that bled into the current leaf."""
+    trimmed = text
+    if title and title.startswith("Pasal "):
+        trimmed = re.sub(r'(?im)\n\s*BAB\s*[IVXLCDM]+\s*$', '', trimmed)
+        trimmed = re.sub(r'(?im)\n\s*BAB[IVXLCDM]+\s*$', '', trimmed)
+        trimmed = re.sub(r'(?im)\n\s*Bagian\s+[^\n]+\s*$', '', trimmed)
+        trimmed = re.sub(r'(?im)\n\s*Paragraf\s+[^\n]+\s*$', '', trimmed)
+    return trimmed
+
+
+def _normalize_leaf_text(text: str, title: str | None = None) -> str:
+    """Apply OCR cleanup, duplicate-heading collapse, and spillover trimming."""
+    cleaned = text or ""
+    if title == "Menimbang":
+        cleaned = _clean_preamble_child_text(cleaned, "menimbang")
+    elif title == "Mengingat":
+        cleaned = _clean_preamble_child_text(cleaned, "mengingat")
+    elif title == "Menetapkan":
+        cleaned = _clean_preamble_child_text(cleaned, "menetapkan")
+    for pat in _OCR_HEADER_PATTERNS:
+        cleaned = pat.sub('', cleaned)
+    cleaned = _CLOSING_TEXT_RE.sub('', cleaned)
+    cleaned = _dedupe_repeated_heading(cleaned, title)
+    cleaned = _trim_amendment_spillover(cleaned, title)
+    cleaned = _trim_trailing_structural_heading(cleaned, title)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
 
 def _process_batch(batch: dict[str, str], batch_idx: int, total: int, verbose: bool,
                    api_key: str | None = None, _label: str | None = None):
@@ -2027,9 +2170,12 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
                     node["penjelasan"] = cleaned[penj_key]
 
     _replace(output_nodes)
+    # Re-run local OCR/header normalization after the LLM pass so llm-only rebuilds
+    # get the same cleanup guarantees as a full parse path.
+    strip_ocr_headers(output_nodes)
 
     if penjelasan_data and "__penjelasan_umum__" in cleaned:
-        penjelasan_data["umum"] = cleaned["__penjelasan_umum__"]
+        penjelasan_data["umum"] = _normalize_leaf_text(cleaned["__penjelasan_umum__"])
 
     if verbose:
         log.info(f"cleaned {len(cleaned)} nodes")
@@ -2043,13 +2189,10 @@ def strip_ocr_headers(nodes: list[dict]):
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             strip_ocr_headers(node["nodes"])
-        elif "text" in node:
-            text = node["text"]
-            for pat in _OCR_HEADER_PATTERNS:
-                text = pat.sub('', text)
-            text = _CLOSING_TEXT_RE.sub('', text)
-            text = re.sub(r'\n{3,}', '\n\n', text).strip()
-            node["text"] = text
+        if "text" in node:
+            node["text"] = _normalize_leaf_text(node["text"], node.get("title"))
+        if "penjelasan" in node:
+            node["penjelasan"] = _normalize_leaf_text(node["penjelasan"], node.get("title"))
 
 # ============================================================
 # 7. MAIN PIPELINE

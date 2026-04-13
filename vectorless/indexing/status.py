@@ -45,6 +45,14 @@ def _empty_warning_count() -> dict:
     return {gran: 0 for gran in GRANULARITY_INDEX_MAP}
 
 
+def _empty_parser_warning_count() -> dict:
+    return {gran: 0 for gran in GRANULARITY_INDEX_MAP}
+
+
+def _empty_verify_issue_count() -> dict:
+    return {gran: 0 for gran in GRANULARITY_INDEX_MAP}
+
+
 def load_status_manifest(current_parser_version: str, current_llm_cleanup_version: str) -> dict:
     if STATUS_PATH.exists():
         with open(STATUS_PATH, encoding="utf-8") as f:
@@ -97,6 +105,8 @@ def ensure_doc_entry(manifest: dict, doc_id: str, registry_entry: dict | None = 
         "llm_cleaned_at": None,
         "verify_status": _empty_verify_status(),
         "warning_count": _empty_warning_count(),
+        "parser_warning_count": _empty_parser_warning_count(),
+        "verify_issue_count": _empty_verify_issue_count(),
         "stale_parse": False,
         "stale_derived": False,
         "last_error": None,
@@ -104,6 +114,8 @@ def ensure_doc_entry(manifest: dict, doc_id: str, registry_entry: dict | None = 
 
     entry.setdefault("verify_status", _empty_verify_status())
     entry.setdefault("warning_count", _empty_warning_count())
+    entry.setdefault("parser_warning_count", _empty_parser_warning_count())
+    entry.setdefault("verify_issue_count", _empty_verify_issue_count())
 
     if registry_entry:
         entry["jenis_folder"] = registry_entry.get("jenis_folder", entry.get("jenis_folder"))
@@ -151,8 +163,10 @@ def sync_doc_from_indexes(
         if doc is None:
             entry["verify_status"][granularity] = "MISSING"
             entry["warning_count"][granularity] = 0
+            entry["parser_warning_count"][granularity] = 0
+            entry["verify_issue_count"][granularity] = 0
         else:
-            entry["warning_count"][granularity] = len(doc.get("warnings", []))
+            entry["parser_warning_count"][granularity] = len(doc.get("warnings", []))
 
     pasal_doc = docs_by_granularity["pasal"]
     pasal_path = paths_by_granularity["pasal"]
@@ -250,7 +264,11 @@ def apply_verify_results(manifest: dict, granularity: str, results: list[dict], 
         doc_id = result["doc_id"]
         entry = ensure_doc_entry(manifest, doc_id, registry.get(doc_id) if registry else None)
         entry["verify_status"][granularity] = result["status"]
-        entry["warning_count"][granularity] = result["checks"]["warnings"]["count"]
+        issue_count = result["checks"].get("issue_count", len(result.get("issues", [])))
+        entry["verify_issue_count"][granularity] = issue_count
+        # Keep warning_count as the primary verifier-facing diagnostic for backwards compatibility.
+        entry["warning_count"][granularity] = issue_count
+        entry["parser_warning_count"][granularity] = result["checks"]["warnings"]["count"]
 
 
 def _summarize_status(manifest: dict, doc_ids: list[str] | None = None) -> tuple[dict, dict]:
