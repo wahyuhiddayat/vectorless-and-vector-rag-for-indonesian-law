@@ -10,7 +10,10 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 
 ## GT policy
 
-- GT is **ayat-anchored**
+- GT is **leaf-anchored** at the finest available granularity (`full_split` index)
+- the anchor must be the **most specific leaf node** available: huruf/angka if present, otherwise ayat, otherwise pasal
+- gold sets for coarser granularities (ayat, pasal) are **derived by rolling UP** via prefix lookup in `finalize_gt.py`
+- every granularity has **exactly 1 gold node** per question
 - main benchmark covers **body text only**
 - substantive pasal/ayat content is in scope
 - closing provisions in the body such as `mulai berlaku` are in scope if they appear as body nodes
@@ -18,7 +21,7 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 - preamble sections (`Pembukaan`, `Menimbang`, `Mengingat`, `Menetapkan`) are out of scope
 - main benchmark queries are **single-hop**
 - main benchmark queries must be **self-contained**
-- every query must be answerable by **exactly one ayat anchor**
+- every query must be answerable by **exactly one leaf node**
 - `colloquial` queries must still be uniquely answerable by one anchor — vague/underspecified queries are not allowed
 - context-dependent or conversational carry-over queries are not allowed
 - multihop queries are out of scope for the main benchmark
@@ -26,18 +29,19 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 - legal reference mention is optional
 - documents with zero body leaf nodes (pure preamble) are auto-skipped by `gt_prompt.py`
 - short documents generate fewer questions (`n = leaf_count`) — no anchor reuse, no duplicates
+- max 5 questions per document (dosbing directive)
 
 Methodology notes:
 
 - `gold_node_id` intentionally mirrors `gold_anchor_node_id` in raw GT as a compatibility alias
-- cross-granularity gold sets are derived later by `finalize_gt.py`
+- cross-granularity gold sets are derived later by `finalize_gt.py` using roll-up prefix lookup
 - `answer_hint` is a short evidence snippet for reviewer sanity-checking, not a full gold answer and not the main basis for automated scoring
 - GT generation is a curated one-shot annotator workflow: rerunning the same prompt may produce different outputs, so consistency is enforced through prompt constraints, validation, and manual review
-- Main benchmark queries must be single-hop retrieval queries. If answering the query requires combining information from more than one ayat/pasal, the query is invalid for this GT.
+- Main benchmark queries must be single-hop retrieval queries. If answering the query requires combining information from more than one leaf node, the query is invalid for this GT.
 
 For the main GT set, prefer documents with:
 
-- `verify_status.ayat = OK`
+- `verify_status.full_split = OK`
 
 If you want a stricter subset later, use documents that are `OK` on all three:
 
@@ -80,6 +84,7 @@ Output:
 
 Notes:
 
+- Reads from `data/index_full_split` — the LLM sees the finest-grained leaf nodes (huruf, angka, or ayat/pasal when not split further).
 - If the document has no body leaf nodes (pure preamble), `gt_prompt.py` will print `[SKIP]` and exit.
 - Short documents automatically get fewer questions (`n = leaf_count`) — one question per leaf, no duplicates.
 - For large documents, do not use `--stdout`; let the files be written to `tmp/`.
@@ -146,7 +151,7 @@ Use `scripts/gt_validate_prompt.txt` as a template (the file is gitignored — c
 
 In Copilot Chat:
 
-1. **Attach** `data/index_ayat/[KATEGORI]/<doc_id>.json` so Copilot can verify node text and sibling structure.
+1. **Attach** `data/index_full_split/[KATEGORI]/<doc_id>.json` so Copilot can verify node text and sibling structure.
 2. Fill in `[KATEGORI]` and `[DOC_ID]` in the template header.
 3. Paste the raw JSON array from `data/ground_truth_raw/<doc_id>.json` into the `[PASTE ...]` placeholder.
 4. Paste the `[WARN]` lines from Step 3 below the JSON (as additional hints).
@@ -187,11 +192,11 @@ python scripts/finalize_gt.py
 
 Output: `data/validated_testset.pkl`
 
-Semantics:
+Semantics (roll-up design — every level has exactly 1 gold node):
 
-- `gold_pasal_node_ids`: parent pasal of the ayat anchor
-- `gold_ayat_node_ids`: exact ayat anchor
-- `gold_full_split_node_ids`: descendant leaves under that ayat anchor
+- `gold_full_split_node_ids`: exact anchor (finest granularity)
+- `gold_ayat_node_ids`: derived parent in ayat index
+- `gold_pasal_node_ids`: derived parent in pasal index
 
 ---
 
@@ -209,7 +214,7 @@ What to check:
 - documents covered
 - balanced `reference_mode`
 - balanced `query_style` (~50% formal, ~50% colloquial)
-- average gold set sizes make sense
+- all gold set sizes = 1.0 (roll-up design)
 - no metadata-only questions
 - no preamble questions
 - no multihop queries
@@ -227,7 +232,7 @@ Each item in `data/ground_truth_raw/<doc_id>.json` must look like:
   "query_style": "formal|colloquial",
   "difficulty": "easy|medium|hard",
   "reference_mode": "none|legal_ref|doc_only|both",
-  "gold_anchor_granularity": "ayat",
+  "gold_anchor_granularity": "full_split",
   "gold_anchor_node_id": "...",
   "gold_node_id": "...",
   "gold_doc_id": "...",
@@ -239,7 +244,8 @@ Each item in `data/ground_truth_raw/<doc_id>.json` must look like:
 Notes:
 
 - `gold_node_id` must match `gold_anchor_node_id`
-- `gold_anchor_granularity` must be `ayat`
+- `gold_anchor_granularity` must be `full_split`
+- `gold_anchor_node_id` must be the most specific leaf available (huruf/angka if present)
 - `answer_hint` should stay short and evidence-like; it is not a full canonical answer span
 - raw GT must be a JSON array
 
@@ -264,7 +270,7 @@ Remove-Item data\validated_testset.pkl
 
 ## Recommended habits
 
-- work from docs with `ayat = OK`
+- work from docs with `full_split = OK`
 - validate structurally before semantic review
 - always run semantic validation (Step 4) before merging — never merge directly from ChatGPT output
 - merge often, finalize only when the merged GT looks clean

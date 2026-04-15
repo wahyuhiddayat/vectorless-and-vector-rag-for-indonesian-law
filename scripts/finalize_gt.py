@@ -1,10 +1,23 @@
 """
 Ground Truth Finalizer.
 
-Converts data/ground_truth.json (ayat-anchored annotations produced by
+Converts data/ground_truth.json (leaf-anchored annotations produced by
 gt_collect.py) into data/validated_testset.pkl, which stores reference_mode
 plus gold node ID sets for all three index granularities: pasal, ayat, and
 full_split.
+
+DESIGN: Anchor at finest granularity, roll UP.
+
+Each GT question anchors at the most specific leaf in the full_split index
+(e.g., a specific huruf or angka). Gold sets for coarser granularities are
+derived by finding the parent node via prefix lookup:
+
+  full_split: gold = {anchor}                          (exact, 1 node)
+  ayat:       gold = {derive_parent(anchor, ayat)}     (parent, 1 node)
+  pasal:      gold = {derive_parent(anchor, pasal)}    (parent, 1 node)
+
+Every granularity has exactly 1 gold node per question, ensuring fair
+evaluation: harder at fine granularity (larger corpus, same target).
 
 EVALUATION USAGE (in your retrieval eval script):
   if granularity == "pasal":
@@ -13,12 +26,6 @@ EVALUATION USAGE (in your retrieval eval script):
       hit = retrieved_node_id in item["gold_ayat_node_ids"]
   elif granularity == "full_split":
       hit = retrieved_node_id in item["gold_full_split_node_ids"]
-
-The semantic anchor is always an ayat-index leaf node:
-  - pasal eval asks whether retrieval found the parent Pasal
-  - ayat eval asks whether retrieval found the exact ayat anchor
-  - full_split eval asks whether retrieval entered the full_split subtree
-    under that ayat anchor
 
 Usage:
     python scripts/finalize_gt.py
@@ -104,13 +111,13 @@ def get_leaf_ids(doc_id: str, index_dir: Path) -> set[str]:
 
 
 def get_anchor_node_id(item: dict) -> str:
-    """Return the ayat anchor node ID from a merged GT item."""
+    """Return the leaf anchor node ID from a merged GT item."""
     return item.get("gold_anchor_node_id") or item["gold_node_id"]
 
 
 def get_anchor_granularity(item: dict) -> str:
     """Return the anchor granularity from a merged GT item."""
-    return item.get("gold_anchor_granularity", "ayat")
+    return item.get("gold_anchor_granularity", "full_split")
 
 
 def infer_reference_mode(query: str) -> str:
@@ -128,46 +135,27 @@ def infer_reference_mode(query: str) -> str:
     return "none"
 
 
-def derive_pasal_node_id(anchor_node_id: str, doc_id: str) -> str:
+def derive_parent_node_id(anchor: str, doc_id: str, target_index: Path) -> str:
+    """Derive the parent node at a coarser granularity via prefix lookup.
+
+    Tries progressively shorter prefixes of the anchor node_id until
+    one matches a leaf in the target index.
+
+    Examples (target_index=INDEX_AYAT):
+      "0004_a2_h3" -> try "0004_a2_h3" (miss) -> "0004_a2" (hit)
+      "0004_h3"    -> try "0004_h3" (miss) -> "0004" (hit)
+      "0004_a2"    -> try "0004_a2" (hit)
+      "0004"       -> try "0004" (hit)
     """
-    Derive the parent pasal node ID for an ayat anchor.
-
-    Common case:
-      0002_a2 -> 0002
-    If the ayat index leaf is unchanged from pasal level:
-      0002 -> 0002
-    """
-    pasal_leaf_ids = get_leaf_ids(doc_id, INDEX_PASAL)
-    candidates = [anchor_node_id]
-
-    if "_a" in anchor_node_id:
-        candidates.insert(0, anchor_node_id.split("_a", 1)[0])
-
-    for candidate in candidates:
-        if candidate in pasal_leaf_ids:
+    target_leaves = get_leaf_ids(doc_id, target_index)
+    parts = anchor.split("_")
+    for length in range(len(parts), 0, -1):
+        candidate = "_".join(parts[:length])
+        if candidate in target_leaves:
             return candidate
-
     raise ValueError(
-        f"Could not derive pasal node_id from ayat anchor '{anchor_node_id}' in doc '{doc_id}'"
+        f"Cannot derive parent node from '{anchor}' in {target_index} for doc '{doc_id}'"
     )
-
-
-def get_full_split_gold_ids(anchor_node_id: str, doc_id: str) -> set[str]:
-    """
-    Return the valid full_split gold node IDs for an ayat anchor.
-
-    Any leaf that equals the ayat anchor or is a descendant of that anchor
-    counts as correct.
-    """
-    full_leaf_ids = get_leaf_ids(doc_id, INDEX_FULL_SPLIT)
-    if not full_leaf_ids:
-        return {anchor_node_id}
-
-    valid = {
-        node_id for node_id in full_leaf_ids
-        if node_id == anchor_node_id or node_id.startswith(anchor_node_id + "_")
-    }
-    return valid if valid else {anchor_node_id}
 
 
 def finalize(check_only: bool = False) -> dict:
@@ -190,11 +178,10 @@ def finalize(check_only: bool = False) -> dict:
         sys.exit(1)
 
     print(f"\nLoaded {len(gt)} items from {GT_FILE}")
-    print("Expanding gold sets for pasal / ayat / full_split ...")
+    print("Deriving gold sets: full_split (exact) -> ayat (parent) -> pasal (parent) ...")
 
     testset: dict[str, dict] = {}
     errors: list[str] = []
-    docs_missing_full: set[str] = set()
 
     for qid, item in gt.items():
         doc_id = item["gold_doc_id"]
@@ -202,9 +189,9 @@ def finalize(check_only: bool = False) -> dict:
         anchor_node_id = get_anchor_node_id(item)
         reference_mode = item.get("reference_mode") or infer_reference_mode(item.get("query", ""))
 
-        if anchor_granularity != "ayat":
+        if anchor_granularity != "full_split":
             errors.append(
-                f"{qid}: gold_anchor_granularity must be 'ayat', got '{anchor_granularity}'"
+                f"{qid}: gold_anchor_granularity must be 'full_split', got '{anchor_granularity}'"
             )
             continue
 
@@ -215,30 +202,34 @@ def finalize(check_only: bool = False) -> dict:
             )
             continue
 
-        ayat_leaf_ids = get_leaf_ids(doc_id, INDEX_AYAT)
-        if not ayat_leaf_ids:
-            errors.append(f"{qid}: doc '{doc_id}' not found in {INDEX_AYAT}")
+        full_leaf_ids = get_leaf_ids(doc_id, INDEX_FULL_SPLIT)
+        if not full_leaf_ids:
+            errors.append(f"{qid}: doc '{doc_id}' not found in {INDEX_FULL_SPLIT}")
             continue
 
-        if anchor_node_id not in ayat_leaf_ids:
+        if anchor_node_id not in full_leaf_ids:
             errors.append(
-                f"{qid}: anchor node '{anchor_node_id}' is not a leaf in {INDEX_AYAT}; "
-                "the GT likely still uses old pasal-anchored annotations"
+                f"{qid}: anchor node '{anchor_node_id}' is not a leaf in {INDEX_FULL_SPLIT}; "
+                "the GT may use old ayat-anchored annotations — regenerate from full_split index"
             )
             continue
 
+        # Roll UP: derive parent nodes at coarser granularities
+        gold_full = {anchor_node_id}
+
         try:
-            pasal_node_id = derive_pasal_node_id(anchor_node_id, doc_id)
+            ayat_node_id = derive_parent_node_id(anchor_node_id, doc_id, INDEX_AYAT)
         except ValueError as e:
             errors.append(f"{qid}: {e}")
             continue
+        gold_ayat = {ayat_node_id}
 
-        if find_doc_path(doc_id, INDEX_FULL_SPLIT) is None:
-            docs_missing_full.add(doc_id)
-
+        try:
+            pasal_node_id = derive_parent_node_id(anchor_node_id, doc_id, INDEX_PASAL)
+        except ValueError as e:
+            errors.append(f"{qid}: {e}")
+            continue
         gold_pasal = {pasal_node_id}
-        gold_ayat = {anchor_node_id}
-        gold_full = get_full_split_gold_ids(anchor_node_id, doc_id)
 
         testset[qid] = {
             "query": item["query"],
@@ -246,7 +237,7 @@ def finalize(check_only: bool = False) -> dict:
             "difficulty": item.get("difficulty", ""),
             "reference_mode": reference_mode,
             "gold_doc_id": doc_id,
-            "gold_anchor_granularity": "ayat",
+            "gold_anchor_granularity": "full_split",
             "gold_anchor_node_id": anchor_node_id,
             # Backward-compatible singular field used by load_testset.py
             "gold_node_id": anchor_node_id,
@@ -264,25 +255,12 @@ def finalize(check_only: bool = False) -> dict:
         print("\nPerbaiki errors di atas sebelum melanjutkan.")
         sys.exit(1)
 
-    if docs_missing_full:
-        print(
-            f"\n[WARN] {len(docs_missing_full)} doc(s) not in index_full_split "
-            "(gold_full_split falls back to ayat anchor node_id):"
-        )
-        for doc_id in sorted(docs_missing_full):
-            print(f"  - {doc_id}")
-
     n = len(testset)
-    total_full = sum(len(v["gold_full_split_node_ids"]) for v in testset.values())
-    multi_full = sum(1 for v in testset.values() if len(v["gold_full_split_node_ids"]) > 1)
 
-    print("\nGold set sizes (avg per query):")
-    print("  pasal      : 1 node  (parent pasal of ayat anchor)")
-    print("  ayat       : 1 node  (exact ayat anchor)")
-    print(
-        f"  full_split : {total_full/n:.1f} nodes  "
-        f"({multi_full}/{n} queries have >1 valid node)"
-    )
+    print("\nGold set sizes (per query):")
+    print("  full_split : 1 node  (exact anchor — finest granularity)")
+    print("  ayat       : 1 node  (derived parent in ayat index)")
+    print("  pasal      : 1 node  (derived parent in pasal index)")
 
     if check_only:
         print("\n[check-only] Tidak menulis output.")
@@ -316,8 +294,6 @@ def print_stats() -> None:
     diff_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
     reference_mode_counts: dict[str, int] = {}
-    total_full_ids = 0
-    multi_full = 0
 
     for item in testset.values():
         doc_id = item["gold_doc_id"]
@@ -335,10 +311,7 @@ def print_stats() -> None:
         ref_mode = item.get("reference_mode") or "(missing)"
         reference_mode_counts[ref_mode] = reference_mode_counts.get(ref_mode, 0) + 1
 
-        full_ids = item.get("gold_full_split_node_ids", set())
-        total_full_ids += len(full_ids)
-        if len(full_ids) > 1:
-            multi_full += 1
+        # All gold sets are now exactly size 1 (roll-up design)
 
     print(f"\nValidated testset stats: {TESTSET_FILE}")
     print(f"  Total queries     : {total}")
@@ -366,13 +339,10 @@ def print_stats() -> None:
         if count:
             print(f"    {diff:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
-    print("\n  Gold set sizes (avg per query):")
-    print("    pasal      : 1.0  (parent pasal of ayat anchor)")
-    print("    ayat       : 1.0  (exact ayat anchor)")
-    print(
-        f"    full_split : {total_full_ids/total:.1f}  "
-        f"({multi_full}/{total} queries have >1 valid node)"
-    )
+    print("\n  Gold set sizes (per query):")
+    print("    full_split : 1.0  (exact anchor — finest granularity)")
+    print("    ayat       : 1.0  (derived parent in ayat index)")
+    print("    pasal      : 1.0  (derived parent in pasal index)")
 
     print("\n  Per document:")
     for doc_id, count in sorted(doc_counts.items()):
@@ -384,7 +354,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
             "Convert ground_truth.json -> validated_testset.pkl "
-            "with ayat-anchored multi-granularity gold sets"
+            "with leaf-anchored multi-granularity gold sets (roll-up design)"
         )
     )
     ap.add_argument(

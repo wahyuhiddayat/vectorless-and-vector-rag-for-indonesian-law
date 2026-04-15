@@ -2,8 +2,9 @@
 Ground Truth Collector and Validator.
 
 Validates raw ChatGPT-generated GT files and merges them into a single
-ground_truth.json dataset. The benchmark is ayat-anchored: each accepted
-item must point to exactly one leaf node from data/index_ayat.
+ground_truth.json dataset. The benchmark is leaf-anchored: each accepted
+item must point to exactly one leaf node from data/index_full_split
+(the finest available granularity).
 
 Required fields (hard validation):
   query, reference_mode, gold_node_id, gold_doc_id, navigation_path,
@@ -36,7 +37,7 @@ if sys.stdout.encoding != "utf-8":
 
 RAW_DIR = Path("data/ground_truth_raw")
 GT_FILE = Path("data/ground_truth.json")
-DATA_INDEX = Path("data/index_ayat")
+DATA_INDEX = Path("data/index_full_split")
 
 VALID_QUERY_STYLES = {"formal", "colloquial"}
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
@@ -87,7 +88,7 @@ def find_doc_path(doc_id: str) -> Path | None:
 
 
 def load_doc(doc_id: str) -> dict | None:
-    """Load an ayat-index document from disk with caching."""
+    """Load a full_split-index document from disk with caching."""
     if doc_id in _doc_cache:
         return _doc_cache[doc_id]
 
@@ -102,7 +103,7 @@ def load_doc(doc_id: str) -> dict | None:
 
 
 def get_leaf_meta_map(doc_id: str) -> dict[str, dict]:
-    """Return metadata for all leaf nodes in an ayat-index document."""
+    """Return metadata for all leaf nodes in a full_split-index document."""
     doc = load_doc(doc_id)
     if doc is None:
         return {}
@@ -212,7 +213,7 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
     leaf_map = get_leaf_meta_map(doc_id)
     if not leaf_map:
         hard_errors.append(
-            f"Document '{doc_id}' not found in ayat index - cannot validate anchor node_ids"
+            f"Document '{doc_id}' not found in full_split index - cannot validate anchor node_ids"
         )
         return [], hard_errors, warnings
 
@@ -237,15 +238,15 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
                 f"gold_doc_id mismatch: got '{item.get('gold_doc_id')}', expected '{doc_id}'"
             )
 
-        if item.get("gold_anchor_granularity") != "ayat":
+        if item.get("gold_anchor_granularity") != "full_split":
             item_errors.append(
-                "gold_anchor_granularity must be exactly 'ayat'"
+                "gold_anchor_granularity must be exactly 'full_split'"
             )
 
         anchor_node_id = item.get("gold_anchor_node_id")
         if anchor_node_id and anchor_node_id not in leaf_map:
             item_errors.append(
-                f"gold_anchor_node_id '{anchor_node_id}' not found as leaf node in ayat index"
+                f"gold_anchor_node_id '{anchor_node_id}' not found as leaf node in full_split index"
             )
 
         if anchor_node_id:
@@ -258,7 +259,7 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
 
         if item.get("gold_node_id") != anchor_node_id:
             item_errors.append(
-                "gold_node_id must match gold_anchor_node_id for ayat-anchored GT"
+                "gold_node_id must match gold_anchor_node_id for leaf-anchored GT"
             )
 
         query = (item.get("query") or "").strip()
@@ -301,7 +302,7 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str], list[str]]:
             actual_path = leaf_map[anchor_node_id]["navigation_path"]
             if item.get("navigation_path") != actual_path:
                 item_warnings.append(
-                    "navigation_path does not match ayat index exactly "
+                    "navigation_path does not match full_split index exactly "
                     f"(expected: {actual_path})"
                 )
 
@@ -337,7 +338,7 @@ def load_existing_gt() -> dict:
     # Preserve backward compatibility for older merged files.
     for item in data.values():
         if "gold_anchor_granularity" not in item:
-            item["gold_anchor_granularity"] = "ayat"
+            item["gold_anchor_granularity"] = "full_split"
         if "gold_anchor_node_id" not in item and "gold_node_id" in item:
             item["gold_anchor_node_id"] = item["gold_node_id"]
         if "reference_mode" not in item and "query" in item:
@@ -428,7 +429,7 @@ def print_stats(gt: dict) -> None:
 
 def main() -> None:
     """CLI entrypoint."""
-    ap = argparse.ArgumentParser(description="Validate and merge ayat-anchored GT raw files")
+    ap = argparse.ArgumentParser(description="Validate and merge leaf-anchored GT raw files")
     ap.add_argument(
         "--check-only", action="store_true",
         help="Validate only, do not write output",

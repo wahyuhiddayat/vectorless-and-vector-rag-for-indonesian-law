@@ -2,8 +2,11 @@
 Ground Truth Prompt Generator.
 
 Generates one or more copy-paste prompts for an annotator LLM to create
-self-contained, ayat-anchored ground truth question-answer pairs for
+self-contained, leaf-anchored ground truth question-answer pairs for
 Indonesian legal retrieval evaluation.
+
+Anchors at the finest granularity (full_split index) so that evaluation
+at coarser levels (ayat, pasal) can be derived by rolling UP to parents.
 
 Long documents are split into multiple prompt files automatically so the
 annotator always sees full node text. Leaf nodes are never truncated and
@@ -27,7 +30,7 @@ from pathlib import Path
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-DATA_INDEX = Path("data/index_ayat")
+DATA_INDEX = Path("data/index_full_split")
 TMP_DIR = Path("tmp")
 DEFAULT_PROMPT_CHAR_BUDGET = 45000
 PROMPT_BUDGET_GROWTH = 1.25
@@ -46,7 +49,7 @@ temu kembali (retrieval) dokumen hukum Indonesia.
 Dokumen: {judul}
 doc_id: {doc_id}
 {part_header}
-=== LEAF NODE INDEX AYAT (dikelompokkan per Bab/Bagian) ===
+=== LEAF NODE INDEX (dikelompokkan per Bab/Bagian) ===
 {leaf_blocks_grouped}
 
 === INSTRUKSI UTAMA ===
@@ -58,10 +61,12 @@ dengan `gold_anchor_node_id` di luar node yang muncul pada prompt ini.
 ATURAN WAJIB:
 1. Setiap pertanyaan harus SELF-CONTAINED: harus bisa dipahami sendirian tanpa \
 percakapan atau query sebelumnya.
-2. Setiap pertanyaan harus dijawab oleh TEPAT SATU leaf node pada index ayat \
-(satu ayat anchor). Jika sebuah pasal tidak punya ayat eksplisit dan tetap menjadi \
-leaf di index ayat, leaf tersebut boleh dipakai sebagai anchor.
-3. Jangan buat pertanyaan yang butuh dua atau lebih ayat/pasal.
+2. Setiap pertanyaan harus dijawab oleh TEPAT SATU leaf node (satu anchor). \
+Pilih leaf node PALING SPESIFIK yang tersedia: jika sebuah ayat dipecah menjadi \
+huruf a, b, c, dst., maka anchor harus salah satu huruf tersebut (bukan ayat \
+parent-nya). Jika ayat tidak dipecah lebih lanjut, ayat itu sendiri boleh jadi \
+anchor. Jika pasal tidak punya ayat eksplisit, pasal itu sendiri boleh jadi anchor.
+3. Jangan buat pertanyaan yang butuh dua atau lebih leaf node untuk dijawab.
 4. Nama dokumen BOLEH disebut, tetapi TIDAK WAJIB. Jangan paksa semua pertanyaan \
 menyebut nama dokumen, Pasal, atau ayat.
 5. Pertanyaan boleh menyebut:
@@ -144,8 +149,11 @@ Sebelum mengembalikan JSON final, lakukan pengecekan internal:
 7. Periksa apakah ada gold_anchor_node_id yang sama pada lebih dari satu item. \
    Jika ada duplikat, HAPUS item yang lebih lemah atau ganti anchornya dengan node \
    lain. Setiap gold_anchor_node_id dalam batch ini harus UNIK.
-8. Untuk setiap item berlabel "hard", konfirmasi ada leaf sibling di pasal yang sama \
+8. Untuk setiap item berlabel "hard", konfirmasi ada leaf sibling di parent yang sama \
    yang bisa tertukar. Jika tidak ada, turunkan ke "medium".
+9. Untuk setiap item, periksa apakah gold_anchor_node_id sudah pada granularity \
+   PALING SPESIFIK. Jika leaf node yang dipilih punya sibling huruf/angka, anchor \
+   harus di level huruf/angka, bukan di level ayat/pasal parent-nya.
 
 === JENIS PERTANYAAN (query_style) ===
 
@@ -192,13 +200,13 @@ langsung tanpa membaca keseluruhan node.
 Jawaban tidak ada dalam satu kalimat saja, mungkin ada kondisi atau pengecualian.
    Contoh: "Siapa saja yang dapat dikenai pidana tambahan?"
 
-3. hard - query yang mudah tertukar dengan LEAF NODE SIBLING yang lain di pasal yang \
-sama. WAJIB: Sebelum memberi label "hard", identifikasi leaf node lain di parent pasal \
-yang sama yang bisa menjawab query secara plausibel tapi SALAH. Jika tidak ada sibling \
+3. hard - query yang mudah tertukar dengan LEAF NODE SIBLING yang lain di parent yang \
+sama. WAJIB: Sebelum memberi label "hard", identifikasi leaf node lain di parent yang \
+sama yang bisa menjawab query secara plausibel tapi SALAH. Jika tidak ada sibling \
 yang bisa tertukar, gunakan "medium" saja.
-   CATATAN: Pertanyaan hard tetap harus dijawab oleh SATU ayat anchor.
-   Contoh VALID: Node 0005_a2 vs 0005_a3 sama-sama tentang persyaratan peserta dengan \
-kondisi berbeda — query spesifik ke salah satunya.
+   CATATAN: Pertanyaan hard tetap harus dijawab oleh SATU leaf node anchor.
+   Contoh VALID: Node 0005_a2_h1 vs 0005_a2_h2 sama-sama tentang persyaratan peserta \
+dengan kondisi berbeda — query spesifik ke salah satunya.
    Contoh INVALID: "Hard" hanya karena jawabannya panjang atau banyak item — itu medium.
 
 === FORMAT OUTPUT ===
@@ -211,8 +219,8 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
     "query_style": "formal|colloquial",
     "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
-    "gold_anchor_granularity": "ayat",
-    "gold_anchor_node_id": "node_id leaf index ayat yang menjawab",
+    "gold_anchor_granularity": "full_split",
+    "gold_anchor_node_id": "node_id leaf PALING SPESIFIK yang menjawab",
     "gold_node_id": "sama dengan gold_anchor_node_id",
     "gold_doc_id": "{doc_id}",
     "navigation_path": "navigation_path dari leaf node tersebut",
@@ -226,7 +234,8 @@ seimbang seperti di atas. Benchmark ini untuk retrieval stateless, jadi query \
 harus membantu menguji document discovery, bukan cuma pencocokan kata `Pasal/ayat`. \
 Pastikan semua query self-contained, single-hop, tidak terlalu didominasi explicit legal \
 references, tidak mencakup metadata/pembukaan, dan semua gold node mengacu ke leaf \
-node pada index ayat.
+node PALING SPESIFIK yang tersedia (huruf/angka jika ada, ayat jika tidak dipecah \
+lebih lanjut, pasal jika tidak punya ayat).
 Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 """
 
@@ -308,18 +317,18 @@ def filter_preamble(leaves: list[dict]) -> list[dict]:
 
 def compute_adaptive_n(leaf_count: int) -> int:
     """
-    Compute the adaptive question count based on number of ayat-index leaf nodes.
+    Compute the adaptive question count based on number of full_split-index leaf nodes.
 
     Returns 0 only if leaf_count == 0 (pure preamble / no body content) — skip signal.
 
-    Formula: min(leaf_count, 20)
+    Formula: min(leaf_count, 5)
     - n <= leaf_count guarantees no forced anchor reuse (1 question per leaf at most).
     - Duplicate anchor detection in gt_collect.py catches any ChatGPT errors.
-    - Cap at 20 keeps annotation effort manageable.
+    - Cap at 5 keeps annotation diverse across many document types (dosbing directive).
     """
     if leaf_count == 0:
         return 0
-    return min(leaf_count, 20)
+    return min(leaf_count, 5)
 
 
 def section_name(leaf: dict) -> str:
@@ -529,11 +538,11 @@ def list_available_docs() -> None:
 
 def main() -> None:
     """CLI entrypoint."""
-    ap = argparse.ArgumentParser(description="Generate ayat-anchored GT prompt for ChatGPT")
+    ap = argparse.ArgumentParser(description="Generate leaf-anchored GT prompt for ChatGPT")
     ap.add_argument("doc_id", nargs="?", help="Document ID (e.g. perpu-1-2016)")
     ap.add_argument(
         "--questions", "-q", type=int, default=None,
-        help="Override question count (default: adaptive min(leaf_count, 20), skips docs with < 5 body leaves)",
+        help="Override question count (default: adaptive min(leaf_count, 5), skips docs with < 5 body leaves)",
     )
     ap.add_argument(
         "--out", "-o", type=str, default=None,
@@ -586,7 +595,7 @@ def main() -> None:
 
     print(f"\nDokumen    : {doc['judul'][:80]}")
     print(f"doc_id     : {doc['doc_id']}")
-    print(f"Leaf nodes : {len(leaf_nodes)} ayat-index leaf nodes")
+    print(f"Leaf nodes : {len(leaf_nodes)} full_split-index leaf nodes")
     print(f"Target N   : {n_used} pertanyaan (adaptive: {adaptive_n})", end="")
     if args.questions is not None:
         print(f"  [override: --questions {args.questions}]", end="")

@@ -333,7 +333,11 @@ for name, fn in strategies.items():
 
 ## 6. Ground Truth Workflow
 
-Ground truth annotation now uses **ayat-index leaves as the semantic anchor**.
+Ground truth annotation uses **full_split-index leaves as the semantic anchor**
+(the finest available granularity: huruf, angka, or ayat/pasal if no finer split
+exists). Gold sets for coarser granularities (ayat, pasal) are derived by
+**rolling UP** to parent nodes via prefix lookup.
+
 Each benchmark query must be **self-contained**: vague wording is allowed, but
 context-dependent/coreferential queries are not part of the main benchmark.
 The main benchmark is also intentionally limited to **single-hop retrieval over
@@ -341,7 +345,7 @@ body text**: substantive pasal/ayat content and closing provisions in the body
 are in scope, while top-level metadata and preamble sections
 (`Pembukaan` / `Menimbang` / `Mengingat` / `Menetapkan`) are out of scope.
 If answering a query requires combining information from more than one
-ayat/pasal, the query is invalid for the main GT and should be treated as a
+leaf node, the query is invalid for the main GT and should be treated as a
 future secondary benchmark instead.
 The main benchmark should also use a **balanced mix** of query reference styles:
 no legal reference, legal reference only, document only, and both.
@@ -354,7 +358,7 @@ By default, `gt_prompt.py` now writes either:
 Long GT prompts are no longer built by truncating node text.
 
 ```bash
-# List available documents from data/index_ayat
+# List available documents from data/index_full_split
 python scripts/gt_prompt.py --list
 
 # Generate prompt for ChatGPT/Claude
@@ -371,7 +375,7 @@ python scripts/gt_collect.py --check-only
 # Merge validated items
 python scripts/gt_collect.py
 
-# Build multi-granularity evaluation testset
+# Build multi-granularity evaluation testset (roll-up: full_split -> ayat -> pasal)
 python scripts/finalize_gt.py
 
 # Inspect the final pickle
@@ -383,19 +387,18 @@ python scripts/evaluate_vectorless.py --doc-id permenaker-1-2026 --query-limit 5
 python scripts/evaluate_vectorless.py --systems bm25-flat,hybrid --granularities ayat
 ```
 
-Semantics of `validated_testset.pkl`:
+Semantics of `validated_testset.pkl` (roll-up design):
 
 - `reference_mode` - one of `none`, `legal_ref`, `doc_only`, `both`
-- `gold_pasal_node_ids` - parent pasal of the correct ayat anchor
-- `gold_ayat_node_ids` - exact ayat anchor
-- `gold_full_split_node_ids` - descendant leaves under that ayat anchor in `index_full_split`
+- `gold_full_split_node_ids` - exact anchor (1 node, finest granularity)
+- `gold_ayat_node_ids` - derived parent in ayat index (1 node)
+- `gold_pasal_node_ids` - derived parent in pasal index (1 node)
 
-This keeps retrieval-method comparisons fair while making pasal vs ayat vs
-full_split evaluation sharper than the older pasal-anchored scheme. Mentioning
-the document name is optional; the important rule is that each query stays
-self-contained, single-hop, and answerable by one ayat anchor. Older GT batches that were
-generated under a more restrictive prompt should be regenerated before being
-treated as the final main benchmark.
+Every granularity has exactly 1 gold node per question, ensuring fair evaluation:
+harder at finer granularity (larger corpus, same single target). The anchor is
+always the most specific leaf available (huruf/angka if the pasal is split that
+deep, otherwise ayat or pasal). Each query stays self-contained, single-hop, and
+answerable by one leaf node.
 
 ---
 
