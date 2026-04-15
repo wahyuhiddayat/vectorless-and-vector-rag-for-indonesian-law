@@ -297,12 +297,15 @@ def collect_leaf_nodes(
         if "nodes" in node and node["nodes"]:
             collect_leaf_nodes(node["nodes"], results, parent_path=node_path)
         elif node.get("text"):
-            results.append({
+            leaf = {
                 "node_id": node["node_id"],
                 "title": node.get("title", ""),
                 "navigation_path": node_path,
                 "text": node["text"].strip(),
-            })
+            }
+            if node.get("penjelasan"):
+                leaf["penjelasan"] = node["penjelasan"].strip()
+            results.append(leaf)
     return results
 
 
@@ -341,12 +344,16 @@ def section_name(leaf: dict) -> str:
 
 def render_leaf_block(leaf: dict) -> str:
     """Render one full, untruncated leaf block for the prompt."""
-    return (
+    block = (
         f"[node_id: {leaf['node_id']}]\n"
         f"Judul: {leaf['title']}\n"
         f"Path: {leaf['navigation_path']}\n"
         f"Teks:\n{leaf['text']}"
     )
+    penjelasan = leaf.get("penjelasan", "")
+    if penjelasan and penjelasan.strip().lower().rstrip(".") != "cukup jelas":
+        block += f"\nPenjelasan:\n{penjelasan}"
+    return block
 
 
 def render_grouped_blocks(leaf_nodes: list[dict]) -> str:
