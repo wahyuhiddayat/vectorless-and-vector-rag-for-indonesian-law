@@ -31,12 +31,12 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval_vectorless_worker.py"
 
-SYSTEMS = ["bm25-flat", "hybrid", "llm-stepwise", "llm-full"]
+SYSTEMS = ["bm25-flat", "hybrid", "hybrid-flat", "llm-stepwise", "llm-full"]
 GRANULARITIES = ["pasal", "ayat", "full_split"]
 DEFAULT_CUTOFFS = [1, 3, 5, 10]
 # Seconds to sleep between queries for systems that make Gemini calls during retrieval
 LLM_INTER_QUERY_DELAY_S = 3
-LLM_SYSTEMS = {"hybrid", "llm-stepwise", "llm-full"}
+LLM_SYSTEMS = {"hybrid", "hybrid-flat", "llm-stepwise", "llm-full"}
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
     "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
@@ -51,7 +51,7 @@ GOLD_KEY_BY_GRANULARITY = {
     "full_split": "gold_full_split_node_ids",
 }
 SLICE_FIELDS = ["reference_mode", "query_style", "difficulty", "gold_doc_id"]
-PROCESS_TIMEOUT_S = 600
+PROCESS_TIMEOUT_S = 900
 
 
 def parse_csv_list(raw: str | None, default: list[str]) -> list[str]:
@@ -221,6 +221,7 @@ def run_worker(system: str, granularity: str, query: str, top_k: int, timeout_s:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",  # replace non-UTF-8 bytes instead of crashing
             timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
@@ -234,8 +235,8 @@ def run_worker(system: str, granularity: str, query: str, top_k: int, timeout_s:
         stderr = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
         return payload, stdout, stderr
 
-    stdout = proc.stdout.strip()
-    stderr = proc.stderr.strip()
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
 
     if not stdout:
         return None, stdout, stderr or f"Worker exited with code {proc.returncode}"
@@ -336,6 +337,7 @@ def build_per_query_record(
         "output_tokens": metrics.get("output_tokens", 0),
         "total_tokens": metrics.get("total_tokens", 0),
         "elapsed_s": metrics.get("elapsed_s", 0.0),
+        "step_metrics": metrics.get("step_metrics", {}),
     }
     record.update(retrieval_metrics)
     record.update(answer_metrics)

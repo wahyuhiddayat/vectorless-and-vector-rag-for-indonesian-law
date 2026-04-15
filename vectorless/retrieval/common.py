@@ -61,20 +61,33 @@ def _get_client():
     return _client
 
 
-def llm_call(prompt: str, max_retries: int = 5) -> dict:
-    """Send prompt to Gemini 2.5 Flash, return parsed JSON."""
+def llm_call(prompt: str, max_retries: int = 3) -> dict:
+    """Send prompt to Gemini 2.5 Flash, return parsed JSON.
+
+    max_retries is 3 (down from 5) so that worst-case accumulated wait time
+    (90s call + 5s + 90s + 10s + 90s = ~285s) stays well under the 600s
+    subprocess timeout used by the evaluation harness.
+    """
     global _total_input_tokens, _total_output_tokens, _total_calls
     client = _get_client()
 
     _RETRYABLE = ("rate", "429", "503", "500", "quota", "resource_exhausted",
-                  "deadline_exceeded", "service unavailable", "overloaded")
+                  "deadline_exceeded", "service unavailable", "overloaded",
+                  "timeout", "timed out", "connection")
 
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
+            # gemini-2.5-flash with thinking_budget=0 disables the thinking phase,
+            # giving fast responses (~5-15s) comparable to 2.0-flash while staying
+            # on the latest model. (gemini-2.0-flash is deprecated for new users.)
+            from google.genai import types as _genai_types
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
+                config=_genai_types.GenerateContentConfig(
+                    thinking_config=_genai_types.ThinkingConfig(thinking_budget=0)
+                ),
             )
             # Track tokens
             usage = response.usage_metadata
@@ -93,7 +106,8 @@ def llm_call(prompt: str, max_retries: int = 5) -> dict:
             except json.JSONDecodeError as json_err:
                 last_exc = json_err
                 if attempt < max_retries - 1:
-                    wait = min(300, 15 * (2 ** attempt)) + random.uniform(0, 10)
+                    # Start at 5s (was 15s) so 3 retries fit within 600s subprocess budget.
+                    wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                     sys.stderr.write(f"  Gemini returned non-JSON (attempt {attempt+1}), retrying in {wait:.0f}s...\n")
                     time.sleep(wait)
                     continue
@@ -105,7 +119,7 @@ def llm_call(prompt: str, max_retries: int = 5) -> dict:
             last_exc = e
             err = str(e).lower()
             if any(tok in err for tok in _RETRYABLE) and attempt < max_retries - 1:
-                wait = min(300, 15 * (2 ** attempt)) + random.uniform(0, 10)
+                wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                 sys.stderr.write(f"  Gemini error (attempt {attempt+1}): {e!r} — retrying in {wait:.0f}s...\n")
                 time.sleep(wait)
             else:
@@ -129,6 +143,33 @@ def get_token_stats() -> dict:
         "input_tokens": _total_input_tokens,
         "output_tokens": _total_output_tokens,
         "total_tokens": _total_input_tokens + _total_output_tokens,
+    }
+
+
+def snapshot_token_counters() -> dict:
+    """Snapshot current token counters for delta computation.
+
+    Use with compute_step_metrics() to measure per-step LLM usage:
+        snap = snapshot_token_counters()
+        t = time.time()
+        # ... do work ...
+        step = compute_step_metrics(t, snap)
+    """
+    return {
+        "llm_calls": _total_calls,
+        "input_tokens": _total_input_tokens,
+        "output_tokens": _total_output_tokens,
+    }
+
+
+def compute_step_metrics(t_start: float, snap_before: dict) -> dict:
+    """Compute elapsed time and token deltas since snapshot."""
+    snap_after = snapshot_token_counters()
+    return {
+        "elapsed_s": round(time.time() - t_start, 3),
+        "llm_calls": snap_after["llm_calls"] - snap_before["llm_calls"],
+        "input_tokens": snap_after["input_tokens"] - snap_before["input_tokens"],
+        "output_tokens": snap_after["output_tokens"] - snap_before["output_tokens"],
     }
 
 
@@ -195,6 +236,43 @@ def load_all_leaf_nodes() -> list[dict]:
             })
 
     return all_leaves
+
+
+# ============================================================
+# TEXT HELPERS
+# ============================================================
+
+def extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
+    """Extract keyword-in-context snippet around the best query term match.
+
+    Instead of blindly taking the first 300 chars (which misses relevant content
+    deep in long Pasal like Pasal 1 with 57 definitions), find where the query
+    keywords actually appear and extract text around that position.
+    """
+    text_lower = text.lower()
+    query_tokens = tokenize(query)
+
+    # Find the position of the best-matching query term
+    best_pos = -1
+    for token in query_tokens:
+        pos = text_lower.find(token)
+        if pos != -1 and (best_pos == -1 or pos < best_pos):
+            best_pos = pos
+
+    if best_pos == -1:
+        # No keyword found — fall back to start of text
+        snippet = text[:window * 2]
+    else:
+        # Extract window around the match
+        start = max(0, best_pos - window)
+        end = min(len(text), best_pos + window)
+        snippet = text[start:end]
+        if start > 0:
+            snippet = "..." + snippet
+        if end < len(text):
+            snippet += "..."
+
+    return snippet
 
 
 # ============================================================

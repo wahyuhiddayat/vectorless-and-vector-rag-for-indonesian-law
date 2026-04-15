@@ -21,6 +21,7 @@ from rank_bm25 import BM25Okapi
 
 from ..common import (
     tokenize, reset_token_counters, get_token_stats,
+    snapshot_token_counters, compute_step_metrics,
     load_all_leaf_nodes, generate_answer_multi_doc, save_log,
 )
 
@@ -89,6 +90,7 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     """
     reset_token_counters()
     t_start = time.time()
+    step_metrics = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -96,20 +98,27 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         print(f"Strategy: bm25-flat (top_k={top_k})")
         print(f"{'='*60}")
 
-    # Step 1: Load all leaf nodes from all documents
+    # Step 1: Load all leaf nodes + BM25 search
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     leaves = load_all_leaf_nodes()
     if verbose:
         print(f"\nCorpus: {len(leaves)} leaf nodes from all documents")
 
-    # Step 2: Flat BM25 search
     results = flat_search(query, leaves, top_k=top_k, verbose=verbose)
+    step_metrics["bm25_search"] = compute_step_metrics(t_step, snap)
 
     if not results:
         return {"query": query, "strategy": "bm25-flat",
                 "error": "No results found"}
 
-    # Step 3: Generate answer (multi-doc)
+    # Step 2: Generate answer (multi-doc)
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     answer_result = generate_answer_multi_doc(query, results, verbose=verbose)
+    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
     # Build sources
     sources = []
@@ -133,7 +142,7 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
     }
 
     save_log(result)

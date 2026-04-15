@@ -249,6 +249,52 @@ def check_preamble(structure: list[dict]) -> list[str]:
     return issues
 
 
+def check_amendment_scaffold(doc: dict) -> list[str]:
+    """Validate Pasal I -> Angka -> content scaffolding for amendment documents."""
+    judul = doc.get("judul", "")
+    if not re.search(r'\bPERUBAHAN\b', judul, re.IGNORECASE):
+        return []
+
+    structure = doc.get("structure", [])
+    body_nodes = [node for node in structure if node.get("title") != "Pembukaan"]
+    if not body_nodes:
+        return []
+
+    roman_re = re.compile(r'^Pasal\s+[IVXLC]+\b', re.IGNORECASE)
+    roman_positions = [i for i, node in enumerate(body_nodes) if roman_re.match(node.get("title", ""))]
+
+    if not roman_positions:
+        return ['Amendment scaffold: no Pasal Roman root detected in body']
+
+    issues = []
+    first_roman_idx = roman_positions[0]
+    first_roman = body_nodes[first_roman_idx]
+    first_roman_title = first_roman.get("title", "")
+
+    if first_roman_title != "Pasal I":
+        issues.append(f'Amendment scaffold: first Roman root is "{first_roman_title}", expected "Pasal I"')
+
+    prefix_nodes = body_nodes[:first_roman_idx]
+    if prefix_nodes:
+        leaked = ", ".join(node.get("title", "?") for node in prefix_nodes[:3])
+        issues.append(
+            f'Amendment scaffold: {len(prefix_nodes)} root node(s) appear before the first Roman root ({leaked})'
+        )
+
+    first_roman_children = first_roman.get("nodes", [])
+    direct_structural_children = [
+        child for child in first_roman_children
+        if not re.match(r'^Angka\s+\d+\b', child.get("title", ""))
+    ]
+    if direct_structural_children:
+        leaked = ", ".join(child.get("title", "?") for child in direct_structural_children[:3])
+        issues.append(
+            f'Amendment scaffold: Pasal I has direct structural child nodes without Angka wrappers ({leaked})'
+        )
+
+    return issues
+
+
 def categorize_warnings(warnings: list[str]) -> dict:
     """Categorize parser warnings by type based on keyword matching.
 
@@ -376,10 +422,16 @@ def verify_doc(doc: dict) -> dict:
         issues.extend(preamble_issues)
         status_issues.extend(preamble_issues)
 
+    amendment_issues = check_amendment_scaffold(doc)
+    checks["amendment_scaffold_issues"] = len(amendment_issues)
+    if amendment_issues:
+        issues.extend(amendment_issues)
+        status_issues.extend(amendment_issues)
+
     # Determine overall status from issue severity.
     if empty_text or dupes or len(boundary_issues) > 0:
         status = "FAIL"
-    elif len(warnings) > 0 or ocr_leaks > 0 or len(preamble_issues) > 0:
+    elif len(warnings) > 0 or ocr_leaks > 0 or len(preamble_issues) > 0 or len(amendment_issues) > 0:
         status = "WARN"
     else:
         status = "OK"

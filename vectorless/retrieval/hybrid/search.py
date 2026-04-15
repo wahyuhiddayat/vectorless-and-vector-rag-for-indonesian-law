@@ -25,8 +25,9 @@ from rank_bm25 import BM25Okapi
 
 from ..common import (
     tokenize, llm_call, reset_token_counters, get_token_stats,
+    snapshot_token_counters, compute_step_metrics,
     load_catalog, load_doc, find_node, extract_nodes,
-    generate_answer, save_log, DATA_INDEX,
+    extract_kwic_snippet, generate_answer, save_log, DATA_INDEX,
 )
 
 
@@ -103,6 +104,10 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
     bm25_ids = [r["doc_id"] for r in bm25_results]
     llm_ids = llm_result.get("doc_ids", [])
 
+    # Guard against LLM hallucinating doc_ids not in the catalog.
+    valid_ids = {d["doc_id"] for d in catalog}
+    llm_ids = [doc_id for doc_id in llm_ids if doc_id in valid_ids]
+
     # Union: LLM picks first (semantic priority), then BM25 additions
     seen = set()
     merged_ids = []
@@ -150,40 +155,6 @@ def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
     return leaves
 
 
-def _extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
-    """Extract keyword-in-context snippet around the best query term match.
-
-    Instead of blindly taking the first 300 chars (which misses relevant content
-    deep in long Pasal like Pasal 1 with 57 definitions), find where the query
-    keywords actually appear and extract text around that position.
-    """
-    text_lower = text.lower()
-    query_tokens = tokenize(query)
-
-    # Find the position of the best-matching query term
-    best_pos = -1
-    for token in query_tokens:
-        pos = text_lower.find(token)
-        if pos != -1 and (best_pos == -1 or pos < best_pos):
-            # Prefer earlier match, but any match is better than none
-            best_pos = pos
-
-    if best_pos == -1:
-        # No keyword found — fall back to start of text
-        snippet = text[:window * 2]
-    else:
-        # Extract window around the match
-        start = max(0, best_pos - window)
-        end = min(len(text), best_pos + window)
-        snippet = text[start:end]
-        if start > 0:
-            snippet = "..." + snippet
-        if end < len(text):
-            snippet += "..."
-
-    return snippet
-
-
 def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
     """BM25 retrieval on leaf node texts. Returns top-K candidates with scores."""
     leaves = _collect_leaf_nodes(doc["structure"])
@@ -206,7 +177,7 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
     for idx, score in ranked[:top_k]:
         if score > 0:
             leaf = leaves[idx]
-            snippet = _extract_kwic_snippet(leaf["text"], query)
+            snippet = extract_kwic_snippet(leaf["text"], query)
             candidates.append({
                 "node_id": leaf["node_id"],
                 "title": leaf["title"],
@@ -317,6 +288,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     """
     reset_token_counters()
     t_start = time.time()
+    step_metrics = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -325,25 +297,36 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         print(f"{'='*60}")
 
     # Step 1: Hybrid doc search
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     catalog = load_catalog()
     doc_result = doc_search(query, catalog, verbose=verbose)
     doc_ids = doc_result.get("doc_ids", [])
+    step_metrics["doc_search"] = compute_step_metrics(t_step, snap)
 
     if not doc_ids:
         return {"query": query, "strategy": "hybrid", "error": "No relevant documents found"}
 
     # Step 2: Hybrid node search (on first relevant doc)
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     doc_id = doc_ids[0]
     doc = load_doc(doc_id)
 
     node_result = node_search(query, doc, bm25_top_k=bm25_top_k, verbose=verbose)
     node_ids = node_result.get("node_ids", [])
+    step_metrics["node_search"] = compute_step_metrics(t_step, snap)
 
     if not node_ids:
         return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
     # Step 3: Extract text and generate answer
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
@@ -352,6 +335,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
+    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
     # Build sources with BM25 scores
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
@@ -376,7 +360,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
     }
 
     save_log(result)

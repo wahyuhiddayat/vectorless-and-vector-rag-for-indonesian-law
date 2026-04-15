@@ -581,6 +581,9 @@ def _clean_penjelasan_text(text: str) -> str:
     # Stacked bare "Pasal" or "Ayat" lines are always OCR column artifacts —
     # valid occurrences are always followed by a number or "(N)".
     text = re.sub(r'(?:^(?:Pasal|Pasa1|Ayat)\s*\n){2,}', '', text, flags=re.MULTILINE)
+    # Trailing "Angka N" section headers from amendment docs: the penjelasan is split at
+    # "Pasal X" boundaries, so the "Angka N" label preceding the next Pasal can bleed in.
+    text = re.sub(r'(\s*\nAngka\s+\d+)+\s*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -663,8 +666,8 @@ LEVEL_MAP = {
 
 # Roman numeral Pasal headings in Perubahan UUs (Pasal I, II, III, ...).
 PASAL_ROMAN = re.compile(
-    r'^[Pp]asa[l1]\s+([IVXLC]+)\s*$',
-    re.MULTILINE
+    r'^[Pp]asa[l1]\s*([IVXLCivxlc1l]+)\s*$',
+    re.MULTILINE | re.IGNORECASE
 )
 
 # Numbered amendment instructions in Perubahan documents, e.g. "76. Ketentuan Pasal 88 diubah..."
@@ -684,11 +687,12 @@ ANGKA_PATTERN = re.compile(
     r'((?:Ketentuan\s+)?'                       # optional "Ketentuan " prefix
     r'(?:'
     r'(?:Pasal|Bagian|Bab|Di\s+antara)\b'       # form 1/6: direct structural keyword
-    r'|(?:(?:huruf|ayat|Ayat)\b[^.\n]*?(?:Pasal|Bagian)\b)'  # form 2/3: qualifier then Pasal/Bagian
+    r'|(?:(?:huruf|ayat|Ayat)\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian)\b)'  # form 2/3
+    r'|(?:Penjelasan\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian|Bab)\b)'       # explanation amendment
     r'|(?:Judul\s+(?:Paragraf|Bagian|Bab)\b)'               # form 4: heading rename
     r'|(?:Setelah\s+(?:Pasal|Paragraf|Bagian|Bab)\b)'       # form 5: insertion after heading
     r')'
-    r'[^\n]*)',                                 # rest of first line
+    r'[^\n]*(?:\n(?!\s*\d+\.)\s*[^\n]*){0,2})', # rest of instruction headline
     re.MULTILINE
 )
 
@@ -697,11 +701,17 @@ ANGKA_PATTERN = re.compile(
 # Covers the same instruction forms as ANGKA_PATTERN but without the "N. " prefix.
 _ORPHAN_INSTR_FIRST_RE = re.compile(
     r'^(?:Ketentuan\b'
+    r'|Penjelasan\b'
     r'|Judul\s+(?:Paragraf|Bagian|Bab)\b'
     r'|Di\s+antara\b'
     r'|Setelah\s+(?:Pasal|Paragraf|Bagian|Bab)\b)',
     re.MULTILINE,
 )
+
+
+def _normalize_roman_heading_token(token: str) -> str:
+    """Normalize OCR-confused Roman heading tokens like 'l' or '1' into 'I'."""
+    return (token or "").strip().replace("l", "I").replace("1", "I").upper()
 
 def roman_to_int(s: str) -> int | None:
     """Convert a Roman numeral string to an integer.
@@ -709,9 +719,9 @@ def roman_to_int(s: str) -> int | None:
     Returns None if the input is empty or contains non-Roman characters.
     """
     values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
-    if not s or not all(c in values for c in s.upper()):
+    s = _normalize_roman_heading_token(s)
+    if not s or not all(c in values for c in s):
         return None
-    s = s.upper()
     total = 0
     # Accumulate value left to right, subtracting where a smaller numeral precedes a larger one.
     for i, c in enumerate(s):
@@ -800,7 +810,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
     if is_perubahan:
         # Collect root-level article headings (Pasal I, II, III) that structure the amendment.
         for m in PASAL_ROMAN.finditer(text):
-            roman_str = m.group(1).strip()
+            roman_str = _normalize_roman_heading_token(m.group(1))
             arabic_val = roman_to_int(roman_str)
             if arabic_val is None:
                 continue
@@ -826,6 +836,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
                 "page_num": page_num,
                 "char_offset": m.start(),
             })
+
 
     # Collect BAB, Bagian, Paragraf, and Pasal headings present in all document types.
     for m in PATTERNS["bab"].finditer(text):
@@ -900,6 +911,28 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
       keeping the entry with the longer title (the complete instruction from the second page).
     """
     deduped = []
+    first_real_roman_idx = next((i for i, e in enumerate(elements) if e["type"] == "pasal_roman"), None)
+    if first_real_roman_idx not in (None, 0):
+        first_real_roman = elements[first_real_roman_idx]
+        first_real_roman_num = roman_to_int(first_real_roman.get("number", ""))
+        if first_real_roman_num and first_real_roman_num > 1:
+            anchor_idx = next(
+                (
+                    i for i, elem in enumerate(elements[:first_real_roman_idx])
+                    if elem["type"] in {"angka", "pasal", "bab", "bagian", "paragraf"}
+                ),
+                None,
+            )
+            if anchor_idx is not None:
+                anchor = elements[anchor_idx]
+                elements = elements[:anchor_idx] + [{
+                    "type": "pasal_roman",
+                    "level": LEVEL_MAP["pasal_roman"],
+                    "number": "I",
+                    "title": "Pasal I",
+                    "page_num": anchor["page_num"],
+                    "char_offset": anchor["char_offset"],
+                }] + elements[anchor_idx:]
     roman_positions = {(e["page_num"], e["char_offset"]) for e in elements if e["type"] == "pasal_roman"}
     first_roman = next(((e["page_num"], e["char_offset"]) for e in elements if e["type"] == "pasal_roman"), None)
 
@@ -1593,7 +1626,7 @@ def _split_by_first_pasal_ref(body: str) -> tuple[str | None, str | None]:
     starting with an optional number followed by "Pasal N".
     Returns (menimbang, mengingat) or (None, None) if not found.
     """
-    mengingat_m = re.search(r'\n((?:\d+\.\s+)?Pasal\s+\d+)', body)
+    mengingat_m = re.search(r'\n(\d+\.\s+Pasal\s+\d+)', body)
     if not mengingat_m:
         return None, None
     return body[:mengingat_m.start()].strip(), body[mengingat_m.start():].strip()
@@ -1891,6 +1924,10 @@ _AMENDMENT_SPILLOVER_PATTERNS = [
     re.compile(r'\n\s*\d+\.\s+Setelah\b[\s\S]*$', re.IGNORECASE),
     re.compile(r'\n\s*Ketentuan\s+(?:Pasal|ayat|huruf)\b[\s\S]*$', re.IGNORECASE),
     re.compile(r'\n\s*Di\s+antara\s+Pasal\b[\s\S]*$', re.IGNORECASE),
+    # Cross-line: number and "Ketentuan" split across PDF lines by OCR e.g. "5.\nKetentuan..."
+    re.compile(r'\n\s*\d+\.\s*\n\s*Ketentuan\s+(?:Pasal|ayat|huruf)\b[\s\S]*$', re.IGNORECASE),
+    # Roman-numeral closing articles that bleed into last ayat of amendment docs
+    re.compile(r'\n\s*PASAL\s+[IVX]+\s*\n[\s\S]*$', re.IGNORECASE),
 ]
 
 
@@ -1909,6 +1946,22 @@ def _dedupe_repeated_heading(text: str, title: str | None) -> str:
         count=1,
         flags=re.IGNORECASE,
     )
+
+
+def _strip_leading_title(text: str, title: str | None) -> str:
+    """Remove the node's own title if it appears as the very first line of text.
+
+    OCR output often starts with the heading text (e.g. "Pasal 1\\n...") even
+    though the heading is already captured in the node's title field.  This
+    function removes that redundant first-line heading when present.
+    """
+    if not title:
+        return text
+    words = title.strip().split()
+    if not words:
+        return text
+    pattern = r'^\s*' + r'\s+'.join(re.escape(w) for w in words) + r'\s*\n'
+    return re.sub(pattern, '', text, count=1, flags=re.IGNORECASE)
 
 
 def _trim_amendment_spillover(text: str, title: str | None) -> str:
@@ -1946,6 +1999,7 @@ def _normalize_leaf_text(text: str, title: str | None = None) -> str:
         cleaned = pat.sub('', cleaned)
     cleaned = _CLOSING_TEXT_RE.sub('', cleaned)
     cleaned = _dedupe_repeated_heading(cleaned, title)
+    cleaned = _strip_leading_title(cleaned, title)
     cleaned = _trim_amendment_spillover(cleaned, title)
     cleaned = _trim_trailing_structural_heading(cleaned, title)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
@@ -2363,12 +2417,20 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         else:
             log.info(f"total time: {total_time:.1f}s")
 
+    # Normalize leaf text before splitting so that title-stripping (Fix C) and
+    # spillover trimming are applied to the pasal-level text first.  When LLM
+    # cleanup ran, strip_ocr_headers was already called inside apply_llm_cleanup;
+    # calling it again here is a no-op.  When --no-llm is used this is the first
+    # (and only) pre-split normalization pass.
+    strip_ocr_headers(output_nodes)
+
     # Split Pasal leaves into finer sub-nodes based on the requested granularity.
     if granularity == "ayat":
         output_nodes = ayat_split_leaves(output_nodes)
     elif granularity == "full_split":
         output_nodes = deep_split_leaves(output_nodes)
 
+    # Second pass: normalize any text on the newly-created child nodes.
     strip_ocr_headers(output_nodes)
 
     # Only store penjelasan at the document level if no Pasal nodes were matched.
@@ -2417,6 +2479,29 @@ _ANGKA_ITEM_RE = re.compile(r'(?:^|\n)(\d+)\.\s', re.MULTILINE)
 _PENJ_AYAT_RE = re.compile(r'Ayat\s*\((\d+)\)\s*\n', re.MULTILINE)
 _PENJ_HURUF_RE = re.compile(r'Huruf\s+([a-z])\s*\n', re.MULTILINE)
 
+# Words that, when appearing at the end of the line immediately before a marker,
+# indicate the marker is part of an inline cross-line reference rather than a
+# structural marker.  Example: "dimaksud pada ayat\n(1) harus" — the "(1)" here
+# is a reference, not the start of Ayat 1.
+_INLINE_REF_PREV_WORDS = frozenset(['ayat', 'pasal', 'huruf', 'angka', 'pada', 'di'])
+
+
+def _is_inline_ref(text: str, match: re.Match) -> bool:
+    """Return True if this marker match is a cross-line inline reference.
+
+    Detects cases where OCR/PDF line-wrapping splits an inline reference such as
+    "dimaksud pada ayat\\n(1) harus" — the "\\n(1)" looks like an Ayat marker but
+    is actually a continuation of the previous line's reference.
+    """
+    nl_pos = text.rfind('\n', 0, match.start() + 1)
+    if nl_pos == -1:
+        return False  # match is at the very start of text
+    prev_nl = text.rfind('\n', 0, nl_pos)
+    prev_line = text[prev_nl + 1: nl_pos].strip().lower()
+    last_word = prev_line.split()[-1] if prev_line.split() else ''
+    return last_word in _INLINE_REF_PREV_WORDS
+
+
 def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: str) -> list[tuple[int, str]] | None:
     """Find structural markers in text and verify they form a consecutive sequence.
 
@@ -2424,7 +2509,7 @@ def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: s
     or numbers 1, 2, 3). Returns a list of (char_pos, label) tuples if at least two
     consecutive markers are found, or None otherwise.
     """
-    matches = list(pattern.finditer(text))
+    matches = [m for m in pattern.finditer(text) if not _is_inline_ref(text, m)]
     if len(matches) < 2:
         return None
 
@@ -2549,6 +2634,8 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     sub_nodes = []
     # Build one Ayat sub-node for each matched segment.
     for i, (label, segment) in enumerate(segments, 1):
+        # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
+        segment = re.sub(r'^\(\d+\)\s*', '', segment)
         sub_id = f"{parent_id}_a{i}"
         sub_title = f"{parent_title} Ayat ({label})"
         node: dict = {
@@ -2622,6 +2709,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         sub_nodes = []
         # Build one Ayat sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
+            # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
+            segment = re.sub(r'^\(\d+\)\s*', '', segment)
             sub_id = f"{parent_id}_a{i}"
             sub_title = f"{parent_title} Ayat ({label})"
             children = _try_deep_split(
@@ -2652,6 +2741,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         sub_nodes = []
         # Build one Huruf sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
+            # Strip the leading "x. " huruf marker that _split_text_by_markers keeps.
+            segment = re.sub(r'^[a-z]\.\s*', '', segment)
             sub_id = f"{parent_id}_h{i}"
             sub_title = f"{parent_title} Huruf {label}"
             children = _try_deep_split(
@@ -2682,6 +2773,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         sub_nodes = []
         # Angka is the deepest level; build leaf nodes without recursing further.
         for i, (label, segment) in enumerate(segments, 1):
+            # Strip the leading "N. " angka marker that _split_text_by_markers keeps.
+            segment = re.sub(r'^\d+\.\s*', '', segment)
             sub_id = f"{parent_id}_n{i}"
             sub_title = f"{parent_title} Angka {label}"
             sub_nodes.append({

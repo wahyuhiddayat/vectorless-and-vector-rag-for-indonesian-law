@@ -20,6 +20,7 @@ import time
 
 from ..common import (
     llm_call, reset_token_counters, get_token_stats,
+    snapshot_token_counters, compute_step_metrics,
     load_catalog, load_doc, find_node, extract_nodes,
     generate_answer, save_log,
 )
@@ -59,6 +60,10 @@ Aturan:
 """
 
     result = llm_call(prompt)
+
+    # Guard against LLM hallucinating doc_ids not in the catalog.
+    valid_ids = {d["doc_id"] for d in catalog}
+    result["doc_ids"] = [doc_id for doc_id in result.get("doc_ids", []) if doc_id in valid_ids]
 
     if verbose:
         print(f"\n[Doc Search] Selected: {result.get('doc_ids', [])}")
@@ -270,6 +275,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
     """Full LLM retrieval pipeline: doc search → tree search → answer."""
     reset_token_counters()
     t_start = time.time()
+    step_metrics = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -278,14 +284,21 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         print(f"{'='*60}")
 
     # Step 1: Doc search
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     catalog = load_catalog()
     doc_result = doc_search(query, catalog, verbose=verbose)
     doc_ids = doc_result.get("doc_ids", [])
+    step_metrics["doc_search"] = compute_step_metrics(t_step, snap)
 
     if not doc_ids:
         return {"query": query, "strategy": f"llm-{strategy}", "error": "No relevant documents found"}
 
     # Step 2: Tree search
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     doc_id = doc_ids[0]
     doc = load_doc(doc_id)
 
@@ -295,12 +308,16 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         tree_result = tree_search_stepwise(query, doc, verbose=verbose)
 
     node_ids = tree_result.get("node_ids", [])
+    step_metrics["tree_search"] = compute_step_metrics(t_step, snap)
 
     if not node_ids:
         return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
     # Step 3: Extract text and generate answer
+    snap = snapshot_token_counters()
+    t_step = time.time()
+
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
@@ -309,6 +326,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
 
     doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
+    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
     # Build sources
     sources = []
@@ -331,7 +349,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
     }
 
     save_log(result)
