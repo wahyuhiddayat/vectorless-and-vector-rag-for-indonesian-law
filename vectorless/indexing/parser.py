@@ -686,9 +686,9 @@ ANGKA_PATTERN = re.compile(
     r'^(\d+)\.\s*'                              # number + period at start of line
     r'((?:Ketentuan\s+)?'                       # optional "Ketentuan " prefix
     r'(?:'
-    r'(?:Pasal|Bagian|Bab|Di\s+antara)\b'       # form 1/6: direct structural keyword
-    r'|(?:(?:huruf|ayat|Ayat)\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian)\b)'  # form 2/3
-    r'|(?:Penjelasan\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian|Bab)\b)'       # explanation amendment
+    r'(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+|Bab|Di\s+antara)\b'  # form 1/6: Bagian requires ordinal (Kesatu, Kedua, etc.) or Roman
+    r'|(?:(?:huruf|ayat|Ayat)\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+)\b)'  # form 2/3
+    r'|(?:Penjelasan\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+|Bab)\b)'       # explanation amendment
     r'|(?:Judul\s+(?:Paragraf|Bagian|Bab)\b)'               # form 4: heading rename
     r'|(?:Setelah\s+(?:Pasal|Paragraf|Bagian|Bab)\b)'       # form 5: insertion after heading
     r')'
@@ -947,6 +947,17 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
             if (elem["number"] == deduped[-1]["number"]
                     and elem["page_num"] - deduped[-1]["page_num"] <= 1):
                 continue
+        # Collapse duplicate pasal_roman elements with the same resolved number.
+        # "Pasal 1" (Arabic, inside replacement content) can false-match PASAL_ROMAN
+        # as "Pasal I" because '1' is in the OCR-confusion character class.
+        if elem["type"] == "pasal_roman":
+            existing_roman_nums = {
+                roman_to_int(e.get("number", ""))
+                for e in deduped if e["type"] == "pasal_roman"
+            }
+            this_num = roman_to_int(elem.get("number", ""))
+            if this_num and this_num in existing_roman_nums:
+                continue
         # Collapse page-break Angka duplicates: the first page often captures a truncated
         # instruction while the second page repeats it in full. Keep the longer title.
         if deduped and elem["type"] == "angka" and deduped[-1]["type"] == "angka":
@@ -957,7 +968,31 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
                 continue
         deduped.append(elem)
 
-    return deduped
+    # Filter angka elements with implausible numbering gaps.
+    # Real amendment docs have consecutive Angka 1, 2, 3... under each Pasal Roman.
+    # A jump from e.g. Angka 1 to Angka 80 signals a false positive from numbered
+    # definition content inside replacement text.
+    final_deduped = []
+    last_angka_num = 0
+    for elem in deduped:
+        if elem["type"] == "angka":
+            try:
+                n = int(elem["number"])
+            except (ValueError, TypeError):
+                final_deduped.append(elem)
+                continue
+            if last_angka_num > 0 and n > last_angka_num + 20:
+                log.warning(
+                    "Discarding suspicious angka %d (page %d): gap from %d, likely false positive",
+                    n, elem["page_num"], last_angka_num,
+                )
+                continue
+            last_angka_num = n
+        elif elem["type"] == "pasal_roman":
+            last_angka_num = 0
+        final_deduped.append(elem)
+
+    return final_deduped
 
 
 def detect_elements(pages: list[dict], body_end_page: int,
@@ -2636,6 +2671,8 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     for i, (label, segment) in enumerate(segments, 1):
         # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
         segment = re.sub(r'^\(\d+\)\s*', '', segment)
+        if not segment.strip():
+            continue  # Skip ayat with no content (PDF extraction gap between consecutive markers)
         sub_id = f"{parent_id}_a{i}"
         sub_title = f"{parent_title} Ayat ({label})"
         node: dict = {
@@ -2660,6 +2697,17 @@ def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
     # Recurse into container nodes; apply split_func only to leaves that have text.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
+            # If node has both text and children (e.g. Pasal I amendment preamble),
+            # promote the text to a synthetic intro child so it can be split too.
+            if "text" in node and node["text"].strip():
+                preamble = {
+                    "title": f"{node['title']} Pembukaan",
+                    "node_id": f"{node['node_id']}_intro",
+                    "start_index": node["start_index"],
+                    "end_index": node.get("end_index", node["start_index"]),
+                    "text": node.pop("text"),
+                }
+                node["nodes"].insert(0, preamble)
             node["nodes"] = _split_leaves_with(node["nodes"], split_func)
             result.append(node)
         elif "text" in node:
@@ -2694,6 +2742,37 @@ def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
     return _split_leaves_with(nodes, _split)
 
 
+def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int) -> list[dict] | None:
+    """Try splitting text into Huruf sub-nodes (a., b., c., ...) without recursing further.
+
+    Used by Angka items that may contain sub-lists like definitions with a./b./c./d.
+    """
+    text = _strip_leading_junk(text)
+    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    if not huruf_markers:
+        return None
+    intro, segments = _split_text_by_markers(text, huruf_markers)
+    sub_nodes = []
+    for i, (label, segment) in enumerate(segments, 1):
+        segment = re.sub(r'^[a-z]\.\s*', '', segment)
+        if not segment.strip():
+            continue  # Skip huruf with no content (PDF extraction gap)
+        sub_id = f"{parent_id}_h{i}"
+        sub_title = f"{parent_title} Huruf {label}"
+        sub_nodes.append({
+            "title": sub_title,
+            "node_id": sub_id,
+            "start_index": parent_start,
+            "end_index": parent_end,
+            "text": segment,
+            "_split_label": label,
+        })
+    _prepend_intro_to_first_child(sub_nodes, intro)
+    for n in sub_nodes:
+        n.pop("_split_label", None)
+    return sub_nodes
+
+
 def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
     """Recursively split text into the smallest structural sub-nodes present.
 
@@ -2711,6 +2790,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         for i, (label, segment) in enumerate(segments, 1):
             # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
             segment = re.sub(r'^\(\d+\)\s*', '', segment)
+            if not segment.strip():
+                continue  # Skip ayat with no content (PDF extraction gap)
             sub_id = f"{parent_id}_a{i}"
             sub_title = f"{parent_title} Ayat ({label})"
             children = _try_deep_split(
@@ -2743,6 +2824,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         for i, (label, segment) in enumerate(segments, 1):
             # Strip the leading "x. " huruf marker that _split_text_by_markers keeps.
             segment = re.sub(r'^[a-z]\.\s*', '', segment)
+            if not segment.strip():
+                continue  # Skip huruf with no content (PDF extraction gap)
             sub_id = f"{parent_id}_h{i}"
             sub_title = f"{parent_title} Huruf {label}"
             children = _try_deep_split(
@@ -2771,20 +2854,30 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
         sub_nodes = []
-        # Angka is the deepest level; build leaf nodes without recursing further.
+        # Build one Angka sub-node per segment, recursing into Huruf if present.
         for i, (label, segment) in enumerate(segments, 1):
             # Strip the leading "N. " angka marker that _split_text_by_markers keeps.
             segment = re.sub(r'^\d+\.\s*', '', segment)
+            if not segment.strip():
+                continue  # Skip angka with no content (PDF extraction gap)
             sub_id = f"{parent_id}_n{i}"
             sub_title = f"{parent_title} Angka {label}"
-            sub_nodes.append({
+            # Recurse into Huruf sub-structure (e.g. definitions with a./b./c. lists).
+            children = _try_huruf_split(
+                segment, sub_id, sub_title, parent_start, parent_end,
+            )
+            node: dict = {
                 "title": sub_title,
                 "node_id": sub_id,
                 "start_index": parent_start,
                 "end_index": parent_end,
-                "text": segment,
                 "_split_label": label,
-            })
+            }
+            if children:
+                node["nodes"] = children
+            else:
+                node["text"] = segment
+            sub_nodes.append(node)
         _prepend_intro_to_first_child(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "angka")
         for n in sub_nodes:
@@ -2794,6 +2887,32 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     return None
 
 
+_ANGKA_TITLE_PASAL_RE = re.compile(r'^Angka\s+\d+\s+—\s+.*?(Pasal\s+\d+\w*)')
+
+# Matches the amendment instruction at the start of an Angka's text, e.g.:
+#   "1. \nKetentuan Pasal 1 angka 135 ... sehingga Pasal 1 berbunyi sebagai berikut:"
+# Strips this so the replacement content (definitions list) can be split cleanly.
+_AMENDMENT_INSTR_PREFIX_RE = re.compile(
+    r'^\d+\.\s*\n?\s*(?:Ketentuan|Di\s+antara|Diantara)'
+    r'.*?(?:sebagai\s+berikut|berikut)\s*:\s*\n',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _clean_angka_for_deep_split(title: str, text: str) -> tuple[str, str]:
+    """Clean amendment Angka title and text for better deep-split output.
+
+    For amendment Angka nodes (title "Angka N — <instruction>..."):
+    - Extracts the target Pasal reference for cleaner child titles
+    - Strips the leading instruction text so definitions start cleanly
+    """
+    m = _ANGKA_TITLE_PASAL_RE.match(title)
+    if m:
+        title = m.group(1)
+        text = _AMENDMENT_INSTR_PREFIX_RE.sub('', text, count=1)
+    return title, text
+
+
 def deep_split_leaves(nodes: list[dict]) -> list[dict]:
     """Recursively split every leaf node in the tree to its deepest sub-structure.
 
@@ -2801,10 +2920,13 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
     sub-structure are kept unchanged.
     """
     def _split(node: dict):
+        title = node["title"]
+        text = node["text"]
+        title, text = _clean_angka_for_deep_split(title, text)
         return _try_deep_split(
-            text=node["text"],
+            text=text,
             parent_id=node["node_id"],
-            parent_title=node["title"],
+            parent_title=title,
             parent_start=node["start_index"],
             parent_end=node["end_index"],
             penjelasan=node.get("penjelasan"),

@@ -2,6 +2,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from .status import (
@@ -267,6 +268,12 @@ def check_amendment_scaffold(doc: dict) -> list[str]:
         return ['Amendment scaffold: no Pasal Roman root detected in body']
 
     issues = []
+
+    # Check for duplicate Pasal Roman titles (sign of synthetic + real duplication).
+    roman_titles = [body_nodes[i].get("title", "") for i in roman_positions]
+    dupes = {t: c for t, c in Counter(roman_titles).items() if c > 1}
+    for title, count in dupes.items():
+        issues.append(f'Amendment scaffold: "{title}" appears {count}x (synthetic duplication?)')
     first_roman_idx = roman_positions[0]
     first_roman = body_nodes[first_roman_idx]
     first_roman_title = first_roman.get("title", "")
@@ -285,6 +292,7 @@ def check_amendment_scaffold(doc: dict) -> list[str]:
     direct_structural_children = [
         child for child in first_roman_children
         if not re.match(r'^Angka\s+\d+\b', child.get("title", ""))
+        and not child.get("node_id", "").endswith("_intro")
     ]
     if direct_structural_children:
         leaked = ", ".join(child.get("title", "?") for child in direct_structural_children[:3])
@@ -358,6 +366,14 @@ def verify_doc(doc: dict) -> dict:
             status_issues.append(issue)
         elif len(text) < 20:
             short_text += 1
+        elif len(text) > 30000:
+            long_text += 1
+            issue = (
+                f"Oversized leaf node: {leaf.get('node_id', '?')} "
+                f"({leaf.get('title', '?')[:60]}) has {len(text)} chars"
+            )
+            issues.append(issue)
+            status_issues.append(issue)
         elif len(text) > 10000:
             long_text += 1
         # Check for OCR header bleed-through in leaf text.
