@@ -708,6 +708,15 @@ _ORPHAN_INSTR_FIRST_RE = re.compile(
     re.MULTILINE,
 )
 
+# Two-column PDF layout: in some amendment PDFs the amendment number appears alone on
+# its own line (left column) while its instruction text appears later on the same page
+# (right/left column interleaved by PyMuPDF). Matches a single digit 1-9 on its own
+# line, searched only within the first ~300 chars of a page.
+_STANDALONE_ANGKA_PAGE_TOP_RE = re.compile(
+    r'^[ \t]*([1-9])[ \t]*$',
+    re.MULTILINE,
+)
+
 
 def _normalize_roman_heading_token(token: str) -> str:
     """Normalize OCR-confused Roman heading tokens like 'l' or '1' into 'I'."""
@@ -827,7 +836,7 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
         for m in ANGKA_PATTERN.finditer(text):
             angka_num = m.group(1)
             instruction = m.group(2).strip()
-            title_text = instruction[:80] + ("..." if len(instruction) > 80 else "")
+            title_text = instruction.replace("\n", " ").strip()
             page_elements.append({
                 "type": "angka",
                 "level": LEVEL_MAP["angka"],
@@ -837,6 +846,79 @@ def _detect_page_elements(text: str, page_num: int, is_perubahan: bool) -> list[
                 "char_offset": m.start(),
             })
 
+        # Two-column layout: standalone amendment number separated from its instruction.
+        # In some PDFs, PyMuPDF extracts the left-column amendment number as a separate
+        # block from the right-column instruction text. Two sub-layouts exist:
+        #
+        # Layout B: digit appears BEFORE instruction in extracted text (digit is a small
+        #   block at top of left column with lower y0 than the instruction block).
+        #   Detection: find digit in first 300 chars, then search for instruction after it.
+        #   Guard: skip pages with pasal_roman (Mengingat list numbers "2. Undang-Undang..."
+        #   split across columns look like standalone digits at the top of the page).
+        #
+        # Layout A: digit appears AFTER instruction in extracted text (digit block has
+        #   higher y0 — it sits below the instruction in the column). The digit appears
+        #   immediately after the instruction's closing "berbunyi sebagai berikut:\n".
+        #   Detection: find "sebagai berikut:\n[digit]\n" then search back for instruction.
+        #   NO guard needed: the end-of-instruction marker is specific enough that Mengingat
+        #   list numbers (e.g. "2. Undang-Undang") will never appear in this position.
+        #   OCR note: amendment number 1 is sometimes extracted as "I" (Roman/OCR confusion).
+        already_angka_nums = {e["number"] for e in page_elements if e["type"] == "angka"}
+        has_roman_on_page = any(e["type"] == "pasal_roman" for e in page_elements)
+
+        if not has_roman_on_page:
+            # Layout B: digit in first 300 chars, instruction follows it.
+            top_m = _STANDALONE_ANGKA_PAGE_TOP_RE.search(text[:300])
+            if top_m:
+                angka_num = top_m.group(1)
+                if angka_num not in already_angka_nums:
+                    instr_m = _ORPHAN_INSTR_FIRST_RE.search(text, top_m.end())
+                    if instr_m:
+                        raw_instr = text[instr_m.start():instr_m.start() + 300]
+                        stop = re.search(r'\n[ \t]*\n|\n[ \t]*\d+\.', raw_instr)
+                        if stop:
+                            raw_instr = raw_instr[:stop.start()]
+                        title_text = raw_instr.replace("\n", " ").strip()
+                        page_elements.append({
+                            "type": "angka",
+                            "level": LEVEL_MAP["angka"],
+                            "number": angka_num,
+                            "title": f"Angka {angka_num} — {title_text}",
+                            "page_num": page_num,
+                            "char_offset": instr_m.start(),
+                        })
+                        already_angka_nums.add(angka_num)
+
+        # Layout A: digit immediately follows "berbunyi sebagai berikut:\n[digit]\n".
+        # Runs regardless of has_roman_on_page — the end-of-instruction marker is specific.
+        # "I" is accepted in the digit position as OCR confusion for "1" (amendment no. 1).
+        for berikut_m in re.finditer(
+            r'(?:sebagai\s+berikut|berikut\s+ini)\s*:\s*\n([1-9I])\n', text, re.IGNORECASE
+        ):
+            raw_digit = berikut_m.group(1)
+            angka_num = "1" if raw_digit == "I" else raw_digit
+            if angka_num in already_angka_nums:
+                continue
+            text_before = text[:berikut_m.start()]
+            instr_m = None
+            for km in _ORPHAN_INSTR_FIRST_RE.finditer(text_before):
+                instr_m = km  # keep last (nearest) match before the digit
+            if instr_m is None:
+                continue
+            # Instruction text runs from keyword to end of "sebagai berikut:\n"
+            # (berikut_m.end() minus the digit char and its trailing newline)
+            instr_end = berikut_m.end() - len(raw_digit) - 1
+            raw_instr = text[instr_m.start():instr_end]
+            title_text = raw_instr.replace("\n", " ").strip()
+            page_elements.append({
+                "type": "angka",
+                "level": LEVEL_MAP["angka"],
+                "number": angka_num,
+                "title": f"Angka {angka_num} — {title_text}",
+                "page_num": page_num,
+                "char_offset": instr_m.start(),
+            })
+            already_angka_nums.add(angka_num)
 
     # Collect BAB, Bagian, Paragraf, and Pasal headings present in all document types.
     for m in PATTERNS["bab"].finditer(text):
@@ -1004,6 +1086,7 @@ def detect_elements(pages: list[dict], body_end_page: int,
     type, level, number, title, page_num, char_offset.
     """
     elements = []
+    body_pages: list[dict] = []
 
     # Collect elements from each body page; stop at post-body sections.
     for page in pages:
@@ -1012,6 +1095,38 @@ def detect_elements(pages: list[dict], body_end_page: int,
         text = page["clean_text"]
         page_num = page["page_num"]
         elements.extend(_detect_page_elements(text, page_num, is_perubahan))
+        body_pages.append(page)
+
+    # For amendment docs, scan cross-page windows to catch angka instructions that split
+    # at page boundaries. When "9. Ketentuan" ends page N and "Pasal 20 diubah..." begins
+    # page N+1, neither half alone matches ANGKA_PATTERN on a single page. The merged
+    # window catches both halves together. The dedup step below handles any duplicates
+    # with same-page single-scan matches (keeps the longer title).
+    if is_perubahan:
+        _CROSS_TAIL = 800  # chars from end of page N to include in window
+        _CROSS_HEAD = 400  # chars from start of page N+1 to include in window
+        for i in range(len(body_pages) - 1):
+            pa, pb = body_pages[i], body_pages[i + 1]
+            tail_text = pa["clean_text"][-_CROSS_TAIL:]
+            head_text = pb["clean_text"][:_CROSS_HEAD]
+            window = tail_text + "\n" + head_text
+            len_tail = len(tail_text)
+            tail_start_in_pa = len(pa["clean_text"]) - len_tail
+            for m in ANGKA_PATTERN.finditer(window):
+                if m.start() >= len_tail:
+                    # Match starts in page N+1's head — already covered by single-page scan
+                    break
+                angka_num = m.group(1)
+                instruction = m.group(2).strip()
+                title_text = instruction.replace("\n", " ").strip()
+                elements.append({
+                    "type": "angka",
+                    "level": LEVEL_MAP["angka"],
+                    "number": angka_num,
+                    "title": f"Angka {angka_num} — {title_text}",
+                    "page_num": pa["page_num"],
+                    "char_offset": tail_start_in_pa + m.start(),
+                })
 
     elements.sort(key=lambda e: (e["page_num"], e["char_offset"]))
     return _dedupe_detected_elements(elements)
@@ -2084,7 +2199,7 @@ def _process_batch(batch: dict[str, str], batch_idx: int, total: int, verbose: b
                 _lbl = _label or f"{batch_idx + 1}/{total}"
                 msg = f"batch {_lbl}: {e.__class__.__name__}: {e}"
                 if verbose:
-                    log.warning(f"batch {_lbl}: failed after {attempt + 1} attempt(s), keeping raw OCR text")
+                    log.warning(f"batch {_lbl}: failed after {attempt + 1} attempt(s), keeping raw OCR text — {msg}")
                 return batch, 0, 0, msg
 
     if last_err is not None:
@@ -2378,13 +2493,12 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     tree = build_tree(elements, body_end)
     fix_node_boundaries(tree, body_end)
 
-    # In Perubahan documents, re-parent Pasals that the parser split across Angkas,
-    # and wrap any orphan leading Pasals in a synthetic Angka 1 when OCR dropped the
-    # "1." prefix of the first amendment instruction.
+    # In Perubahan documents, wrap any orphan leading Pasals in a synthetic Angka 1
+    # when OCR dropped the "1." prefix of the first amendment instruction.
+    # NOTE: consolidate_bab_in_perubahan was removed — it incorrectly absorbed Pasals
+    # from Angka N+1 into the BAB defined by Angka N, deleting the source Angka. Each
+    # amendment Angka (BAB rename and Pasal change) should remain a separate node.
     if is_perubahan:
-        bab_moved = consolidate_bab_in_perubahan(tree)
-        if verbose and bab_moved:
-            log.info(f"consolidated {bab_moved} Pasal(s) under inserted BAB(s)")
         angka_wrapped = wrap_orphan_pasals_in_angka1(tree, pages=pages)
         if verbose and angka_wrapped:
             log.info(f"wrapped {angka_wrapped} orphan Pasal(s) under synthetic Angka 1")
@@ -2815,41 +2929,11 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             n.pop("_split_label", None)
         return sub_nodes
 
-    # Try Huruf: a., b., c., ...
-    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
-    if huruf_markers:
-        intro, segments = _split_text_by_markers(text, huruf_markers)
-        sub_nodes = []
-        # Build one Huruf sub-node per segment, recursing into each for deeper structure.
-        for i, (label, segment) in enumerate(segments, 1):
-            # Strip the leading "x. " huruf marker that _split_text_by_markers keeps.
-            segment = re.sub(r'^[a-z]\.\s*', '', segment)
-            if not segment.strip():
-                continue  # Skip huruf with no content (PDF extraction gap)
-            sub_id = f"{parent_id}_h{i}"
-            sub_title = f"{parent_title} Huruf {label}"
-            children = _try_deep_split(
-                segment, sub_id, sub_title, parent_start, parent_end, penjelasan=None
-            )
-            node = {
-                "title": sub_title,
-                "node_id": sub_id,
-                "start_index": parent_start,
-                "end_index": parent_end,
-                "_split_label": label,
-            }
-            if children:
-                node["nodes"] = children
-            else:
-                node["text"] = segment
-            sub_nodes.append(node)
-        _prepend_intro_to_first_child(sub_nodes, intro)
-        _distribute_penjelasan(penjelasan, sub_nodes, "huruf")
-        for n in sub_nodes:
-            n.pop("_split_label", None)
-        return sub_nodes
-
     # Try Angka items: 1., 2., 3., ...
+    # Angka is tried before Huruf so that amendment Angka bodies (which contain numbered
+    # definitions with nested huruf) split correctly at the Angka level first. Without this
+    # ordering, Huruf markers deep inside (e.g. "a." in definition 3) would win over the
+    # top-level Angka structure.
     angka_markers = _find_and_validate_markers(text, _ANGKA_ITEM_RE, "1")
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
@@ -2880,6 +2964,40 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             sub_nodes.append(node)
         _prepend_intro_to_first_child(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "angka")
+        for n in sub_nodes:
+            n.pop("_split_label", None)
+        return sub_nodes
+
+    # Try Huruf: a., b., c., ...
+    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    if huruf_markers:
+        intro, segments = _split_text_by_markers(text, huruf_markers)
+        sub_nodes = []
+        # Build one Huruf sub-node per segment, recursing into each for deeper structure.
+        for i, (label, segment) in enumerate(segments, 1):
+            # Strip the leading "x. " huruf marker that _split_text_by_markers keeps.
+            segment = re.sub(r'^[a-z]\.\s*', '', segment)
+            if not segment.strip():
+                continue  # Skip huruf with no content (PDF extraction gap)
+            sub_id = f"{parent_id}_h{i}"
+            sub_title = f"{parent_title} Huruf {label}"
+            children = _try_deep_split(
+                segment, sub_id, sub_title, parent_start, parent_end, penjelasan=None
+            )
+            node = {
+                "title": sub_title,
+                "node_id": sub_id,
+                "start_index": parent_start,
+                "end_index": parent_end,
+                "_split_label": label,
+            }
+            if children:
+                node["nodes"] = children
+            else:
+                node["text"] = segment
+            sub_nodes.append(node)
+        _prepend_intro_to_first_child(sub_nodes, intro)
+        _distribute_penjelasan(penjelasan, sub_nodes, "huruf")
         for n in sub_nodes:
             n.pop("_split_label", None)
         return sub_nodes
@@ -2916,13 +3034,45 @@ def _clean_angka_for_deep_split(title: str, text: str) -> tuple[str, str]:
 def deep_split_leaves(nodes: list[dict]) -> list[dict]:
     """Recursively split every leaf node in the tree to its deepest sub-structure.
 
-    Tries Ayat, then Huruf, then Angka at each level. Leaves with no detectable
+    Tries Ayat, then Angka, then Huruf at each level. Leaves with no detectable
     sub-structure are kept unchanged.
+
+    For amendment Angka nodes whose title references a specific Pasal (e.g.
+    "Angka 1 — Ketentuan Pasal 3 diubah..."), an intermediate Pasal node is
+    inserted so the hierarchy reads: Angka N > Pasal X > [Ayat/Angka/Huruf].
     """
     def _split(node: dict):
         title = node["title"]
         text = node["text"]
-        title, text = _clean_angka_for_deep_split(title, text)
+
+        # If this Angka's title names a specific Pasal, wrap the split result in
+        # an intermediate Pasal node instead of flattening children directly under
+        # the Angka. This preserves the Pasal I > Angka N > Pasal X > ... hierarchy
+        # for amendment documents.
+        m = _ANGKA_TITLE_PASAL_RE.match(title)
+        if m:
+            pasal_ref = m.group(1)  # e.g. "Pasal 1"
+            cleaned_text = _AMENDMENT_INSTR_PREFIX_RE.sub('', text, count=1)
+            pasal_id = f"{node['node_id']}_p"
+            children = _try_deep_split(
+                text=cleaned_text,
+                parent_id=pasal_id,
+                parent_title=pasal_ref,
+                parent_start=node["start_index"],
+                parent_end=node["end_index"],
+                penjelasan=node.get("penjelasan"),
+            )
+            if children:
+                return [{
+                    "title": pasal_ref,
+                    "node_id": pasal_id,
+                    "start_index": node["start_index"],
+                    "end_index": node["end_index"],
+                    "nodes": children,
+                }]
+            # No sub-structure found — fall through to plain deep split below.
+            title, text = pasal_ref, cleaned_text
+
         return _try_deep_split(
             text=text,
             parent_id=node["node_id"],

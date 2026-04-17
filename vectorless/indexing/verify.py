@@ -620,7 +620,7 @@ def main():
             doc_ids = set()
             # Collect all doc_ids from the pasal index as the reference set.
             for path in pasal_dir.rglob("*.json"):
-                if path.name != "catalog.json":
+                if path.name not in ("catalog.json", "catalog_gt.json"):
                     with open(path, encoding="utf-8") as f:
                         doc = json.load(f)
                         if args.category:
