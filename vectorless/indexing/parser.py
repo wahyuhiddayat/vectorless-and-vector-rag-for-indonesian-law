@@ -686,7 +686,7 @@ ANGKA_PATTERN = re.compile(
     r'^(\d+)\.\s*'                              # number + period at start of line
     r'((?:Ketentuan\s+)?'                       # optional "Ketentuan " prefix
     r'(?:'
-    r'(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+|Bab|Di\s+antara)\b'  # form 1/6: Bagian requires ordinal (Kesatu, Kedua, etc.) or Roman
+    r'(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+|Bab|Di\s+antara|baris|Lampiran)\b'  # form 1/6: Bagian requires ordinal; baris/Lampiran for table/annex amendments
     r'|(?:(?:huruf|ayat|Ayat)\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+)\b)'  # form 2/3
     r'|(?:Penjelasan\b(?:[^\n]*\n\s*){0,3}[^\n]*?(?:Pasal|Bagian\s+Ke\w+|Bagian\s+[IVXLC]+|Bab)\b)'       # explanation amendment
     r'|(?:Judul\s+(?:Paragraf|Bagian|Bab)\b)'               # form 4: heading rename
