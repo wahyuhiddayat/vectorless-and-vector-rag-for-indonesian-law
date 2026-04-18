@@ -48,6 +48,58 @@ def collect_leaves(nodes: list[dict]) -> list[dict]:
     return leaves
 
 
+def walk_all_nodes(nodes: list[dict]):
+    """Yield every node in the tree (both container and leaf nodes)."""
+    for node in nodes:
+        yield node
+        if "nodes" in node and node["nodes"]:
+            yield from walk_all_nodes(node["nodes"])
+
+
+def check_title_quality(structure: list[dict]) -> list[str]:
+    """Check node titles for OCR patterns that suggest corrupted pasal references.
+
+    Flags titles where a Pasal number ends with a bare digit that is commonly
+    OCR-confused with a letter (4→A, 1/l/I→ambiguous). These arise when PyMuPDF
+    misreads font-encoded characters in amendment instruction text.
+    """
+    issues = []
+    for node in walk_all_nodes(structure):
+        title = node.get("title", "")
+        if not title:
+            continue
+        nid = node.get("node_id", "?")
+        # "Pasal 5684" — 3+ digit number ending in 4 (likely OCR'd 'A')
+        if re.search(r'Pasal\s+\d{3,}4\b', title):
+            issues.append(
+                f"Possible OCR in title {nid}: 'Pasal ...4' may be 'Pasal ...A' — '{title[:80]}'"
+            )
+        # "Pasal 1l" or "Pasal 1I" — lowercase l or uppercase I at end (likely OCR'd digit)
+        if re.search(r'Pasal\s+\d+[lI]\b', title):
+            issues.append(
+                f"Possible OCR in title {nid}: 'Pasal ...l/I' may be 'Pasal ...1' — '{title[:80]}'"
+            )
+    return issues
+
+
+def check_angka_count(structure: list[dict], element_counts: dict) -> list[str]:
+    """Verify that the number of Angka nodes in the tree matches element_counts['angka'].
+
+    A mismatch means the parser detected N Angka in the PDF but the built structure
+    has a different count — indicating missed or duplicate Angka nodes.
+    """
+    reported = element_counts.get("angka", 0)
+    if reported == 0:
+        return []
+    actual = sum(
+        1 for node in walk_all_nodes(structure)
+        if re.match(r'^Angka\s+\d+', node.get("title", ""))
+    )
+    if actual != reported:
+        return [f"Angka count mismatch: element_counts reports {reported}, structure contains {actual}"]
+    return []
+
+
 def check_nav_paths(nodes: list[dict], ancestors: list[str] | None = None) -> list[str]:
     """Validate that each node's navigation_path matches its actual tree position.
 
@@ -322,7 +374,7 @@ def categorize_warnings(warnings: list[str]) -> dict:
     return cats
 
 
-def verify_doc(doc: dict) -> dict:
+def verify_doc(doc: dict, granularity: str = "pasal") -> dict:
     """Run all 7 verification checks on a single document.
 
     Returns a report dict with: doc_id, status (OK/WARN/FAIL), checks (per-check
@@ -444,10 +496,28 @@ def verify_doc(doc: dict) -> dict:
         issues.extend(amendment_issues)
         status_issues.extend(amendment_issues)
 
+    # Check 8: Title quality — detect OCR'd pasal refs in node titles.
+    title_issues = check_title_quality(structure)
+    checks["title_quality_issues"] = len(title_issues)
+    if title_issues:
+        issues.extend(title_issues)
+        status_issues.extend(title_issues)
+
+    # Check 9: Angka count consistency — structure vs element_counts.
+    # Only applicable at pasal granularity: ayat/full_split deep_split_leaves creates extra
+    # Angka sub-nodes from definition lists that don't appear in element_counts.
+    angka_count_issues = check_angka_count(structure, element_counts) if granularity == "pasal" else []
+    checks["angka_count_issues"] = len(angka_count_issues)
+    if angka_count_issues:
+        issues.extend(angka_count_issues)
+        status_issues.extend(angka_count_issues)
+
     # Determine overall status from issue severity.
     if empty_text or dupes or len(boundary_issues) > 0:
         status = "FAIL"
-    elif len(warnings) > 0 or ocr_leaks > 0 or len(preamble_issues) > 0 or len(amendment_issues) > 0:
+    elif (len(warnings) > 0 or ocr_leaks > 0 or len(preamble_issues) > 0
+          or len(amendment_issues) > 0 or len(title_issues) > 0
+          or len(angka_count_issues) > 0):
         status = "WARN"
     else:
         status = "OK"
@@ -469,6 +539,15 @@ def verify_index(index_dir: Path, doc_id: str | None = None, category: str | Non
     Loads each JSON file, runs verify_doc(), and returns a list of report dicts.
     Skips catalog.json and documents that don't match doc_id (when specified).
     """
+    # Infer granularity from directory name for checks that differ between levels.
+    dir_name = index_dir.name
+    if "ayat" in dir_name:
+        granularity = "ayat"
+    elif "full_split" in dir_name:
+        granularity = "full_split"
+    else:
+        granularity = "pasal"
+
     results = []
     categories = normalize_categories(category)
     # Walk all JSON files in the index directory.
@@ -485,7 +564,7 @@ def verify_index(index_dir: Path, doc_id: str | None = None, category: str | Non
             doc_category = (doc.get("jenis_folder") or doc["doc_id"].split("-")[0]).upper()
             if doc_category not in categories:
                 continue
-        results.append(verify_doc(doc))
+        results.append(verify_doc(doc, granularity=granularity))
     return results
 
 

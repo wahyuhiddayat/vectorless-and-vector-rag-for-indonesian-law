@@ -2342,15 +2342,25 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
     texts_to_clean: list[tuple[str, str]] = []
 
     def _collect(nodes: list[dict]):
-        """Recursively gather leaf node texts and non-trivial penjelasan for cleaning."""
+        """Recursively gather leaf node texts, Angka instruction titles, and penjelasan for cleaning."""
         for node in nodes:
             if "nodes" in node:
+                # Angka instruction titles (e.g. "Angka 9 — Di antara Pasal 568...") may contain
+                # OCR'd pasal refs like "5684" instead of "568A". Clean them so deep_split_leaves
+                # later extracts the correct pasal reference from the cleaned title.
+                title = node.get("title", "")
+                if title and re.match(r'^Angka\s+\d+\s+—\s+', title):
+                    texts_to_clean.append((node["node_id"] + ":title", title))
                 _collect(node["nodes"])
             else:
                 if "text" in node:
                     texts_to_clean.append((node["node_id"], node["text"]))
                 if node.get("penjelasan") and node["penjelasan"] != "Cukup jelas.":
                     texts_to_clean.append((node["node_id"] + ":penjelasan", node["penjelasan"]))
+                # Leaf Angka nodes also have instruction titles that may contain OCR errors.
+                title = node.get("title", "")
+                if title and re.match(r'^Angka\s+\d+\s+—\s+', title):
+                    texts_to_clean.append((node["node_id"] + ":title", title))
 
     _collect(output_nodes)
 
@@ -2370,9 +2380,49 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
         log.warning(f"{len(missing)} node(s) missing from LLM response, keeping original: {sorted(missing)}")
 
     def _replace(nodes: list[dict]):
-        """Recursively write cleaned text back into each leaf node."""
+        """Recursively write cleaned text and titles back into nodes."""
         for node in nodes:
             if "nodes" in node:
+                title_key = node["node_id"] + ":title"
+                if title_key in cleaned:
+                    new_title = cleaned[title_key]
+                    node["title"] = new_title
+                    # After the Angka title is corrected, also update any direct child Pasal
+                    # node whose number is a corrupted version of the referenced pasal.
+                    # Two sources of such children:
+                    #   (a) Fix L2 intermediate node (node_id = parent + "_p")
+                    #   (b) Parser-detected pasal heading with OCR'd number (e.g. "5684" for "568A")
+                    # Match by numeric prefix: "568A" and "5684" both start with "568".
+                    # Scan ALL Pasal refs in the cleaned title for one with a letter suffix.
+                    # The lazy .*? in _ANGKA_TITLE_PASAL_RE finds the FIRST pasal ("Pasal 568"),
+                    # but the inserted pasal with a letter suffix ("Pasal 568A") may appear later
+                    # (e.g. "...Di antara Pasal 568 dan Pasal 569 disisipkan ... yakni Pasal 568A").
+                    all_pasal_nums = re.findall(r'Pasal\s+(\d+\w*)', new_title)
+                    new_pasal_ref = None
+                    for ref in all_pasal_nums:
+                        if len(ref) >= 2 and ref[-1].isalpha():
+                            new_pasal_ref = f"Pasal {ref}"
+                            break
+                    if new_pasal_ref:
+                        new_num = re.sub(r'^Pasal\s+', '', new_pasal_ref)  # "568A"
+                        # Only propagate when the suffix is a letter (letter A → digit 4 OCR error).
+                        # "5684": same prefix "568", trailing "4" (digit) vs "A" (letter) → MATCH
+                        # "568":  different length → SKIP (avoids clobbering "Pasal 568")
+                        # "568A": already correct → SKIP
+                        prefix = new_num[:-1]  # "568"
+                        for child in node.get("nodes", []):
+                            child_title = child.get("title", "")
+                            child_num = re.sub(r'^Pasal\s+', '', child_title)
+                            # Case A: OCR replaced letter with digit → "5684" → same length
+                            case_a = (len(child_num) == len(new_num)
+                                      and child_num[:-1] == prefix
+                                      and child_num[-1] != new_num[-1]
+                                      and child_num[-1].isdigit())
+                            # Case B: parse-time regex grabbed the bare prefix → "568" → shorter by 1
+                            # (lazy .*? in _ANGKA_TITLE_PASAL_RE stops at first Pasal ref in title)
+                            case_b = (child_num == prefix)
+                            if case_a or case_b:
+                                child["title"] = new_pasal_ref
                 _replace(node["nodes"])
             else:
                 if "text" in node and node["node_id"] in cleaned:
@@ -2380,6 +2430,9 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
                 penj_key = node.get("node_id", "") + ":penjelasan"
                 if penj_key in cleaned:
                     node["penjelasan"] = cleaned[penj_key]
+                title_key = node.get("node_id", "") + ":title"
+                if title_key in cleaned:
+                    node["title"] = cleaned[title_key]
 
     _replace(output_nodes)
     # Re-run local OCR/header normalization after the LLM pass so llm-only rebuilds

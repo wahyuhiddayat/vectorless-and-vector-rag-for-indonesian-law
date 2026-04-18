@@ -18,7 +18,9 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, UTC
+from datetime import datetime, timezone, timedelta
+
+WIB = timezone(timedelta(hours=7))
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -72,7 +74,7 @@ class CostManifest:
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(WIB).replace(microsecond=0).isoformat()
 
 
 def load_registry() -> dict:
@@ -629,6 +631,10 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
         total_llm_output_tokens += token_stats.get("output_tokens", 0)
         total_llm_calls += token_stats.get("llm_calls", 0)
         total_llm_batch_failures += n_failures
+
+        # Rebuild navigation_path fields — LLM may have changed Angka titles which
+        # are used as path components, so stale paths must be refreshed.
+        add_navigation_paths(structure)
 
         # Persist cleaned content and cleanup status.
         doc["structure"] = structure
