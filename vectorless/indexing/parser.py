@@ -2030,8 +2030,12 @@ Fix OCR artifacts in the text while preserving the original meaning and structur
 Rules:
 - Fix garbled characters (e.g., "tqjuh" → "tujuh", "ruPiah" → "rupiah")
 - Fix broken numbers (e.g., "OOO,OO" → "000,00", "47 |" → "471")
+- Fix broken ayat markers where the closing ")" was OCR'd as "1": e.g., "(21" → "(2)", "(31" → "(3)", "(41" → "(4)". These appear at the start of a line as ayat numbering.
+- Remove duplicate paragraphs caused by page breaks: if the same sentence or ayat appears twice in a row (possibly with noise characters like "N", "I", "II" between them), keep only the complete version and remove the truncated duplicate.
+- Remove isolated noise characters on their own lines (single letters like "N", "I", Roman numerals like "II", "III" that are clearly page artifacts, not legal content).
+- Fix encoding corruption (e.g., "pang€rn" → "pangan", "rups€ah" → "rupiah").
 - Do NOT change legal terminology, Pasal references, or document structure
-- Do NOT add or remove content
+- Do NOT add or remove substantive content
 - You MUST return ALL keys from the input. Every node_id must appear in your output.
 - Return ONLY a valid JSON object with the same keys, mapping each node_id to its cleaned text. No explanation, no markdown.
 

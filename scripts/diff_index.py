@@ -15,6 +15,7 @@ Exit code 0 = no diffs, 1 = diffs found.
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -128,13 +129,26 @@ def diff_doc(doc_id: str, registry: dict, verbose: bool = False) -> bool:
 
     pdf_path, err = _load_pdf_for_doc(entry, metadata, DATA_INDEX_PASAL)
     if err:
-        # Fallback: glob for any PDF matching nomor+tahun in the raw folder
+        # Fallback: glob for PDFs matching nomor+tahun.
+        # Match nomor as exact last integer in the stem (handles zero-padding like "06" for nomor "6")
+        # and tahun as substring. Simple substring on nomor is wrong — "6" matches "2026", "16", etc.
         nomor = entry.get("nomor", "")
         tahun = entry.get("tahun", "")
         pdfs_dir = DATA_RAW / jenis_folder / "pdfs"
-        candidates = [p for p in pdfs_dir.glob("*.pdf")
-                      if nomor in p.name and tahun in p.name
-                      and "Penjelasan" not in p.name and "Lampiran" not in p.name]
+        candidates = []
+        for p in pdfs_dir.glob("*.pdf"):
+            if "Penjelasan" in p.name or "Lampiran" in p.name:
+                continue
+            if tahun not in p.name:
+                continue
+            # Nomor must match as the last integer in the stem (possibly zero-padded).
+            m = re.search(r'(\d+)$', p.stem)
+            if m and int(m.group(1)) == int(nomor):
+                candidates.append(p)
+                continue
+            # Also accept explicit word-boundary match (e.g. "Nomor 6 Tahun").
+            if re.search(rf'(?<!\d){re.escape(nomor)}(?!\d)', p.name):
+                candidates.append(p)
         if candidates:
             pdf_path = candidates[0]
         else:
