@@ -47,6 +47,37 @@ PARSER_VERSION = "2026-04-02"
 LLM_CLEANUP_VERSION = "2026-04-02"
 
 
+class IndexingLog:
+    """Appends per-doc and summary JSONL records to data/indexing_logs/.
+
+    One file per build invocation, named by timestamp + granularity + scope.
+    Provides structured timing and token usage data for RQ3 cost analysis.
+    """
+
+    def __init__(self, granularity: str, category: str | None, doc_id: str | None):
+        log_dir = Path("data/indexing_logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        label = granularity
+        if category:
+            label += "_" + category
+        elif doc_id:
+            label += "_" + doc_id
+        self.run_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S") + "_" + label
+        self.path = log_dir / f"{self.run_id}.jsonl"
+        self._f = open(self.path, "w", encoding="utf-8")
+        log.info(f"indexing log  {self.path}")
+
+    def write(self, record: dict):
+        """Append a JSON record to the log file."""
+        record["run_id"] = self.run_id
+        self._f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._f.flush()
+
+    def close(self):
+        """Flush and close the log file."""
+        self._f.close()
+
+
 def now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -189,7 +220,8 @@ GRANULARITY_INDEX_MAP = {
 
 
 def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | None,
-                        manifest: dict, registry: dict, category: str | None = None):
+                        manifest: dict, registry: dict, category: str | None = None,
+                        ilog: "IndexingLog | None" = None):
     """Re-split pasal index to ayat/full_split without PDF parse or LLM calls."""
     import copy
 
@@ -244,6 +276,7 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
             continue
 
         # Re-split copied structure and normalize residual OCR headers.
+        t_doc = time.time()
         structure = copy.deepcopy(doc["structure"])
         structure = split_fn(structure)
         strip_ocr_headers(structure)
@@ -260,7 +293,18 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
             json.dump(doc, f, ensure_ascii=False, indent=2)
 
         leaves = sum(1 for _ in iter_leaves(structure))
+        doc_elapsed = time.time() - t_doc
         log.info(f"  {did:30s}  {leaves:5d} leaves  {out_path}")
+        if ilog:
+            ilog.write({
+                "type": "doc_resplit",
+                "doc_id": did,
+                "category": (doc.get("jenis_folder") or did.split("-")[0]).upper(),
+                "granularity": granularity,
+                "timestamp": now_iso(),
+                "elapsed_s": round(doc_elapsed, 3),
+                "leaf_count": leaves,
+            })
         clear_doc_error(manifest, did, registry.get(did))
         sync_manifest_from_indexes(
             manifest,
@@ -282,6 +326,15 @@ def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | Non
 
     elapsed = time.time() - t_start
     log.info(f"re-split done  {success} re-split, {skipped} skipped  {elapsed:.1f}s (no LLM)")
+    if ilog:
+        ilog.write({
+            "type": "run_summary_resplit",
+            "granularity": granularity,
+            "timestamp": now_iso(),
+            "elapsed_s": round(elapsed, 3),
+            "docs_success": success,
+            "docs_skipped": skipped,
+        })
 
 
 # Shared helpers for parse and LLM passes.
@@ -396,7 +449,8 @@ def _load_pdf_for_doc(entry: dict, metadata: dict | None,
 # Pass 1 parses PDFs and saves llm_cleaned as false.
 
 def _parse_pass(data_index: Path, docs: dict, granularity: str,
-                rebuild: str | None, manifest: dict) -> tuple[int, int, int]:
+                rebuild: str | None, manifest: dict,
+                ilog: "IndexingLog | None" = None) -> tuple[int, int, int]:
     """Parse PDFs into tree JSON and save with llm_cleaned=false.
 
     Fully offline (no network calls). Skips existing outputs unless targeted by --rebuild.
@@ -475,7 +529,18 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
             if counts.get(key):
                 parts.append(f"{counts[key]} {key}")
         elapsed = time.time() - t0
-        log.info(f"parse  {', '.join(parts)}  ({elapsed:.1f}s)")
+        leaf_count = sum(1 for _ in iter_leaves(parse_result["structure"]))
+        log.info(f"parse  {', '.join(parts)}  {leaf_count} leaves  ({elapsed:.1f}s)")
+        if ilog:
+            ilog.write({
+                "type": "doc_parse",
+                "doc_id": doc_id,
+                "category": entry.get("jenis_folder", doc_id.split("-")[0]).upper(),
+                "granularity": granularity,
+                "timestamp": now_iso(),
+                "elapsed_s": round(elapsed, 3),
+                "pasal_leaf_count": leaf_count,
+            })
 
         if parse_result["warnings"]:
             log.warning(f"{len(parse_result['warnings'])} OCR warning(s)")
@@ -504,13 +569,24 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
 
     total_elapsed = time.time() - t_total
     log.info(f"pass 1 done  {success} parsed, {skipped} skipped, {failed} failed  {total_elapsed:.1f}s")
+    if ilog:
+        ilog.write({
+            "type": "run_summary_parse",
+            "granularity": granularity,
+            "timestamp": now_iso(),
+            "elapsed_s": round(total_elapsed, 3),
+            "docs_success": success,
+            "docs_skipped": skipped,
+            "docs_failed": failed,
+        })
     return success, skipped, failed
 
 
 # Pass 2 runs LLM cleanup and updates llm_cleaned to true.
 
 def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
-              manifest: dict) -> tuple[int, int, int]:
+              manifest: dict,
+              ilog: "IndexingLog | None" = None) -> tuple[int, int, int]:
     """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
 
     Returns (success, skipped, failed).
@@ -525,6 +601,10 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
     log.info("pass 2  LLM cleanup (Gemini 2.5 Flash)")
 
     success, skipped, failed = 0, 0, 0
+    total_llm_input_tokens = 0
+    total_llm_output_tokens = 0
+    total_llm_calls = 0
+    total_llm_batch_failures = 0
     t_total = time.time()
 
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
@@ -565,7 +645,7 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
 
         t0 = time.time()
         try:
-            llm_failures = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
+            llm_failures, token_stats = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
         except Exception as e:
             # Keep processing other docs if one doc fails unexpectedly.
             log.error(f"LLM cleanup failed: {e.__class__.__name__}: {e}")
@@ -577,6 +657,10 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
 
         elapsed = time.time() - t0
         n_failures = len(llm_failures) if llm_failures else 0
+        total_llm_input_tokens += token_stats.get("input_tokens", 0)
+        total_llm_output_tokens += token_stats.get("output_tokens", 0)
+        total_llm_calls += token_stats.get("llm_calls", 0)
+        total_llm_batch_failures += n_failures
 
         # Persist cleaned content and cleanup status.
         doc["structure"] = structure
@@ -597,6 +681,20 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
             log.warning(f"LLM done ({elapsed:.1f}s)  {n_failures} batch(es) kept as raw OCR")
         else:
             log.info(f"LLM done ({elapsed:.1f}s)  all batches cleaned")
+        if ilog:
+            ilog.write({
+                "type": "doc_llm",
+                "doc_id": doc_id,
+                "category": entry.get("jenis_folder", doc_id.split("-")[0]).upper(),
+                "granularity": "pasal",
+                "timestamp": now_iso(),
+                "elapsed_s": round(elapsed, 3),
+                "llm_input_tokens": token_stats.get("input_tokens", 0),
+                "llm_output_tokens": token_stats.get("output_tokens", 0),
+                "llm_total_tokens": token_stats.get("total_tokens", 0),
+                "llm_calls": token_stats.get("llm_calls", 0),
+                "llm_batch_failures": n_failures,
+            })
         clear_doc_error(manifest, doc_id, entry)
         sync_manifest_from_indexes(
             manifest,
@@ -610,6 +708,21 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
 
     total_elapsed = time.time() - t_total
     log.info(f"pass 2 done  {success} cleaned, {skipped} skipped, {failed} failed  {total_elapsed:.1f}s")
+    if ilog:
+        ilog.write({
+            "type": "run_summary_llm",
+            "granularity": "pasal",
+            "timestamp": now_iso(),
+            "elapsed_s": round(total_elapsed, 3),
+            "docs_success": success,
+            "docs_skipped": skipped,
+            "docs_failed": failed,
+            "total_llm_input_tokens": total_llm_input_tokens,
+            "total_llm_output_tokens": total_llm_output_tokens,
+            "total_llm_total_tokens": total_llm_input_tokens + total_llm_output_tokens,
+            "total_llm_calls": total_llm_calls,
+            "total_llm_batch_failures": total_llm_batch_failures,
+        })
     return success, skipped, failed
 
 
@@ -698,7 +811,10 @@ Examples:
         if granularity == "pasal":
             log.error("--from-pasal only works with ayat or full_split")
             sys.exit(1)
-        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry, args.category)
+        ilog = IndexingLog(granularity, args.category, args.doc_id)
+        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry,
+                            args.category, ilog=ilog)
+        ilog.close()
         return
 
     # Full pipeline mode across all granularities, then verification.
@@ -719,15 +835,17 @@ Examples:
     if args.category:
         log.info(f"category {args.category}")
 
+    ilog = IndexingLog(granularity, args.category, args.doc_id)
+
     # Determine active passes.
     run_parse = not args.llm_only
     run_llm   = not args.parse_only
 
     if run_parse:
-        _parse_pass(data_index, docs, granularity, rebuild=args.rebuild, manifest=manifest)
+        _parse_pass(data_index, docs, granularity, rebuild=args.rebuild, manifest=manifest, ilog=ilog)
 
     if run_llm:
-        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest)
+        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest, ilog=ilog)
 
     # Rebuild catalog after pass execution.
     log.info("building catalog")
@@ -744,6 +862,7 @@ Examples:
         doc_ids=list(docs.keys()),
     )
     write_status_manifest(manifest)
+    ilog.close()
 
 
 def _run_full_pipeline(args, registry: dict, manifest: dict):
@@ -753,12 +872,14 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
     docs = _resolve_docs(registry, args.rebuild, args.doc_id, args.category)
     rebuild = args.rebuild
 
+    ilog = IndexingLog("full_pipeline", args.category, args.doc_id)
+
     # Pasal phase runs parse and LLM cleanup.
     pasal_index = GRANULARITY_INDEX_MAP["pasal"]
     pasal_index.mkdir(parents=True, exist_ok=True)
 
-    _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild, manifest=manifest)
-    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest)
+    _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild, manifest=manifest, ilog=ilog)
+    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest, ilog=ilog)
 
     catalog = build_catalog(pasal_index)
     with open(pasal_index / "catalog.json", "w", encoding="utf-8") as f:
@@ -767,7 +888,7 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
 
     # Ayat and full_split phases resplit from pasal outputs.
     for gran in ("ayat", "full_split"):
-        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry, args.category)
+        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry, args.category, ilog=ilog)
 
     # Verify all granularities.
     log.info("verify all granularities")
@@ -788,6 +909,7 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
         doc_ids=list(docs.keys()),
     )
     write_status_manifest(manifest)
+    ilog.close()
 
     log.info(f"pipeline complete  {'all checks passed' if all_ok else 'some issues found, check output above'}")
 

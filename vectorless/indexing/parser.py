@@ -2281,6 +2281,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
     failed_batches: list[tuple[int, dict[str, str]]] = []
     total_input_tokens = 0
     total_output_tokens = 0
+    total_calls = 0
 
     # Submit all batches to a thread pool and collect results as they complete.
     with ThreadPoolExecutor(max_workers=min(len(batches), max_workers)) as executor:
@@ -2294,6 +2295,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
             results.update(cleaned)
             total_input_tokens += input_tok
             total_output_tokens += output_tok
+            total_calls += 1
             if error:
                 failed_batches.append((batch_i, batches[batch_i]))
 
@@ -2317,6 +2319,7 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
                 results.update(sub_cleaned)
                 total_input_tokens += in_tok
                 total_output_tokens += out_tok
+                total_calls += 1
                 if sub_err:
                     failures.append(
                         f"LLM batch {batch_i + 1}{'ab'[sub_idx]} failed after retry: "
@@ -2326,14 +2329,15 @@ def llm_cleanup_texts(texts: list[tuple[str, str]], verbose: bool = True, client
     if verbose:
         log.info(f"total tokens: {total_input_tokens + total_output_tokens:,} "f"({total_input_tokens:,} in, {total_output_tokens:,} out)")
 
-    return results, failures
+    return results, failures, total_input_tokens, total_output_tokens, total_calls
 
 
 def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = None, verbose: bool = True, client=None):
     """Run LLM OCR cleanup on all leaf texts and penjelasan, mutating the tree in place.
 
     Preserves original text for any node whose cleaned version is missing from the
-    LLM response. Returns the list of failure messages from llm_cleanup_texts.
+    LLM response. Returns (failure_messages, token_stats) where token_stats is a dict
+    with keys: input_tokens, output_tokens, total_tokens, llm_calls.
     """
     texts_to_clean: list[tuple[str, str]] = []
 
@@ -2356,9 +2360,9 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
     if not texts_to_clean:
         if verbose:
             log.info("no texts to clean")
-        return
+        return [], {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0}
 
-    cleaned, llm_failures = llm_cleanup_texts(texts_to_clean, verbose=verbose, client=client)
+    cleaned, llm_failures, input_tok, output_tok, calls = llm_cleanup_texts(texts_to_clean, verbose=verbose, client=client)
 
     expected_ids = {nid for nid, _ in texts_to_clean}
     missing = expected_ids - set(cleaned.keys())
@@ -2388,7 +2392,13 @@ def apply_llm_cleanup(output_nodes: list[dict], penjelasan_data: dict | None = N
     if verbose:
         log.info(f"cleaned {len(cleaned)} nodes")
 
-    return llm_failures
+    token_stats = {
+        "input_tokens": input_tok,
+        "output_tokens": output_tok,
+        "total_tokens": input_tok + output_tok,
+        "llm_calls": calls,
+    }
+    return llm_failures, token_stats
 
 
 def strip_ocr_headers(nodes: list[dict]):
@@ -2557,7 +2567,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
         if verbose:
             log.info(f"[6/{total_steps}] cleaning text with Gemini 2.5 Flash")
         t0 = time.time()
-        llm_failures = apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
+        llm_failures, _token_stats = apply_llm_cleanup(output_nodes, penjelasan_data, verbose=verbose)
         warnings.extend(llm_failures)
         llm_time = time.time() - t0
         if verbose:
