@@ -349,9 +349,14 @@ def _resolve_docs(registry: dict, rebuild: str | None, doc_id: str | None,
     return docs
 
 
-def _output_path(data_index: Path, doc_id: str) -> Path:
-    """Return the expected output JSON path for a given doc_id."""
-    category = doc_id.split("-")[0].upper()
+def _output_path(data_index: Path, doc_id: str, jenis_folder: str | None = None) -> Path:
+    """Return the expected output JSON path for a given doc_id.
+
+    Prefers jenis_folder (from registry) when provided; otherwise falls back
+    to the doc_id's first dash segment. Required for multi-word categories
+    like BSSN (doc_id "peraturan-bssn-*") where the split heuristic is wrong.
+    """
+    category = (jenis_folder or doc_id.split("-")[0]).upper()
     return data_index / category / f"{doc_id}.json"
 
 
@@ -445,7 +450,7 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
     t_total = time.time()
 
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
-        output_path = _output_path(data_index, doc_id)
+        output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         status_entry = manifest.get("docs", {}).get(doc_id, {})
 
@@ -578,7 +583,7 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
     t_total = time.time()
 
     for i, (doc_id, entry) in enumerate(docs.items(), 1):
-        output_path = _output_path(data_index, doc_id)
+        output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
         status_entry = manifest.get("docs", {}).get(doc_id, {})
 
         if not output_path.exists():
