@@ -2718,6 +2718,46 @@ def _is_inline_ref(text: str, match: re.Match) -> bool:
     return last_word in _INLINE_REF_PREV_WORDS
 
 
+_FLAT_AYAT_NORM_RE = re.compile(r'\(\d+\)\s')
+
+
+def _normalize_flat_structural_text(text: str) -> str:
+    """Insert newlines before structural markers in flat (no-newline) text.
+
+    LLM cleanup sometimes collapses multi-paragraph legal text to a single line,
+    breaking the newline-anchored marker patterns used by _find_and_validate_markers.
+    This recovers structure by:
+    - Inserting \\n before ayat markers (N) not preceded by inline-reference words
+    - Inserting \\n before huruf markers (a., b.) that follow list separators (: or ;)
+    """
+    if '\n' in text:
+        return text  # Already structured, no normalization needed
+
+    # Insert \n before (N) ayat markers, skipping inline cross-references.
+    # Inline refs are preceded by words like "ayat", "pasal", "pada", etc.
+    inline_words = frozenset(['ayat', 'pasal', 'huruf', 'angka', 'pada', 'di', 'dalam'])
+
+    def _maybe_insert_ayat_nl(m: re.Match) -> str:
+        if m.start() == 0:
+            return m.group(0)
+        window = text[max(0, m.start() - 40): m.start()]
+        words = window.split()
+        last_word = words[-1].lower().rstrip('.,;():') if words else ''
+        return m.group(0) if last_word in inline_words else '\n' + m.group(0)
+
+    text = _FLAT_AYAT_NORM_RE.sub(_maybe_insert_ayat_nl, text)
+
+    # Insert \n before huruf markers (a., b., c.) following : or ;.
+    # Handles the optional "dan" before the last item: "; dan c. " -> ";\nc. "
+    text = re.sub(
+        r'([;:])\s+(?:dan\s+)?([a-z])\.\s',
+        lambda m: f'{m.group(1)}\n{m.group(2)}. ',
+        text,
+    )
+
+    return text
+
+
 def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: str) -> list[tuple[int, str]] | None:
     """Find structural markers in text and verify they form a consecutive sequence.
 
@@ -2841,6 +2881,7 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     Returns a list of Ayat child dicts if Ayat markers are found, or None.
     """
     text = _strip_leading_junk(text)
+    text = _normalize_flat_structural_text(text)
 
     ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
     if not ayat_markers:
@@ -2929,6 +2970,7 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
     Used by Angka items that may contain sub-lists like definitions with a./b./c./d.
     """
     text = _strip_leading_junk(text)
+    text = _normalize_flat_structural_text(text)
     huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
     if not huruf_markers:
         return None
@@ -2961,6 +3003,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     Returns a list of child node dicts if a split was found, or None.
     """
     text = _strip_leading_junk(text)
+    text = _normalize_flat_structural_text(text)
 
     # Try Ayat: (1), (2), (3), ...
     ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
