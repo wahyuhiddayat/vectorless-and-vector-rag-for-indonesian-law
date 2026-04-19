@@ -103,16 +103,18 @@ def pick_main_pdf(metadata: dict) -> str | None:
     pdf_files = metadata.get("pdf_files", [])
     if not pdf_files:
         return None
-    if len(pdf_files) == 1:
-        return pdf_files[0]["filename"]
 
-    # Filter out lampiran files
-    candidates = [
-        p["filename"] for p in pdf_files
-        if "Lampiran" not in p["filename"]
-    ]
+    # Filter to PDF files only — BPK sometimes attaches .zip archives with
+    # supporting docs that would otherwise win the shortest-filename heuristic.
+    pdfs_only = [p for p in pdf_files if p["filename"].lower().endswith(".pdf")]
+    if not pdfs_only:
+        return None
+    if len(pdfs_only) == 1:
+        return pdfs_only[0]["filename"]
+
+    candidates = [p["filename"] for p in pdfs_only if "Lampiran" not in p["filename"]]
     if not candidates:
-        candidates = [p["filename"] for p in pdf_files]
+        candidates = [p["filename"] for p in pdfs_only]
 
     return min(candidates, key=len)
 

@@ -493,7 +493,7 @@ def write_single_prompt(output_path: Path, prompt: str) -> None:
     output_path.write_text(prompt, encoding="utf-8")
 
 
-def write_multipart_prompts(prefix: Path, doc: dict, prompt_parts: list[dict], total_questions: int, final_budget: int) -> tuple[list[Path], Path]:
+def write_multipart_prompts(prefix: Path, doc: dict, prompt_parts: list[dict], total_questions: int, final_budget: int, category: str = "") -> tuple[list[Path], Path]:
     """Write multipart prompt files plus a manifest."""
     prefix.parent.mkdir(parents=True, exist_ok=True)
 
@@ -516,7 +516,7 @@ def write_multipart_prompts(prefix: Path, doc: dict, prompt_parts: list[dict], t
                 "leaf_count": part["leaf_count"],
                 "node_ids": part["node_ids"],
                 "prompt_file": str(path),
-                "expected_raw_part_file": f"data/ground_truth_parts/{doc['doc_id']}/part{part['part_index']:02d}.json",
+                "expected_raw_part_file": f"data/ground_truth_parts/{category}/{doc['doc_id']}/part{part['part_index']:02d}.json" if category else f"data/ground_truth_parts/{doc['doc_id']}/part{part['part_index']:02d}.json",
             }
             for part, path in zip(prompt_parts, part_paths)
         ],
@@ -657,21 +657,30 @@ def main() -> None:
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
-    part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget)
+    part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget, category=doc_path.parent.name)
 
     print(f"Output     : {len(part_paths)} part files + manifest")
     for part, path in zip(prompt_parts, part_paths):
         print(f"  - part {part['part_index']:02d}: {path}  [{part['question_quota']} pertanyaan, {part['leaf_count']} leaf]")
     print(f"  - manifest: {manifest_path}")
 
-    parts_dir = Path("data/ground_truth_parts") / doc["doc_id"]
-    parts_dir.mkdir(parents=True, exist_ok=True)
     category = doc_path.parent.name  # e.g. "PERMENKES"
+    parts_dir = Path("data/ground_truth_parts") / category / doc["doc_id"]
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    # Auto-create empty part JSON placeholders so annotator can paste directly.
+    created_placeholders = []
+    for part in prompt_parts:
+        ph = parts_dir / f"part{part['part_index']:02d}.json"
+        if not ph.exists():
+            ph.write_text("[]", encoding="utf-8")
+            created_placeholders.append(ph)
     raw_placeholder = Path("data/ground_truth_raw") / category / f"{doc['doc_id']}.json"
     (Path("data/ground_truth_raw") / category).mkdir(parents=True, exist_ok=True)
+    if created_placeholders:
+        print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
-    print(f"  2. Simpan output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
+    print(f"  2. Paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
     print(f"  3. python scripts/merge_gt_parts.py {doc['doc_id']}")
     print(f"     → menghasilkan: {raw_placeholder}")
     print(f"  4. python scripts/gt_collect.py --check-only --file \"{raw_placeholder}\"")

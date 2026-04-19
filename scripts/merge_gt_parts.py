@@ -2,9 +2,12 @@
 Merge multipart raw GT outputs into one final raw GT file.
 
 Expected input layout:
-    data/ground_truth_parts/<doc_id>/part01.json
-    data/ground_truth_parts/<doc_id>/part02.json
+    data/ground_truth_parts/<KATEGORI>/<doc_id>/part01.json
+    data/ground_truth_parts/<KATEGORI>/<doc_id>/part02.json
     ...
+
+Legacy flat layout (data/ground_truth_parts/<doc_id>/partNN.json) is also
+supported for backward compatibility.
 
 Output:
     data/ground_truth_raw/<KATEGORI>/<doc_id>.json
@@ -60,9 +63,15 @@ def main() -> None:
     args = ap.parse_args()
 
     parts_root = Path(args.parts_dir)
-    doc_parts_dir = parts_root / args.doc_id
-    if not doc_parts_dir.exists():
-        raise SystemExit(f"Parts directory not found: {doc_parts_dir}")
+    category = find_category(args.doc_id)
+    # Prefer category-nested layout; fall back to legacy flat layout.
+    candidates = []
+    if category:
+        candidates.append(parts_root / category / args.doc_id)
+    candidates.append(parts_root / args.doc_id)
+    doc_parts_dir = next((c for c in candidates if c.exists()), None)
+    if doc_parts_dir is None:
+        raise SystemExit(f"Parts directory not found (checked: {', '.join(str(c) for c in candidates)})")
 
     part_files = sorted(doc_parts_dir.glob("part*.json"), key=part_sort_key)
     if not part_files:
