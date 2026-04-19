@@ -141,11 +141,16 @@ def derive_parent_node_id(anchor: str, doc_id: str, target_index: Path) -> str:
     Tries progressively shorter prefixes of the anchor node_id until
     one matches a leaf in the target index.
 
+    Also handles the "_p" intermediate Pasal nodes introduced by Fix L2
+    (deep_split_leaves). These nodes appear in full_split but not in ayat/pasal
+    indexes, e.g. "0027_p_a2" in full_split maps to "0027_a2" in ayat.
+
     Examples (target_index=INDEX_AYAT):
       "0004_a2_h3" -> try "0004_a2_h3" (miss) -> "0004_a2" (hit)
       "0004_h3"    -> try "0004_h3" (miss) -> "0004" (hit)
       "0004_a2"    -> try "0004_a2" (hit)
       "0004"       -> try "0004" (hit)
+      "0027_p_a2"  -> normal prefixes miss -> strip _p -> "0027_a2" (hit)
     """
     target_leaves = get_leaf_ids(doc_id, target_index)
     parts = anchor.split("_")
@@ -153,6 +158,13 @@ def derive_parent_node_id(anchor: str, doc_id: str, target_index: Path) -> str:
         candidate = "_".join(parts[:length])
         if candidate in target_leaves:
             return candidate
+    # Retry after stripping _p intermediate segments (Fix L2 artifact).
+    stripped_parts = [p for p in parts if p != "p"]
+    if stripped_parts != parts:
+        for length in range(len(stripped_parts), 0, -1):
+            candidate = "_".join(stripped_parts[:length])
+            if candidate in target_leaves:
+                return candidate
     raise ValueError(
         f"Cannot derive parent node from '{anchor}' in {target_index} for doc '{doc_id}'"
     )
