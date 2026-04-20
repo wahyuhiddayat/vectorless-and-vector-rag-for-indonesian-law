@@ -1971,8 +1971,8 @@ def _extract_node_text(
 
 # Conservative defaults prioritize reliability over throughput.
 # Can be overridden via env vars when the connection/API is stable.
-_DEFAULT_LLM_BATCH_SIZE = 20_000
-_DEFAULT_LLM_MAX_WORKERS = 1
+_DEFAULT_LLM_BATCH_SIZE = 40_000
+_DEFAULT_LLM_MAX_WORKERS = 4
 _DEFAULT_LLM_TIMEOUT = 300
 
 

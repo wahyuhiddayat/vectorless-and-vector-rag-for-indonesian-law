@@ -561,106 +561,84 @@ def _parse_pass(data_index: Path, docs: dict, granularity: str,
 
 # Pass 2 runs LLM cleanup and updates llm_cleaned to true.
 
-def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
-              manifest: dict,
-              clog: "CostManifest | None" = None) -> tuple[int, int, int]:
-    """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
+def _llm_cleanup_one_doc(
+    i: int, total: int, doc_id: str, entry: dict,
+    data_index: Path, rebuild: str | None, manifest: dict, docs: dict,
+    clog: "CostManifest | None", state_lock,
+) -> str:
+    """Run LLM cleanup for a single doc. Returns 'success' | 'skipped' | 'failed'.
 
-    Returns (success, skipped, failed).
+    Safe for concurrent invocation when callers pass a shared threading.Lock;
+    the lock only guards manifest reads/writes and clog updates (small critical
+    sections). The expensive API call runs outside the lock.
     """
-    import os
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        log.error("GEMINI_API_KEY is not set")
-        sys.exit(1)
-
-    log.info("pass 2  LLM cleanup (Gemini 2.5 Flash)")
-
-    success, skipped, failed = 0, 0, 0
-    total_llm_input_tokens = 0
-    total_llm_output_tokens = 0
-    total_llm_calls = 0
-    total_llm_batch_failures = 0
-    t_total = time.time()
-
-    for i, (doc_id, entry) in enumerate(docs.items(), 1):
-        output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
+    output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
+    with state_lock:
         status_entry = manifest.get("docs", {}).get(doc_id, {})
+        stale = status_entry.get("stale_parse")
 
-        if not output_path.exists():
-            log.warning(f"[{i}/{len(docs)}] missing {doc_id}, run parse pass first")
+    if not output_path.exists():
+        log.warning(f"[{i}/{total}] missing {doc_id}, run parse pass first")
+        with state_lock:
             set_doc_error(manifest, doc_id, "missing parsed output, run parse pass first", entry)
             write_status_manifest(manifest)
-            failed += 1
-            continue
+        return "failed"
 
-        with open(output_path, encoding="utf-8") as f:
-            doc = json.load(f)
+    with open(output_path, encoding="utf-8") as f:
+        doc = json.load(f)
 
-        already_cleaned = doc.get("llm_cleaned", False)
-        if status_entry.get("stale_parse"):
-            log.warning(f"[{i}/{len(docs)}] skip  {doc_id} (parse stale, rerun parse pass first)")
-            skipped += 1
-            continue
+    already_cleaned = doc.get("llm_cleaned", False)
+    if stale:
+        log.warning(f"[{i}/{total}] skip  {doc_id} (parse stale, rerun parse pass first)")
+        return "skipped"
 
-        # Re-run cleanup when requested by rebuild targeting.
-        force_this = _should_force_llm(rebuild, doc_id, status_entry)
+    force_this = _should_force_llm(rebuild, doc_id, status_entry)
+    if already_cleaned and not force_this:
+        log.info(f"[{i}/{total}] skip  {doc_id} (already cleaned)")
+        return "skipped"
 
-        if already_cleaned and not force_this:
-            log.info(f"[{i}/{len(docs)}] skip  {doc_id} (already cleaned)")
-            skipped += 1
-            continue
+    judul = entry.get("judul", "")
+    log.info(f"[{i}/{total}] {doc_id}  {judul}")
 
-        judul = entry.get("judul", "")
-        log.info(f"[{i}/{len(docs)}] {doc_id}  {judul}")
+    structure = doc["structure"]
+    penjelasan_umum = doc.get("penjelasan_umum")
+    penjelasan_proxy = {"umum": penjelasan_umum} if penjelasan_umum else None
 
-        structure = doc["structure"]
-        penjelasan_umum = doc.get("penjelasan_umum")
-        # Mutable proxy so apply_llm_cleanup can write the cleaned penjelasan_umum back.
-        penjelasan_proxy = {"umum": penjelasan_umum} if penjelasan_umum else None
-
-        t0 = time.time()
-        try:
-            llm_failures, token_stats = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
-        except Exception as e:
-            # Keep processing other docs if one doc fails unexpectedly.
-            log.error(f"LLM cleanup failed: {e.__class__.__name__}: {e}")
-            log.warning("doc kept with llm_cleaned=false, retry with --llm-only")
+    t0 = time.time()
+    try:
+        # Expensive API call runs WITHOUT holding the lock.
+        llm_failures, token_stats = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
+    except Exception as e:
+        log.error(f"LLM cleanup failed for {doc_id}: {e.__class__.__name__}: {e}")
+        log.warning(f"{doc_id} kept with llm_cleaned=false, retry with --llm-only")
+        with state_lock:
             set_doc_error(manifest, doc_id, f"LLM cleanup failed: {e.__class__.__name__}: {e}", entry)
             write_status_manifest(manifest)
-            failed += 1
-            continue
+        return "failed"
 
-        elapsed = time.time() - t0
-        n_failures = len(llm_failures) if llm_failures else 0
-        total_llm_input_tokens += token_stats.get("input_tokens", 0)
-        total_llm_output_tokens += token_stats.get("output_tokens", 0)
-        total_llm_calls += token_stats.get("llm_calls", 0)
-        total_llm_batch_failures += n_failures
+    elapsed = time.time() - t0
+    n_failures = len(llm_failures) if llm_failures else 0
 
-        # Rebuild navigation_path fields — LLM may have changed Angka titles which
-        # are used as path components, so stale paths must be refreshed.
-        add_navigation_paths(structure)
+    add_navigation_paths(structure)
 
-        # Persist cleaned content and cleanup status.
-        doc["structure"] = structure
-        if penjelasan_proxy:
-            doc["penjelasan_umum"] = penjelasan_proxy["umum"]
-        doc["llm_cleaned"] = True
-        doc["llm_cleanup_version"] = LLM_CLEANUP_VERSION
-        doc["pasal_updated_at"] = now_iso()
-        doc["llm_cleaned_at"] = now_iso()
-        # Reset warnings from any prior failed run, then append new failures only.
-        doc["warnings"] = llm_failures if llm_failures else []
+    doc["structure"] = structure
+    if penjelasan_proxy:
+        doc["penjelasan_umum"] = penjelasan_proxy["umum"]
+    doc["llm_cleaned"] = True
+    doc["llm_cleanup_version"] = LLM_CLEANUP_VERSION
+    doc["pasal_updated_at"] = now_iso()
+    doc["llm_cleaned_at"] = now_iso()
+    doc["warnings"] = llm_failures if llm_failures else []
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(doc, f, ensure_ascii=False, indent=2)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, indent=2)
 
-        if n_failures:
-            log.warning(f"LLM done ({elapsed:.1f}s)  {n_failures} batch(es) kept as raw OCR")
-        else:
-            log.info(f"LLM done ({elapsed:.1f}s)  all batches cleaned")
+    if n_failures:
+        log.warning(f"LLM done ({elapsed:.1f}s)  {n_failures} batch(es) kept as raw OCR  ({doc_id})")
+    else:
+        log.info(f"LLM done ({elapsed:.1f}s)  all batches cleaned  ({doc_id})")
+
+    with state_lock:
         if clog:
             clog.update(doc_id, {
                 "category": entry.get("jenis_folder", doc_id.split("-")[0]).upper(),
@@ -674,18 +652,69 @@ def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
             })
         clear_doc_error(manifest, doc_id, entry)
         sync_manifest_from_indexes(
-            manifest,
-            docs,
-            PARSER_VERSION,
-            LLM_CLEANUP_VERSION,
-            doc_ids=[doc_id],
+            manifest, docs, PARSER_VERSION, LLM_CLEANUP_VERSION, doc_ids=[doc_id],
         )
         write_status_manifest(manifest)
-        success += 1
+    return "success"
+
+
+def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
+              manifest: dict,
+              clog: "CostManifest | None" = None,
+              parallel: int = 1) -> tuple[int, int, int]:
+    """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
+
+    When `parallel` > 1, processes that many docs concurrently via a thread
+    pool. Each doc still uses its own batch-level parallelism inside the
+    parser, so total in-flight API calls = parallel × VECTORLESS_LLM_MAX_WORKERS.
+
+    Returns (success, skipped, failed).
+    """
+    import os
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        log.error("GEMINI_API_KEY is not set")
+        sys.exit(1)
+
+    log.info(f"pass 2  LLM cleanup (Gemini 2.5 Flash), parallel={parallel}")
+    t_total = time.time()
+    state_lock = threading.Lock()
+
+    results = {"success": 0, "skipped": 0, "failed": 0}
+    doc_items = list(docs.items())
+    total = len(doc_items)
+
+    if parallel <= 1:
+        for i, (doc_id, entry) in enumerate(doc_items, 1):
+            status = _llm_cleanup_one_doc(i, total, doc_id, entry, data_index,
+                                          rebuild, manifest, docs, clog, state_lock)
+            results[status] += 1
+    else:
+        with ThreadPoolExecutor(max_workers=parallel) as executor:
+            futures = {
+                executor.submit(
+                    _llm_cleanup_one_doc, i, total, doc_id, entry, data_index,
+                    rebuild, manifest, docs, clog, state_lock,
+                ): doc_id
+                for i, (doc_id, entry) in enumerate(doc_items, 1)
+            }
+            for future in as_completed(futures):
+                doc_id = futures[future]
+                try:
+                    status = future.result()
+                    results[status] += 1
+                except Exception as e:
+                    log.error(f"worker for {doc_id} crashed: {e.__class__.__name__}: {e}")
+                    results["failed"] += 1
 
     total_elapsed = time.time() - t_total
-    log.info(f"pass 2 done  {success} cleaned, {skipped} skipped, {failed} failed  {total_elapsed:.1f}s")
-    return success, skipped, failed
+    log.info(f"pass 2 done  {results['success']} cleaned, "
+             f"{results['skipped']} skipped, {results['failed']} failed  "
+             f"{total_elapsed:.1f}s")
+    return results["success"], results["skipped"], results["failed"]
 
 
 # CLI entry point.
@@ -750,6 +779,14 @@ Examples:
     ap.add_argument("--full-pipeline", action="store_true",
                     help="Run complete pipeline: pasal parse+LLM → ayat resplit → full_split resplit → verify.")
     # Backward compatibility aliases.
+    ap.add_argument("--parallel", type=int, default=1, metavar="N",
+                    help=(
+                        "Number of docs to process concurrently in LLM cleanup pass. "
+                        "Docs are independent, so parallelism scales nearly linearly "
+                        "until Gemini rate limits. Combined with batch-level parallelism "
+                        "inside each doc (VECTORLESS_LLM_MAX_WORKERS, default 4), the "
+                        "total concurrent API calls is N × 4. Default 1 (sequential)."
+                    ))
     ap.add_argument("--no-llm", action="store_true",
                     help="(legacy) Alias for --parse-only.")
     ap.add_argument("--force", action="store_true",
@@ -806,7 +843,8 @@ Examples:
         _parse_pass(data_index, docs, granularity, rebuild=args.rebuild, manifest=manifest, clog=clog)
 
     if run_llm:
-        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest, clog=clog)
+        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest,
+                  clog=clog, parallel=args.parallel)
 
     # Rebuild catalog after pass execution.
     log.info("building catalog")
@@ -839,7 +877,8 @@ def _run_full_pipeline(args, registry: dict, manifest: dict):
     pasal_index.mkdir(parents=True, exist_ok=True)
 
     _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild, manifest=manifest, clog=pasal_clog)
-    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest, clog=pasal_clog)
+    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest, clog=pasal_clog,
+              parallel=getattr(args, "parallel", 1))
 
     catalog = build_catalog(pasal_index)
     with open(pasal_index / "catalog.json", "w", encoding="utf-8") as f:
