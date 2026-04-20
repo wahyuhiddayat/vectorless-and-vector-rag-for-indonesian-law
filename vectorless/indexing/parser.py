@@ -639,10 +639,12 @@ PATTERNS = {
         # Matches OCR variants of "Pasal" (Pasa1, Pasal 4O, Pasal 119I).
         # Negative lookahead excludes lines followed by ayat/huruf/angka, which indicate
         # a cross-reference in body text rather than a section heading.
-        # Strict end-of-line: "Pasal N..." (trailing dots from PDF footer/TOC artifacts)
-        # must NOT match as a heading.
-        r'^[Pp]asa[l1]\s+([0-9OlI][0-9A-Za-z \t]*?)\s*$'
-        r'(?:\n(?!ayat|huruf|angka|dan Pasal|sampai dengan|jo\.?\s)|\Z)',
+        # A lone trailing apostrophe (common OCR noise: "Pasal 9'") is accepted, but
+        # "Pasal N..." (TOC/footer triple-dot artifacts) must NOT match.
+        # Space after "Pasal" is optional: some scanned PDFs emit "Pasa12" (OCR
+        # drops the space when the final `l` is rendered as a digit glyph).
+        r"^[Pp]asa[l1]\s*([0-9OlI][0-9A-Za-z \t]*?)\s*[']?$"
+        r"(?:\n(?!ayat|huruf|angka|dan Pasal|sampai dengan|jo\.?\s)|\Z)",
         re.MULTILINE
     ),
 }
