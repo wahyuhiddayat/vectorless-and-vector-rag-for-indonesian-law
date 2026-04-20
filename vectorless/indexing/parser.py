@@ -639,7 +639,9 @@ PATTERNS = {
         # Matches OCR variants of "Pasal" (Pasa1, Pasal 4O, Pasal 119I).
         # Negative lookahead excludes lines followed by ayat/huruf/angka, which indicate
         # a cross-reference in body text rather than a section heading.
-        r'^[Pp]asa[l1]\s+([0-9OlI][0-9A-Za-z \t]*?)\s*(?:\.\s*\.\s*[.\'])?$'
+        # Strict end-of-line: "Pasal N..." (trailing dots from PDF footer/TOC artifacts)
+        # must NOT match as a heading.
+        r'^[Pp]asa[l1]\s+([0-9OlI][0-9A-Za-z \t]*?)\s*$'
         r'(?:\n(?!ayat|huruf|angka|dan Pasal|sampai dengan|jo\.?\s)|\Z)',
         re.MULTILINE
     ),
@@ -797,8 +799,17 @@ def _looks_like_nonstructural_pasal(text: str, match: re.Match[str]) -> bool:
     # Real Pasal headings are followed by ayat markers, definition text, or other
     # sentence starts. Lowercase continuation strongly suggests the OCR split a
     # phrase such as "Pajak Penghasilan Pasal 21 ditanggung pemerintah".
+    # Exception: if previous line is a sentence terminator, a page boundary
+    # marker (page number "-9-"), or an all-caps page header like "PRESIDEN" or
+    # "REPUBLIK INDONESIA", the Pasal is almost certainly a real heading even
+    # if OCR lowercased the next word (e.g. "Laporan" → "laporan").
     if next_line and next_line[0].islower():
-        return True
+        prev_stripped = prev_line.rstrip()
+        prev_ends_sentence = prev_stripped.endswith((".", ";", ":"))
+        is_page_marker = bool(re.match(r'^-?\s*\d+\s*-?\s*$', prev_stripped))
+        is_caps_header = _is_caps_heading_fragment(prev_line)
+        if not (prev_ends_sentence or is_page_marker or is_caps_header):
+            return True
     if next_line.startswith(("BAB ", "Bagian ", "Paragraf ")):
         return True
     if _is_caps_heading_fragment(prev_line) and _is_caps_heading_fragment(next_line):
