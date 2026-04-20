@@ -618,7 +618,9 @@ ROMAN_NUMERAL = r'[IVXLCDM]+[A-Z]?'
 
 PATTERNS = {
     "bab": re.compile(
-        r'^BAB\s+(' + ROMAN_NUMERAL + r')\s*\n\s*(.+?)(?:\n|$)',
+        # Space after "BAB" is optional: scanned PDFs sometimes emit "BABI",
+        # "BABII" where OCR drops the whitespace before the Roman numeral.
+        r'^BAB\s*(' + ROMAN_NUMERAL + r')\s*\n\s*(.+?)(?:\n|$)',
         re.MULTILINE
     ),
     "bagian": re.compile(
