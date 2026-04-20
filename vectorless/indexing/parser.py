@@ -814,6 +814,7 @@ def _looks_like_nonstructural_pasal(text: str, match: re.Match[str]) -> bool:
         is_caps_header = _is_caps_heading_fragment(prev_line)
         if not (prev_ends_sentence or is_page_marker or is_caps_header):
             return True
+
     if next_line.startswith(("BAB ", "Bagian ", "Paragraf ")):
         return True
     if _is_caps_heading_fragment(prev_line) and _is_caps_heading_fragment(next_line):
@@ -1088,6 +1089,28 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
         elif elem["type"] == "pasal_roman":
             last_angka_num = 0
         final_deduped.append(elem)
+
+    # Re-sort consecutive pasal elements on the same page by numeric value.
+    # Multi-column PDF layouts can cause pymupdf to extract Pasal headings out
+    # of reading order (e.g. "Pasa13" at offset 1448 precedes "Pasa12" at 1455
+    # because they are in separate columns). Sorting by number fixes the order
+    # without disturbing cross-page ordering or other element types.
+    i = 0
+    while i < len(final_deduped):
+        j = i
+        while (j + 1 < len(final_deduped)
+               and final_deduped[j + 1]["type"] == "pasal"
+               and final_deduped[i]["type"] == "pasal"
+               and final_deduped[j + 1]["page_num"] == final_deduped[i]["page_num"]):
+            j += 1
+        if j > i:
+            run = final_deduped[i:j + 1]
+            def _num_key(e):
+                m = re.match(r"(\d+)", str(e.get("number", "")))
+                return (int(m.group(1)) if m else 10**9, str(e.get("number", "")))
+            run.sort(key=_num_key)
+            final_deduped[i:j + 1] = run
+        i = j + 1
 
     return final_deduped
 
