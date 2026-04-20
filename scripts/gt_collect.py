@@ -505,21 +505,30 @@ def main() -> None:
                 existing_anchors[anchor_key] = item["query"][:40]
                 accepted.append(item)
 
+        already_in_gt = doc_id in existing_doc_ids
         all_errors_for_file = hard_errors + dup_errors
-        status = "✓" if not all_errors_for_file else "✗"
-        already = " [sudah ada di GT]" if doc_id in existing_doc_ids else ""
-        warn_note = f", {len(warnings)} warnings" if warnings else ""
 
-        print(
-            f"  {status} {doc_id}{already}: "
-            f"{len(accepted)} valid, {len(all_errors_for_file)} errors{warn_note}"
-        )
-        for msg in all_errors_for_file + warnings:
-            print(f"    {msg}")
+        if already_in_gt and not hard_errors and not accepted:
+            # Doc already fully in GT, no new items and no structural errors — silent skip.
+            warn_note = f", {len(warnings)} warnings" if warnings else ""
+            print(f"  → {doc_id} [skip — sudah ada di GT]{warn_note}")
+            for msg in warnings:
+                print(f"    {msg}")
+            total_warnings += len(warnings)
+        else:
+            status = "✓" if not all_errors_for_file else "✗"
+            already = " [sudah ada di GT]" if already_in_gt else ""
+            warn_note = f", {len(warnings)} warnings" if warnings else ""
+            print(
+                f"  {status} {doc_id}{already}: "
+                f"{len(accepted)} valid, {len(all_errors_for_file)} errors{warn_note}"
+            )
+            for msg in all_errors_for_file + warnings:
+                print(f"    {msg}")
+            total_hard_errors += len(all_errors_for_file)
+            total_warnings += len(warnings)
 
         all_valid.extend(accepted)
-        total_hard_errors += len(all_errors_for_file)
-        total_warnings += len(warnings)
 
     print(
         f"\nTotal: {len(all_valid)} pertanyaan valid, "
