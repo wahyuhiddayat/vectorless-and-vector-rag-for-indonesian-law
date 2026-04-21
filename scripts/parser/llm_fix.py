@@ -57,6 +57,12 @@ MODEL_NAME = "gemini-2.5-flash"
 MAX_RETRIES = 3
 MAX_INPUT_TOKENS_HINT = 200_000
 
+# Docs with more pasals than this use BAB-chunked processing so each LLM
+# response stays well below Gemini's ~65K output token ceiling.
+CHUNK_PASAL_THRESHOLD = 30
+# Fallback chunk size when a doc has no BAB structure (pure pasal list).
+PASALS_PER_CHUNK = 15
+
 
 PROMPT_TEMPLATE = """\
 You are fixing the structural parse of an Indonesian legal document.
@@ -264,8 +270,12 @@ def load_pdf_blocks(doc_id: str) -> str:
     return "\n".join(out)
 
 
-def call_gemini(prompt: str, max_output_tokens: int = 32768) -> tuple[str, dict]:
+def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
     """Call Gemini 2.5 Flash; return (raw_text, usage_dict).
+
+    Uses max_output_tokens near Gemini 2.5 Flash ceiling (65536) and disables
+    thinking mode so full budget goes to actual text output (prevents JSON
+    truncation on large legal docs).
 
     usage_dict keys: input_tokens, output_tokens, total_tokens, calls, elapsed_s.
     """
@@ -279,6 +289,15 @@ def call_gemini(prompt: str, max_output_tokens: int = 32768) -> tuple[str, dict]
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODEL_NAME)
+
+    # Try to disable thinking via ThinkingConfig; fall back if SDK lacks support.
+    thinking_kwarg: dict = {}
+    try:
+        tc = genai.types.ThinkingConfig(thinking_budget=0)  # type: ignore[attr-defined]
+        thinking_kwarg = {"thinking_config": tc}
+    except Exception:
+        thinking_kwarg = {}
+
     usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
     t0 = time.time()
     for attempt in range(1, MAX_RETRIES + 1):
@@ -288,6 +307,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 32768) -> tuple[str, dict]
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.0,
                     max_output_tokens=max_output_tokens,
+                    **thinking_kwarg,
                 ),
             )
             usage["calls"] += 1
@@ -330,12 +350,109 @@ def _normalize_keys(obj) -> None:
             _normalize_keys(item)
 
 
-def count_pasals_in_tree(structure: list[dict]) -> int:
-    """Count unique Pasal-titled nodes (at any depth)."""
-    count = 0
+def split_preamble_and_body(structure: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separate top-level preamble nodes (Pembukaan) from body nodes."""
+    preamble, body = [], []
     for node in structure:
         title = node.get("title", "")
-        if title.startswith("Pasal ") and not any(x in title for x in ("Ayat", "Huruf", "Angka")):
+        if title.startswith("Pembukaan") or title in (
+            "Menimbang",
+            "Mengingat",
+            "Menetapkan",
+        ):
+            preamble.append(node)
+        else:
+            body.append(node)
+    return preamble, body
+
+
+def chunk_body_by_bab(body: list[dict]) -> list[list[dict]]:
+    """Split body into chunks. One chunk per BAB, or groups of PASALS_PER_CHUNK
+    pasals when the doc has no BAB structure."""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    has_bab = any(n.get("title", "").startswith("BAB ") for n in body)
+    for node in body:
+        title = node.get("title", "")
+        if has_bab:
+            if title.startswith("BAB "):
+                if current:
+                    chunks.append(current)
+                    current = []
+                chunks.append([node])
+            else:
+                # Non-BAB top-level node (e.g. Pasal I amendment root): own chunk.
+                if current:
+                    chunks.append(current)
+                    current = []
+                chunks.append([node])
+        else:
+            current.append(node)
+            if count_pasals_in_tree(current) >= PASALS_PER_CHUNK:
+                chunks.append(current)
+                current = []
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def filter_issues_for_chunk(
+    chunk_nodes: list[dict], all_issues: dict
+) -> dict:
+    """Return issues entry scoped to node_ids present in this chunk only."""
+    node_ids: set[str] = set()
+
+    def collect(nodes):
+        for n in nodes:
+            nid = n.get("node_id")
+            if nid:
+                node_ids.add(nid)
+            if "nodes" in n:
+                collect(n["nodes"])
+
+    collect(chunk_nodes)
+    if not node_ids:
+        return {}
+    out = dict(all_issues)
+    # Filter node-specific lists to only entries touching this chunk.
+    out["empty_pasal_nodes"] = [
+        n for n in all_issues.get("empty_pasal_nodes", [])
+        if _issue_node_id(n) in node_ids
+    ]
+    out["bleed_nodes"] = [
+        n for n in all_issues.get("bleed_nodes", [])
+        if _issue_node_id(n) in node_ids
+    ]
+    out["underspilt_samples"] = [
+        s for s in all_issues.get("underspilt_samples", [])
+        if _issue_node_id(s) in node_ids
+    ]
+    out["empty_pasal_count"] = len(out["empty_pasal_nodes"])
+    out["bleed_count"] = len(out["bleed_nodes"])
+    out["underspilt_count"] = len(out["underspilt_samples"])
+    # Gaps / monotonic are per-doc, not per-chunk — leave as-is for context.
+    return out
+
+
+def _issue_node_id(entry: str) -> str:
+    """Extract node_id prefix from issue sample string like '0012:Pasal 3' or '0012_a2_h1:unsplit_huruf'."""
+    return entry.split(":", 1)[0] if isinstance(entry, str) else ""
+
+
+_PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
+
+
+def count_pasals_in_tree(structure: list[dict]) -> int:
+    """Count nodes whose title is exactly a Pasal heading (e.g. 'Pasal 12', 'Pasal 5A').
+
+    Uses a strict regex rather than substring matching to avoid false positives
+    from titles like 'Pasal 1 1.' that can appear after title normalization of
+    LLM output where children lacked proper Angka/Huruf markers.
+    """
+    count = 0
+    for node in structure:
+        title = (node.get("title") or "").strip()
+        if _PASAL_TITLE_RE.match(title):
             count += 1
         if "nodes" in node:
             count += count_pasals_in_tree(node["nodes"])
@@ -365,6 +482,9 @@ def assign_node_ids(structure: list[dict]) -> None:
 def _assign_child_ids(parent: dict) -> None:
     """Recursively assign suffixed node_ids based on the DEEPEST marker in title.
 
+    Case-insensitive on marker keywords (LLM sometimes writes lowercase
+    "ayat (1)" / "huruf a"), but maps to deterministic numeric/letter suffixes.
+
     Title format examples and resulting suffix:
         "Pasal 3 Ayat (1)"                    -> a1
         "Pasal 3 Huruf a"                     -> h1
@@ -375,15 +495,16 @@ def _assign_child_ids(parent: dict) -> None:
     parent_id = parent.get("node_id", "")
     for i, child in enumerate(parent.get("nodes", []), 1):
         title = child.get("title", "")
-        # Try matching at end-of-string, most specific first.
-        m_angka = re.search(r"Angka\s+(\d+)\s*$", title)
-        m_huruf = re.search(r"Huruf\s+([a-z])\s*$", title)
-        m_ayat = re.search(r"Ayat\s+\((\d+)\)\s*$", title)
+        # Match end-of-string markers, most specific first. IGNORECASE handles
+        # LLM inconsistency (Ayat vs ayat, Huruf vs huruf).
+        m_angka = re.search(r"Angka\s+(\d+)\s*$", title, re.IGNORECASE)
+        m_huruf = re.search(r"Huruf\s+([a-z])\s*$", title, re.IGNORECASE)
+        m_ayat = re.search(r"Ayat\s+\((\d+)\)\s*$", title, re.IGNORECASE)
         if m_angka:
             suffix = f"n{m_angka.group(1)}"
         elif m_huruf:
-            # Map a=1, b=2, c=3 deterministically.
-            suffix = f"h{ord(m_huruf.group(1)) - ord('a') + 1}"
+            letter = m_huruf.group(1).lower()
+            suffix = f"h{ord(letter) - ord('a') + 1}"
         elif m_ayat:
             suffix = f"a{m_ayat.group(1)}"
         else:
@@ -404,36 +525,66 @@ def build_navigation_paths(structure: list[dict], ancestors: list[str] | None = 
             build_navigation_paths(node["nodes"], ancestors + [title])
 
 
+def _expand_shortcut_title(title: str) -> str:
+    """Expand shortcut titles and normalize marker casing.
+
+    Examples:
+        "1."            -> "Angka 1"
+        "12."           -> "Angka 12"
+        "a."            -> "Huruf a"
+        "(1)"           -> "Ayat (1)"
+        "Pasal 2 ayat (1)" -> "Pasal 2 Ayat (1)"      (casing fix)
+        "Pasal 3 huruf a"  -> "Pasal 3 Huruf a"
+        "Ayat (1)"      -> unchanged
+    """
+    t = title.strip()
+    m_angka = re.match(r"^(\d+)\.?\s*$", t)
+    if m_angka:
+        return f"Angka {m_angka.group(1)}"
+    m_huruf = re.match(r"^([a-z])\.?\s*$", t)
+    if m_huruf:
+        return f"Huruf {m_huruf.group(1)}"
+    m_ayat = re.match(r"^\((\d+)\)\s*$", t)
+    if m_ayat:
+        return f"Ayat ({m_ayat.group(1)})"
+    # Normalize casing for marker keywords embedded in longer titles.
+    t = re.sub(r"\bayat\b", "Ayat", t)
+    t = re.sub(r"\bhuruf\b", "Huruf", t)
+    t = re.sub(r"\bangka\b", "Angka", t)
+    return t
+
+
 def normalize_titles(structure: list[dict], ancestor_titles: list[str] | None = None) -> None:
-    """Rewrite short child titles to include Pasal/Ayat prefix chain.
+    """Expand shortcut child titles and prepend Pasal/Ayat prefix chain.
 
-    LLM often emits short titles like "Ayat (1)" or "Huruf a" for child nodes
-    when the parent is obvious. Existing parser/validator expects full titles
-    like "Pasal 7 Ayat (1)" or "Pasal 7 Ayat (1) Huruf a".
+    LLM often emits short titles like "Ayat (1)" / "Huruf a" / "1." / "(2)"
+    for child nodes when the parent is obvious. Existing parser/validator
+    expects full titles like "Pasal 7 Ayat (1)" / "Pasal 7 Ayat (1) Huruf a".
 
-    Rule: if a child title does not start with "Pasal "/"BAB "/"Bagian "/
-    "Paragraf "/preamble keyword and there is a pasal ancestor, prepend the
-    pasal-rooted ancestor chain.
+    Steps per node:
+    1. Expand shortcut forms (1. -> Angka 1, a. -> Huruf a, (1) -> Ayat (1)).
+    2. If title is not a root-level structural heading and a Pasal ancestor
+       exists, prepend the pasal-rooted ancestor chain.
     """
     if ancestor_titles is None:
         ancestor_titles = []
     for node in structure:
-        title = node.get("title", "")
-        # Root-level structural titles don't need prefixing.
+        raw_title = node.get("title", "")
+        expanded = _expand_shortcut_title(raw_title)
+        node["title"] = expanded
+
         is_root_level = (
-            title.startswith(("Pasal ", "BAB ", "Bagian ", "Paragraf "))
-            or title in ("Pembukaan", "Menimbang", "Mengingat", "Menetapkan", "Penutup")
-            or title.startswith("Pasal I")  # amendment pasal_roman
+            expanded.startswith(("Pasal ", "BAB ", "Bagian ", "Paragraf "))
+            or expanded in ("Pembukaan", "Menimbang", "Mengingat", "Menetapkan", "Penutup")
         )
-        # Pasal-rooted ancestors: chain from the first Pasal ancestor onward.
-        pasal_chain = []
+        pasal_chain: list[str] = []
         for anc in ancestor_titles:
             if anc.startswith("Pasal "):
                 pasal_chain = [anc]
             elif pasal_chain:
                 pasal_chain.append(anc)
-        if not is_root_level and pasal_chain and title:
-            node["title"] = " ".join(pasal_chain + [title])
+        if not is_root_level and pasal_chain and expanded:
+            node["title"] = " ".join(pasal_chain + [expanded])
         if "nodes" in node:
             normalize_titles(node["nodes"], ancestor_titles + [node["title"]])
 
@@ -467,8 +618,155 @@ def validate_fix(before: dict, after: dict, pdf_pasal_count: int) -> tuple[bool,
     return len(errors) == 0, errors
 
 
+def _run_llm_fix_call(prompt: str) -> tuple[dict | None, dict, str | None]:
+    """Shared LLM call + parse. Returns (llm_obj_or_None, usage, error_message)."""
+    try:
+        raw, usage = call_gemini(prompt)
+    except Exception as exc:
+        return None, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}, f"llm call: {exc}"
+    try:
+        llm_obj = parse_llm_json(raw)
+    except json.JSONDecodeError as exc:
+        return None, usage, f"json parse: {exc} (raw_preview: {raw[:300]!r})"
+    return llm_obj, usage, None
+
+
+def _accumulate_usage(dst: dict, src: dict) -> None:
+    """Add per-call usage metrics into dst."""
+    for k in ("input_tokens", "output_tokens", "total_tokens", "calls"):
+        dst[k] = dst.get(k, 0) + src.get(k, 0)
+    dst["elapsed_s"] = round(dst.get("elapsed_s", 0.0) + src.get("elapsed_s", 0.0), 3)
+
+
+CHUNK_PROMPT_TEMPLATE = """\
+You are fixing ONE SECTION of a larger Indonesian legal document.
+
+=== DOCUMENT METADATA ===
+doc_id       : {doc_id}
+judul        : {judul}
+is_perubahan : {is_perubahan}
+section      : {chunk_label} ({chunk_index}/{chunk_total})
+
+=== SECTION TO FIX (parser output for THIS section only) ===
+Parse the Pasal tree below. Your task is to RETURN A COMPLETE CORRECTED
+VERSION of this exact section — same Pasal numbers, same scope, but with any
+flagged issues fixed. Keep every Pasal and every child node. DO NOT summarize,
+DO NOT drop content, DO NOT return only the BAB title.
+
+{chunk_view}
+
+=== KNOWN ISSUES IN THIS SECTION ===
+{issues_list}
+
+=== FULL PDF TEXT (ground truth, with spatial coordinates) ===
+Blocks tagged with [x=column-left y=top]. Two-column gazette layouts put
+left column at x~50-280, right column at x~300-550. Use coords to
+reconstruct body attribution when heading clusters (e.g. "Pasal 7\\nPasal 8")
+and bodies are in different blocks.
+
+{pdf_text}
+
+=== INSTRUCTIONS ===
+
+Output a JSON object with a single top-level key "structure". The "structure"
+value must contain ALL nodes shown in the section above, preserved at the same
+hierarchy depth. Every Pasal in the section must appear in your output with
+full body text (either as "text" on a leaf, or as "nodes" on a container plus
+optional intro "text" on the parent).
+
+Example of CORRECT output shape for a BAB section containing 3 Pasals:
+  {{
+    "structure": [
+      {{
+        "title": "BAB I - KETENTUAN UMUM",
+        "nodes": [
+          {{ "title": "Pasal 1", "text": "..." }},
+          {{ "title": "Pasal 2", "text": "..." }},
+          {{ "title": "Pasal 3", "nodes": [...] }}
+        ]
+      }}
+    ]
+  }}
+
+WRONG output (returning only the BAB header without its Pasal children) —
+DO NOT do this:
+  {{ "structure": [ {{ "title": "KETENTUAN UMUM" }} ] }}
+
+Rules:
+1. Preserve all Pasal numbers and their content from the section above.
+2. Fix flagged issues (empty_pasal, underspilt, bleed, etc.) using the PDF
+   blocks as ground truth.
+3. Follow the content-attribution rule: intro text on parent, list items on
+   children, no "a."/"1." prefix in child text.
+4. Drop footer noise: "SK No ...", page numbers "- N -", repeated
+   "PRESIDEN REPUBLIK INDONESIA".
+5. Output ONLY valid JSON, no markdown fences, no prose.
+"""
+
+
+def _fix_chunk(
+    doc_id: str,
+    parser_doc: dict,
+    chunk_nodes: list[dict],
+    chunk_index: int,
+    chunk_total: int,
+    pdf_text: str,
+    issues: dict,
+) -> tuple[list[dict] | None, dict, str | None]:
+    """Fix a single chunk of the body. Returns (fixed_nodes, usage, error)."""
+    chunk_label = chunk_nodes[0].get("title", "")[:40] if chunk_nodes else ""
+    chunk_issues = filter_issues_for_chunk(chunk_nodes, issues)
+    prompt = CHUNK_PROMPT_TEMPLATE.format(
+        doc_id=doc_id,
+        judul=parser_doc.get("judul", "(unknown)"),
+        is_perubahan=parser_doc.get("is_perubahan", False),
+        chunk_label=chunk_label,
+        chunk_index=chunk_index,
+        chunk_total=chunk_total,
+        chunk_view=compact_tree_view(chunk_nodes),
+        issues_list=build_issues_list(chunk_issues),
+        pdf_text=pdf_text,
+    )
+    est_tokens = len(prompt) // 4
+    print(
+        f"  chunk {chunk_index}/{chunk_total} ({chunk_label}): "
+        f"{est_tokens:,} input tokens...",
+        flush=True,
+    )
+    llm_obj, usage, err = _run_llm_fix_call(prompt)
+    # Save per-chunk output for debugging.
+    debug_dir = REPO_ROOT / "tmp" / f"llm_fix_chunks_{doc_id}"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    debug_path = debug_dir / f"chunk_{chunk_index:02d}.json"
+    try:
+        with open(debug_path, "w", encoding="utf-8") as f:
+            json.dump(llm_obj or {"_error": err}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    if err:
+        return None, usage, err
+    if not isinstance(llm_obj, dict) or "structure" not in llm_obj:
+        return None, usage, "missing 'structure' key"
+    struct = llm_obj["structure"]
+    if not isinstance(struct, list):
+        return None, usage, "'structure' must be a list"
+    # Sanity check: if all returned nodes have no body AND no children,
+    # the chunk output is degenerate (LLM returned only headers).
+    body_nodes = 0
+    for node in struct:
+        if (node.get("text") and node["text"].strip()) or node.get("nodes"):
+            body_nodes += 1
+    if body_nodes == 0 and len(chunk_nodes) > 0:
+        return None, usage, "degenerate output (all nodes empty)"
+    return struct, usage, None
+
+
 def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> dict:
-    """Apply grounded LLM fix to one doc. Returns audit record."""
+    """Apply grounded LLM fix to one doc. Returns audit record.
+
+    Routes big docs (>CHUNK_PASAL_THRESHOLD pasals) through BAB-chunked fix
+    to stay under Gemini's 65K output-token ceiling.
+    """
     audit = {
         "doc_id": doc_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -501,39 +799,81 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
         audit["error"] = f"pdf load: {exc}"
         return audit
 
-    prompt = PROMPT_TEMPLATE.format(
-        doc_id=doc_id,
-        judul=parser_doc.get("judul", "(unknown)"),
-        is_perubahan=parser_doc.get("is_perubahan", False),
-        parser_view=compact_tree_view(parser_doc.get("structure", [])),
-        issues_list=build_issues_list(report_entry),
-        pdf_text=pdf_text,
-    )
+    total_pasals = count_pasals_in_tree(parser_doc.get("structure", []))
+    audit["before_pasal_count"] = total_pasals
+    use_chunked = total_pasals > CHUNK_PASAL_THRESHOLD
+    audit["mode"] = "chunked" if use_chunked else "whole"
 
-    est_tokens = len(prompt) // 4
-    if est_tokens > MAX_INPUT_TOKENS_HINT:
-        print(f"  WARN large prompt: {est_tokens:,} tokens", flush=True)
-
-    print(f"  calling Gemini ({est_tokens:,} input tokens)...", flush=True)
-    try:
-        raw, usage = call_gemini(prompt)
-    except Exception as exc:
-        audit["status"] = "error"
-        audit["error"] = f"llm call: {exc}"
-        return audit
-    audit["llm_fix_input_tokens"] = usage["input_tokens"]
-    audit["llm_fix_output_tokens"] = usage["output_tokens"]
-    audit["llm_fix_total_tokens"] = usage["total_tokens"]
-    audit["llm_fix_time_s"] = usage["elapsed_s"]
-    audit["llm_fix_calls"] = usage["calls"]
-
-    try:
-        llm_obj = parse_llm_json(raw)
-    except json.JSONDecodeError as exc:
-        audit["status"] = "error"
-        audit["error"] = f"json parse: {exc}"
-        audit["raw_preview"] = raw[:500]
-        return audit
+    if not use_chunked:
+        # Whole-doc single LLM call.
+        prompt = PROMPT_TEMPLATE.format(
+            doc_id=doc_id,
+            judul=parser_doc.get("judul", "(unknown)"),
+            is_perubahan=parser_doc.get("is_perubahan", False),
+            parser_view=compact_tree_view(parser_doc.get("structure", [])),
+            issues_list=build_issues_list(report_entry),
+            pdf_text=pdf_text,
+        )
+        est_tokens = len(prompt) // 4
+        if est_tokens > MAX_INPUT_TOKENS_HINT:
+            print(f"  WARN large prompt: {est_tokens:,} tokens", flush=True)
+        print(f"  calling Gemini ({est_tokens:,} input tokens)...", flush=True)
+        llm_obj, usage, err = _run_llm_fix_call(prompt)
+        audit["llm_fix_input_tokens"] = usage["input_tokens"]
+        audit["llm_fix_output_tokens"] = usage["output_tokens"]
+        audit["llm_fix_total_tokens"] = usage["total_tokens"]
+        audit["llm_fix_time_s"] = usage["elapsed_s"]
+        audit["llm_fix_calls"] = usage["calls"]
+        if err:
+            audit["status"] = "error"
+            audit["error"] = err
+            return audit
+        new_structure = llm_obj["structure"]
+    else:
+        # Chunked flow: split body by BAB (or fallback chunks of 15 pasals).
+        preamble, body = split_preamble_and_body(parser_doc.get("structure", []))
+        chunks = chunk_body_by_bab(body)
+        print(
+            f"  chunked mode: {total_pasals} pasals across {len(chunks)} chunk(s)",
+            flush=True,
+        )
+        agg_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+            "elapsed_s": 0.0,
+        }
+        fixed_chunks: list[list[dict]] = []
+        chunk_errors: list[str] = []
+        for i, chunk_nodes in enumerate(chunks, 1):
+            fixed, usage, err = _fix_chunk(
+                doc_id,
+                parser_doc,
+                chunk_nodes,
+                i,
+                len(chunks),
+                pdf_text,
+                report_entry,
+            )
+            _accumulate_usage(agg_usage, usage)
+            if err or fixed is None:
+                # Fallback: keep the original parser chunk unchanged.
+                print(f"  chunk {i} failed: {err} — keeping original", flush=True)
+                fixed = chunk_nodes
+                chunk_errors.append(f"chunk{i}:{err}")
+            fixed_chunks.append(fixed)
+        audit["llm_fix_input_tokens"] = agg_usage["input_tokens"]
+        audit["llm_fix_output_tokens"] = agg_usage["output_tokens"]
+        audit["llm_fix_total_tokens"] = agg_usage["total_tokens"]
+        audit["llm_fix_time_s"] = agg_usage["elapsed_s"]
+        audit["llm_fix_calls"] = agg_usage["calls"]
+        audit["chunk_count"] = len(chunks)
+        audit["chunk_errors"] = chunk_errors
+        # Stitch: preamble + all fixed chunks.
+        new_structure = list(preamble)
+        for c in fixed_chunks:
+            new_structure.extend(c)
 
     # Count pasals from raw PDF (flat text) for sanity check.
     try:
@@ -544,20 +884,19 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
         set(re.findall(r"(?m)^\s*[Pp]asa[l1]\s*(\d+[A-Z]?)\s*[']?\s*$", flat_pdf))
     )
 
-    ok, errors = validate_fix(parser_doc, llm_obj, pdf_pasal_count)
+    llm_wrapper = {"structure": new_structure}
+    ok, errors = validate_fix(parser_doc, llm_wrapper, pdf_pasal_count)
     if not ok:
         audit["status"] = "rejected"
         audit["errors"] = errors
-        # Save rejected output for manual inspection.
         reject_path = REPO_ROOT / "tmp" / f"llm_fix_rejected_{doc_id}.json"
         reject_path.parent.mkdir(parents=True, exist_ok=True)
         with open(reject_path, "w", encoding="utf-8") as f:
-            json.dump(llm_obj, f, ensure_ascii=False, indent=2)
+            json.dump(llm_wrapper, f, ensure_ascii=False, indent=2)
         audit["rejected_preview_path"] = str(reject_path)
         return audit
 
-    new_structure = llm_obj["structure"]
-    normalize_titles(new_structure)  # rewrite short child titles into full form
+    normalize_titles(new_structure)
     assign_node_ids(new_structure)
     build_navigation_paths(new_structure)
 
@@ -569,7 +908,6 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
     }
 
     audit["after_pasal_count"] = corrected["element_counts"]["pasal"]
-    audit["before_pasal_count"] = count_pasals_in_tree(parser_doc.get("structure", []))
 
     if dry_run:
         audit["status"] = "dry_run_ok"
