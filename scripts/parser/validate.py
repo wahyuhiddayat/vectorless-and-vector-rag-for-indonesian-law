@@ -67,18 +67,21 @@ def count_pasal_markers_in_pdf(pdf_path: str) -> set[str]:
     return nums
 
 
-def extract_pasal_info(index_data: dict) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, str, str]]]:
-    """Return (ordered_pasal_numbers, leaf_bleeds, underspilts).
+def extract_pasal_info(index_data: dict) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, str, str]], list[tuple[str, str]]]:
+    """Return (ordered_pasal_numbers, leaf_bleeds, underspilts, empty_pasals).
 
     Walks the index tree and collects:
     - Pasal numbers at any depth
     - Leaf bleeds (embedded Pasal heading in body)
     - Underspilts: leaf nodes whose text contains 2+ structural markers that
-      should have been split deeper (ayat/huruf/angka).
+      should have been split deeper (ayat/huruf/angka)
+    - Empty pasals: Pasal-level leaf nodes whose text is missing or essentially
+      just the title repeated (indicates parser failed to capture body content).
     """
     pasal_nums: list[str] = []
     leaf_bleeds: list[tuple[str, str]] = []
     underspilts: list[tuple[str, str, str]] = []
+    empty_pasals: list[tuple[str, str]] = []
 
     def walk(nodes: list[dict], in_angka_ancestor: bool = False) -> None:
         for node in nodes:
@@ -96,10 +99,14 @@ def extract_pasal_info(index_data: dict) -> tuple[list[str], list[tuple[str, str
                     continue  # amendment body legitimately quotes markers
                 text = node.get("text", "")
                 node_id = node.get("node_id", "?")
+                # Empty content detector for Pasal-level leaves (no ayat children):
+                # title starts with "Pasal N" AND text is very short OR equals title.
+                is_pasal_leaf = bool(re.match(r"^Pasal\s+\d", title)) and not any(x in title for x in ("Ayat", "Huruf", "Angka"))
+                stripped_text = (text or "").strip()
+                if is_pasal_leaf and (len(stripped_text) < 30 or stripped_text == title.strip()):
+                    empty_pasals.append((node_id, title[:40]))
                 if EMBEDDED_PASAL_RE.search(text):
                     leaf_bleeds.append((node_id, title[:40]))
-                # Check for unsplit ayat/huruf/angka in the leaf.
-                # Heuristic: 2+ distinct markers strongly suggests unsplit list.
                 has_ayat_in_title = "Ayat" in title
                 has_huruf_in_title = "Huruf" in title
                 has_angka_in_title = title.endswith("Angka ") or " Angka " in title
@@ -114,7 +121,7 @@ def extract_pasal_info(index_data: dict) -> tuple[list[str], list[tuple[str, str
                     underspilts.append((node_id, title[:40], f"unsplit_angka:{sorted(angka_nums, key=int)[:5]}"))
 
     walk(index_data.get("structure", []))
-    return pasal_nums, leaf_bleeds, underspilts
+    return pasal_nums, leaf_bleeds, underspilts, empty_pasals
 
 
 def find_pdf_path(doc_id: str, jenis_folder: str | None = None) -> Path | None:
@@ -134,7 +141,7 @@ def validate_doc(doc_id: str, index_path: Path) -> dict:
     is_perubahan = bool(index_data.get("is_perubahan", False))
     jenis_folder = index_data.get("jenis_folder")
 
-    actual_pasals, leaf_bleeds, underspilts = extract_pasal_info(index_data)
+    actual_pasals, leaf_bleeds, underspilts, empty_pasals = extract_pasal_info(index_data)
     actual_nums_int = [parse_pasal_number(p) for p in actual_pasals]
     actual_nums_int = [n for n in actual_nums_int if n is not None]
 
@@ -166,6 +173,7 @@ def validate_doc(doc_id: str, index_path: Path) -> dict:
 
     bleed_count = len(leaf_bleeds)
     underspilt_count = len(underspilts)
+    empty_pasal_count = len(empty_pasals)
 
     # Score: weighted combination, max 100.
     score = 100.0 * completeness
@@ -175,6 +183,9 @@ def validate_doc(doc_id: str, index_path: Path) -> dict:
         score -= min(15.0, len(gap_list) * 2.0)
     if bleed_count:
         score -= min(20.0, bleed_count * 5.0)
+    # Empty-pasal penalty is harsh: body missing means retrieval cannot work.
+    if empty_pasal_count:
+        score -= min(25.0, empty_pasal_count * 8.0)
     # Underspilt penalty is softer: content is correct, just coarser granularity.
     if underspilt_count:
         score -= min(10.0, underspilt_count * 1.0)
@@ -200,6 +211,8 @@ def validate_doc(doc_id: str, index_path: Path) -> dict:
         "gap_list": gap_list[:10],
         "bleed_count": bleed_count,
         "bleed_nodes": [n for n, _ in leaf_bleeds[:5]],
+        "empty_pasal_count": empty_pasal_count,
+        "empty_pasal_nodes": [f"{nid}:{t}" for nid, t in empty_pasals[:5]],
         "underspilt_count": underspilt_count,
         "underspilt_samples": [f"{nid}:{kind}" for nid, _, kind in underspilts[:5]],
     }
@@ -251,6 +264,7 @@ def main() -> None:
                 f"actual={r.get('actual_pasal_count', '?')} "
                 f"gaps={r.get('gap_count', 0)} "
                 f"bleed={r.get('bleed_count', 0)} "
+                f"empty={r.get('empty_pasal_count', 0)} "
                 f"underspilt={r.get('underspilt_count', 0)}"
             )
             if args.verbose and r.get("gap_list"):
