@@ -1,0 +1,101 @@
+Kamu adalah validator kualitas dataset evaluasi retrieval dokumen hukum Indonesia.
+Di bawah ini adalah output JSON dari ChatGPT yang perlu divalidasi sebelum dimasukkan ke benchmark.
+
+Dokumen sumber: vectorless-and-vector-rag-for-indonesian-law\data\index_full_split\BSSN\peraturan-bssn-13-2024.json
+
+=== ATURAN VALIDASI ===
+
+HARD REJECT — tolak item ini, jangan masukkan ke benchmark:
+
+1. CROSS_REF_ANCHOR
+   answer_hint HANYA berisi referensi ke Pasal/ayat lain (contoh: "Pasal 4 ayat (3), ayat (4), ayat (5)").
+   Artinya anchor node tidak punya konten substantif — jawabannya sebenarnya ada di node lain.
+
+2. REFERENTIAL_QUERY
+   Query mengandung frase yang merujuk ke konteks sebelumnya tanpa antecedent eksplisit, contoh:
+   "aturan ini", "ketentuan tersebut", "hal itu", "yang tadi", "juga berlaku nggak".
+   Query harus self-contained — bisa dipahami tanpa konteks apapun.
+   CATATAN: "yang dimaksud" BUKAN trigger jika diikuti noun eksplisit dalam query yang sama.
+     REJECT:  "Apa yang dimaksud?" / "Ketentuan yang dimaksud tersebut berlaku kapan?"
+     ACCEPT:  "Apa yang dimaksud dengan penyadapan menurut UU KPK?"
+
+3. MULTI_HOP
+   Menjawab query secara lengkap membutuhkan informasi dari >1 leaf node yang berbeda.
+   Benchmark ini single-hop only.
+   Jangan flag MULTI_HOP kecuali ada bukti kuat dari konten anchor node atau answer_hint
+   bahwa jawaban harus dikombinasikan dari ≥2 node berbeda (misalnya answer_hint secara eksplisit
+   merujuk ke dua lokasi berbeda, atau anchor node hanya menyebut "lihat juga Pasal X" tanpa substansi).
+
+SOFT FLAG — catat di flagged[], DAN lakukan aksi perbaikan pada cleaned array:
+
+4. LEXICAL_LEAK
+   Berlaku HANYA untuk item query_style = "colloquial".
+   Query mengandung frasa 3+ kata berurutan yang sama persis dengan answer_hint.
+   → AKSI di cleaned array: Tulis ulang query dengan sinonim/parafrase agar tidak ada overlap literal.
+     Jika tidak bisa diperbaiki tanpa mengubah makna, HAPUS item dari cleaned array.
+
+5. HARD_NO_SIBLING
+   Berlaku untuk item difficulty = "hard".
+   Berdasarkan navigation_path, tidak terlihat sibling leaf node di pasal yang sama
+   yang bisa menjawab query secara plausibel tapi salah.
+   → AKSI di cleaned array: Ubah "difficulty" dari "hard" menjadi "medium". Jangan hapus item.
+
+6. VAGUE_COLLOQUIAL
+   Query colloquial terlalu generik sehingga bisa cocok ke banyak node dalam dokumen
+   (contoh: "Apa syaratnya?", "Bagaimana prosedurnya?", "Siapa yang bertanggung jawab?").
+   → AKSI di cleaned array: HAPUS item dari cleaned array.
+
+=== CATATAN ===
+- Duplikat gold_anchor_node_id sudah dicek otomatis oleh validator kode — tidak perlu dicek di sini.
+- Fokus hanya pada 6 aturan di atas.
+- Jika item ACCEPT semua, cukup tulis summary saja tanpa list per-item.
+- Jika ada baris [WARN] dari validator kode di bawah, gunakan sebagai PETUNJUK TAMBAHAN:
+  * "[WARN] ... Anchor ayat text cites other provisions" → item ini kandidat CROSS_REF_ANCHOR
+  * "[WARN] ... Possible context-dependent phrasing" → item ini kandidat REFERENTIAL_QUERY
+  Konfirmasi tetap perlu dilakukan berdasarkan isi query dan answer_hint yang sebenarnya.
+
+=== FORMAT OUTPUT ===
+
+{
+  "doc_id": "<doc_id>",
+  "summary": {
+    "total": <n>,
+    "accepted": <n>,
+    "hard_rejected": <n>,
+    "soft_flagged": <n>
+  },
+  "rejected": [
+    {
+      "item_number": <nomor urut di array, mulai dari 1>,
+      "node_id": "<gold_anchor_node_id>",
+      "rule": "<kode: CROSS_REF_ANCHOR | REFERENTIAL_QUERY | MULTI_HOP>",
+      "evidence": "<kutipan singkat dari query atau answer_hint yang melanggar aturan>"
+    }
+  ],
+  "flagged": [
+    {
+      "item_number": <nomor urut>,
+      "node_id": "<gold_anchor_node_id>",
+      "rule": "<kode: LEXICAL_LEAK | HARD_NO_SIBLING | VAGUE_COLLOQUIAL>",
+      "evidence": "<penjelasan singkat>"
+    }
+  ]
+}
+
+Kembalikan JSON validasi di atas, diikuti separator, lalu cleaned array:
+
+---CLEANED---
+[JSON array dari items yang LOLOS (tidak di-reject).
+ Item yang di-flag TETAP diikutsertakan, tapi HAPUS field "flag" sebelum output — struktur tiap item harus identik dengan input aslinya.
+ Pertahankan urutan dan struktur asli tiap item.]
+
+=== HASIL VALIDASI OTOMATIS (PRE-SCREENING) ===
+
+Blok di bawah ini adalah output dari skrip validator kode (gt_collect.py) yang sudah berjalan
+sebelum prompt ini dibuat. Skrip tersebut melakukan cek struktural dasar (format JSON, duplikat
+node_id, keberadaan field wajib) dan memberikan [WARN] untuk kasus yang butuh konfirmasi manual.
+Skrip ini BUKAN validator semantik — tugasmu adalah melakukan validasi semantik berdasarkan 6
+aturan di atas, dengan [WARN] sebagai petunjuk tambahan (bukan keputusan final).
+
+- vectorless-and-vector-rag-for-indonesian-law\data\ground_truth_raw\BSSN\peraturan-bssn-13-2024.json
+

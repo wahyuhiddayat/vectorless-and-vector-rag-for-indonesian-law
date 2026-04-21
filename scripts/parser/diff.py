@@ -2,10 +2,10 @@
 Compare the current pasal index against a fresh re-parse (no LLM).
 
 Usage:
-    python scripts/diff_index.py --doc-id pp-3-2026
-    python scripts/diff_index.py --category PP
-    python scripts/diff_index.py --all
-    python scripts/diff_index.py --doc-id pp-3-2026 --verbose
+    python scripts/parser/diff.py --doc-id pp-3-2026
+    python scripts/parser/diff.py --category PP
+    python scripts/parser/diff.py --all
+    python scripts/parser/diff.py --doc-id pp-3-2026 --verbose
 
 Output: for each doc, prints element_count diffs, added/removed/changed nodes.
 Only prints docs that have differences (unless --verbose).
@@ -19,8 +19,8 @@ import re
 import sys
 from pathlib import Path
 
-# Project root is one level up from scripts/
-ROOT = Path(__file__).parent.parent
+# Project root is two levels up (scripts/parser/diff.py -> repo root).
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 DATA_RAW = ROOT / "data" / "raw"

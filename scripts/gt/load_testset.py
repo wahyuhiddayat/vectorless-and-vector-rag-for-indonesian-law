@@ -23,13 +23,13 @@ File format: pickle dict with structure:
   }
 
 Usage:
-    python scripts/load_testset.py                    # show stats + first 3 items
-    python scripts/load_testset.py --full             # dump entire dataset
-    python scripts/load_testset.py --filter perpu     # filter by doc_id pattern
-    python scripts/load_testset.py --query "keyword"  # search queries by keyword
-    python scripts/load_testset.py --stats            # detailed statistics
-    python scripts/load_testset.py --json             # output as JSON (to file/stdout)
-    python scripts/load_testset.py --doc perpu-1-2016 # filter by specific doc_id
+    python scripts/gt/load_testset.py                    # show stats + first 3 items
+    python scripts/gt/load_testset.py --full             # dump entire dataset
+    python scripts/gt/load_testset.py --filter perpu     # filter by doc_id pattern
+    python scripts/gt/load_testset.py --query "keyword"  # search queries by keyword
+    python scripts/gt/load_testset.py --stats            # detailed statistics
+    python scripts/gt/load_testset.py --json             # output as JSON (to file/stdout)
+    python scripts/gt/load_testset.py --doc perpu-1-2016 # filter by specific doc_id
 """
 
 import argparse
@@ -196,13 +196,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scripts/load_testset.py              # show stats + preview
-  python scripts/load_testset.py --full       # dump entire dataset
-  python scripts/load_testset.py --stats      # detailed stats only
-  python scripts/load_testset.py --doc perpu-1-2016  # items from one doc
-  python scripts/load_testset.py --filter pp  # items from docs matching 'pp'
-  python scripts/load_testset.py --query "pidana"  # search in queries
-  python scripts/load_testset.py --json testset.json  # export to JSON
+  python scripts/gt/load_testset.py              # show stats + preview
+  python scripts/gt/load_testset.py --full       # dump entire dataset
+  python scripts/gt/load_testset.py --stats      # detailed stats only
+  python scripts/gt/load_testset.py --doc perpu-1-2016  # items from one doc
+  python scripts/gt/load_testset.py --filter pp  # items from docs matching 'pp'
+  python scripts/gt/load_testset.py --query "pidana"  # search in queries
+  python scripts/gt/load_testset.py --json testset.json  # export to JSON
         """
     )
 

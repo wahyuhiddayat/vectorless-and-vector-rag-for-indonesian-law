@@ -15,14 +15,17 @@ log = logging.getLogger(__name__)
 # ============================================================
 
 def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: bool = False) -> list[dict]:
-    """Reorder text blocks for correct reading order on landscape gazette pages.
+    """Reorder text blocks for correct reading order on multi-column pages.
 
-    Portrait pages and pages with fewer than 4 blocks are returned sorted by
-    top-to-bottom, left-to-right position. Landscape pages use a left-column-first
-    ordering when both halves are sufficiently populated and fewer than 30% of
-    blocks span the full page width (i.e. the page is genuinely two-column).
+    Pages with fewer than 4 blocks are returned sorted top-to-bottom,
+    left-to-right. Otherwise the function attempts column detection: if both
+    halves are sufficiently populated and full-width blocks are rare (<30%),
+    the page is treated as two-column and emitted as left column first then
+    right column. Applies to both portrait and landscape pages — some
+    Indonesian legal PDFs use narrow two-column layouts even in portrait
+    orientation (e.g. government regulations with side-by-side articles).
     """
-    if len(blocks) < 4 or not is_landscape:
+    if len(blocks) < 4:
         return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
 
     midpoint = page_width / 2
@@ -118,8 +121,33 @@ def _extract_page_text(page) -> str:
 def extract_pages(pdf_path: str) -> list[dict]:
     """Extract raw text from every page of a PDF using PyMuPDF.
 
+    If a cached reordered-pages JSON exists at
+    `data/reordered_pages/<doc_id>.json`, use it instead. These caches are
+    produced by `scripts/llm_reorder_pages.py` for docs with multi-column
+    layouts that pymupdf cannot reorder correctly on its own.
+
     Returns a list of dicts with keys: page_num (1-indexed), raw_text.
     """
+    from pathlib import Path as _Path
+    # Derive doc_id from pdf filename — find matching registry entry.
+    pdf_name = _Path(pdf_path).name
+    cache_dir = _Path("data/reordered_pages")
+    if cache_dir.exists():
+        try:
+            reg_path = _Path("data/raw/registry.json")
+            if reg_path.exists():
+                reg = json.load(open(reg_path, encoding="utf-8"))
+                for doc_id, entry in reg.items():
+                    jenis = entry.get("jenis_folder", "")
+                    if jenis and f"raw/{jenis}/pdfs/{pdf_name}" in pdf_path.replace("\\", "/"):
+                        cache = cache_dir / f"{doc_id}.json"
+                        if cache.exists():
+                            log.info(f"extract_pages: using reordered cache {cache}")
+                            return json.load(open(cache, encoding="utf-8"))
+                        break
+        except Exception as e:
+            log.warning(f"extract_pages cache lookup failed: {e}")
+
     pages = []
     with fitz.open(pdf_path) as doc:
         # Extract text from each page in document order.
@@ -1089,28 +1117,6 @@ def _dedupe_detected_elements(elements: list[dict]) -> list[dict]:
         elif elem["type"] == "pasal_roman":
             last_angka_num = 0
         final_deduped.append(elem)
-
-    # Re-sort consecutive pasal elements on the same page by numeric value.
-    # Multi-column PDF layouts can cause pymupdf to extract Pasal headings out
-    # of reading order (e.g. "Pasa13" at offset 1448 precedes "Pasa12" at 1455
-    # because they are in separate columns). Sorting by number fixes the order
-    # without disturbing cross-page ordering or other element types.
-    i = 0
-    while i < len(final_deduped):
-        j = i
-        while (j + 1 < len(final_deduped)
-               and final_deduped[j + 1]["type"] == "pasal"
-               and final_deduped[i]["type"] == "pasal"
-               and final_deduped[j + 1]["page_num"] == final_deduped[i]["page_num"]):
-            j += 1
-        if j > i:
-            run = final_deduped[i:j + 1]
-            def _num_key(e):
-                m = re.match(r"(\d+)", str(e.get("number", "")))
-                return (int(m.group(1)) if m else 10**9, str(e.get("number", "")))
-            run.sort(key=_num_key)
-            final_deduped[i:j + 1] = run
-        i = j + 1
 
     return final_deduped
 

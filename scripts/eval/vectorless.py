@@ -5,10 +5,10 @@ Evaluates current vectorless retrieval systems against data/validated_testset.pk
 across pasal / ayat / full_split and writes reproducible run artifacts.
 
 Usage:
-    python scripts/evaluate_vectorless.py
-    python scripts/evaluate_vectorless.py --doc-id permenaker-1-2026 --query-limit 5
-    python scripts/evaluate_vectorless.py --systems bm25-flat,hybrid --granularities ayat
-    python scripts/evaluate_vectorless.py --self-test-metrics
+    python scripts/eval/vectorless.py
+    python scripts/eval/vectorless.py --doc-id permenaker-1-2026 --query-limit 5
+    python scripts/eval/vectorless.py --systems bm25-flat,hybrid --granularities ayat
+    python scripts/eval/vectorless.py --self-test-metrics
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ from datetime import datetime
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
-WORKER_SCRIPT = REPO_ROOT / "scripts/eval_vectorless_worker.py"
+WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
 SYSTEMS = ["bm25-flat", "hybrid", "hybrid-flat", "llm-stepwise", "llm-full"]
 GRANULARITIES = ["pasal", "ayat", "full_split"]

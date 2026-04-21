@@ -13,9 +13,9 @@ Output:
     data/ground_truth_raw/<KATEGORI>/<doc_id>.json
 
 Examples:
-    python scripts/merge_gt_parts.py permenaker-13-2025
-    python scripts/merge_gt_parts.py permenaker-13-2025 --pretty
-    python scripts/merge_gt_parts.py permenaker-13-2025 --parts-dir data/ground_truth_parts
+    python scripts/gt/merge_parts.py permenaker-13-2025
+    python scripts/gt/merge_parts.py permenaker-13-2025 --pretty
+    python scripts/gt/merge_parts.py permenaker-13-2025 --parts-dir data/ground_truth_parts
 """
 
 import argparse

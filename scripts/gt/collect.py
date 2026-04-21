@@ -19,11 +19,11 @@ Output:
   data/ground_truth.json - final merged dataset (keyed by q001, q002, ...)
 
 Usage:
-    python scripts/gt_collect.py
-    python scripts/gt_collect.py --check-only
-    python scripts/gt_collect.py --force-merge
-    python scripts/gt_collect.py --stats
-    python scripts/gt_collect.py --file <path>
+    python scripts/gt/collect.py
+    python scripts/gt/collect.py --check-only
+    python scripts/gt/collect.py --force-merge
+    python scripts/gt/collect.py --stats
+    python scripts/gt/collect.py --file <path>
 """
 
 import argparse

@@ -5,7 +5,7 @@ Runs exactly one vector retrieval call in a fresh Python process so env vars
 (VECTOR_EMBEDDING_MODEL, VECTOR_COLLECTION, QDRANT_PATH) are isolated per invocation.
 
 Usage:
-    python scripts/eval_vector_worker.py \\
+    python scripts/eval/vector_worker.py \\
         --system vector-dense \\
         --granularity pasal \\
         --embedding-model gemini-embedding-001 \\
@@ -23,7 +23,7 @@ import traceback
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

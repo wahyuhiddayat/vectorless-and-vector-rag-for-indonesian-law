@@ -74,7 +74,7 @@ Documents that are not triple-OK can be re-indexed later (after fixing the parse
 ## Step 1. Generate prompt
 
 ```powershell
-python scripts/gt_prompt.py <doc_id>
+python scripts/gt/prompt.py <doc_id>
 ```
 
 Output:
@@ -92,9 +92,9 @@ Notes:
 Optional flags:
 
 ```powershell
-python scripts/gt_prompt.py <doc_id> --stdout
-python scripts/gt_prompt.py <doc_id> --out "$env:TEMP\gt_<doc_id>.txt"
-python scripts/gt_prompt.py --list
+python scripts/gt/prompt.py <doc_id> --stdout
+python scripts/gt/prompt.py <doc_id> --out "$env:TEMP\gt_<doc_id>.txt"
+python scripts/gt/prompt.py --list
 ```
 
 ---
@@ -126,7 +126,7 @@ data/ground_truth_parts/<doc_id>/part02.json
 Then merge:
 
 ```powershell
-python scripts/merge_gt_parts.py <doc_id>
+python scripts/gt/merge_parts.py <doc_id>
 ```
 
 This writes the merged file to `data/ground_truth_raw/<doc_id>.json`.
@@ -136,7 +136,7 @@ This writes the merged file to `data/ground_truth_raw/<doc_id>.json`.
 ## Step 3. Structural validation
 
 ```powershell
-python scripts/gt_collect.py --check-only --file data/ground_truth_raw/<doc_id>.json
+python scripts/gt/collect.py --check-only --file data/ground_truth_raw/<doc_id>.json
 ```
 
 Fix any hard errors in the raw JSON file before proceeding. Copy the `[WARN]` lines from the output — you will need them in the next step.
@@ -147,7 +147,7 @@ Expected clean output: `N valid, 0 errors, 0 warnings`
 
 ## Step 4. Semantic validation with Copilot
 
-Use `scripts/gt_validate_prompt.txt` as a template (the file is gitignored — customize locally).
+Use `scripts/gt/validate_prompt.txt` as a template (the file is gitignored — customize locally).
 
 In Copilot Chat:
 
@@ -171,13 +171,13 @@ Copy everything after `---CLEANED---` and overwrite `data/ground_truth_raw/<doc_
 ## Step 5. Merge into ground truth
 
 ```powershell
-python scripts/gt_collect.py --file data/ground_truth_raw/<doc_id>.json
+python scripts/gt/collect.py --file data/ground_truth_raw/<doc_id>.json
 ```
 
 Merge all raw files at once:
 
 ```powershell
-python scripts/gt_collect.py
+python scripts/gt/collect.py
 ```
 
 Output: `data/ground_truth.json`
@@ -187,7 +187,7 @@ Output: `data/ground_truth.json`
 ## Step 6. Finalize to evaluation artifact
 
 ```powershell
-python scripts/finalize_gt.py
+python scripts/gt/finalize.py
 ```
 
 Output: `data/validated_testset.pkl`
@@ -203,9 +203,9 @@ Semantics (roll-up design — every level has exactly 1 gold node):
 ## Step 7. Inspect and sanity-check
 
 ```powershell
-python scripts/gt_collect.py --stats
-python scripts/finalize_gt.py --stats
-python scripts/load_testset.py
+python scripts/gt/collect.py --stats
+python scripts/gt/finalize.py --stats
+python scripts/gt/load_testset.py
 ```
 
 What to check:

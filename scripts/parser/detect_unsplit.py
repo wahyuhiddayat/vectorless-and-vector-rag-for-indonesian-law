@@ -11,7 +11,7 @@ Cross-references doc IDs against `data/ground_truth.json` so affected docs that
 already have GT entries can be regenerated.
 
 Usage:
-    python scripts/detect_unsplit_pasal.py
+    python scripts/parser/detect_unsplit.py
 """
 
 import json

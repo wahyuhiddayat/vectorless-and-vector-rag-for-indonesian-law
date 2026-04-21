@@ -5,7 +5,7 @@ Runs exactly one vectorless retrieval call in a fresh Python process so the
 active DATA_INDEX granularity is isolated per invocation.
 
 Usage:
-    python scripts/eval_vectorless_worker.py --system bm25-flat --granularity ayat --query "..."
+    python scripts/eval/vectorless_worker.py --system bm25-flat --granularity ayat --query "..."
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

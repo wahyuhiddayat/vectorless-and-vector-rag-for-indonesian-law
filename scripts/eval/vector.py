@@ -15,9 +15,9 @@ Output files (in data/eval_runs/<timestamp>_<label>/):
     summary_overall.json               Full summary JSON
 
 Usage:
-    python scripts/evaluate_vector.py --qdrant-path ./qdrant_local
-    python scripts/evaluate_vector.py --systems vector-dense --granularities pasal --embedding-models gemini-embedding-001 --qdrant-path ./qdrant_local
-    python scripts/evaluate_vector.py --doc-id uu-13-2025 --query-limit 5 --qdrant-path ./qdrant_local
+    python scripts/eval/vector.py --qdrant-path ./qdrant_local
+    python scripts/eval/vector.py --systems vector-dense --granularities pasal --embedding-models gemini-embedding-001 --qdrant-path ./qdrant_local
+    python scripts/eval/vector.py --doc-id uu-13-2025 --query-limit 5 --qdrant-path ./qdrant_local
 """
 
 from __future__ import annotations
@@ -32,17 +32,17 @@ from datetime import datetime
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = Path(__file__).resolve().parent
 TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
-WORKER_SCRIPT = SCRIPTS_DIR / "eval_vector_worker.py"
+WORKER_SCRIPT = SCRIPTS_DIR / "vector_worker.py"
 
-# Add scripts/ to path so we can import from evaluate_vectorless
+# Add eval/ to path so we can import sibling module `vectorless.py`.
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from evaluate_vectorless import (  # noqa: E402
+from vectorless import (  # noqa: E402
     score_ranked_retrieval,
     score_citations_and_answer,
     normalize_worker_payload,

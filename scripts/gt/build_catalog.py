@@ -8,9 +8,9 @@ documents.
 Run this script once after ground_truth.json changes (e.g., new docs added).
 
 Usage:
-    python scripts/build_gt_catalog.py
-    python scripts/build_gt_catalog.py --gt data/ground_truth.json
-    python scripts/build_gt_catalog.py --dry-run
+    python scripts/gt/build_catalog.py
+    python scripts/gt/build_catalog.py --gt data/ground_truth.json
+    python scripts/gt/build_catalog.py --dry-run
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import argparse
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 GRANULARITY_DIRS = [
     REPO_ROOT / "data" / "index_pasal",

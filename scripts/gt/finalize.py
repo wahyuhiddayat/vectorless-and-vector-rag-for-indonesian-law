@@ -28,9 +28,9 @@ EVALUATION USAGE (in your retrieval eval script):
       hit = retrieved_node_id in item["gold_full_split_node_ids"]
 
 Usage:
-    python scripts/finalize_gt.py
-    python scripts/finalize_gt.py --check
-    python scripts/finalize_gt.py --stats
+    python scripts/gt/finalize.py
+    python scripts/gt/finalize.py --check
+    python scripts/gt/finalize.py --stats
 """
 
 import argparse
@@ -179,7 +179,7 @@ def finalize(check_only: bool = False) -> dict:
     """
     if not GT_FILE.exists():
         print(f"ERROR: {GT_FILE} not found.")
-        print("Run scripts/gt_collect.py first to produce ground_truth.json.")
+        print("Run scripts/gt/collect.py first to produce ground_truth.json.")
         sys.exit(1)
 
     with open(GT_FILE, encoding="utf-8") as f:
@@ -285,7 +285,7 @@ def finalize(check_only: bool = False) -> dict:
     print(f"\n✓ Disimpan ke {TESTSET_FILE}")
     print(f"  {len(testset)} queries siap dipakai untuk evaluasi 3 granularity")
     print("\nNext step:")
-    print("  python scripts/load_testset.py  # inspect result")
+    print("  python scripts/gt/load_testset.py  # inspect result")
 
     return testset
 
@@ -294,7 +294,7 @@ def print_stats() -> None:
     """Print statistics about an existing validated_testset.pkl."""
     if not TESTSET_FILE.exists():
         print(f"ERROR: {TESTSET_FILE} not found.")
-        print("Run scripts/finalize_gt.py first.")
+        print("Run scripts/gt/finalize.py first.")
         sys.exit(1)
 
     with open(TESTSET_FILE, "rb") as f:

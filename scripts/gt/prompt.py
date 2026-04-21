@@ -13,11 +13,11 @@ annotator always sees full node text. Leaf nodes are never truncated and
 never split across prompt parts.
 
 Usage:
-    python scripts/gt_prompt.py perpu-1-2016
-    python scripts/gt_prompt.py perpu-1-2016 --questions 15
-    python scripts/gt_prompt.py perpu-1-2016 --out tmp/custom_prompt.txt
-    python scripts/gt_prompt.py perpu-1-2016 --stdout
-    python scripts/gt_prompt.py --list
+    python scripts/gt/prompt.py perpu-1-2016
+    python scripts/gt/prompt.py perpu-1-2016 --questions 15
+    python scripts/gt/prompt.py perpu-1-2016 --out tmp/custom_prompt.txt
+    python scripts/gt/prompt.py perpu-1-2016 --stdout
+    python scripts/gt/prompt.py --list
 """
 
 import argparse
@@ -630,7 +630,7 @@ def main() -> None:
             print("  1. Copy prompt di atas -> paste ke ChatGPT")
             print("  2. Copy JSON output dari ChatGPT")
             print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
-            print("  4. Jalankan: python scripts/gt_collect.py")
+            print("  4. Jalankan: python scripts/gt/collect.py")
             return
 
         write_single_prompt(output_path, prompt_parts[0]["prompt"])
@@ -649,11 +649,11 @@ def main() -> None:
         print("\nLangkah selanjutnya:")
         print(f"  1. Buka {output_path} dan copy isinya → paste ke ChatGPT")
         print(f"  2. Paste output JSON ChatGPT ke: {placeholder}")
-        print(f"  3. python scripts/gt_collect.py --check-only --file \"{placeholder}\"")
+        print(f"  3. python scripts/gt/collect.py --check-only --file \"{placeholder}\"")
         print(f"     → fix hard errors, copy baris [WARN]")
         print(f"  4. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
         print(f"     → replace isi {placeholder} dengan ---CLEANED--- output Copilot")
-        print(f"  5. python scripts/gt_collect.py --file \"{placeholder}\"")
+        print(f"  5. python scripts/gt/collect.py --file \"{placeholder}\"")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
@@ -681,13 +681,13 @@ def main() -> None:
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
     print(f"  2. Paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
-    print(f"  3. python scripts/merge_gt_parts.py {doc['doc_id']}")
+    print(f"  3. python scripts/gt/merge_parts.py {doc['doc_id']}")
     print(f"     → menghasilkan: {raw_placeholder}")
-    print(f"  4. python scripts/gt_collect.py --check-only --file \"{raw_placeholder}\"")
+    print(f"  4. python scripts/gt/collect.py --check-only --file \"{raw_placeholder}\"")
     print(f"     → fix hard errors, copy baris [WARN]")
     print(f"  5. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
     print(f"     → replace isi {raw_placeholder} dengan ---CLEANED--- output Copilot")
-    print(f"  6. python scripts/gt_collect.py --file \"{raw_placeholder}\"")
+    print(f"  6. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
 
 
 if __name__ == "__main__":
