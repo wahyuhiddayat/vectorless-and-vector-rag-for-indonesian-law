@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +51,7 @@ INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 BACKUP_DIR = REPO_ROOT / "data" / "index_pasal_pre_llm_fix"
 QUALITY_REPORT = REPO_ROOT / "data" / "parser_quality_report.json"
 AUDIT_LOG = REPO_ROOT / "data" / "llm_fix_log.json"
+COST_MANIFEST = REPO_ROOT / "data" / "indexing_logs" / "cost_pasal.json"
 
 MODEL_NAME = "gemini-2.5-flash"
 MAX_RETRIES = 3
@@ -262,8 +264,11 @@ def load_pdf_blocks(doc_id: str) -> str:
     return "\n".join(out)
 
 
-def call_gemini(prompt: str, max_output_tokens: int = 32768) -> str:
-    """Call Gemini 2.5 Flash with temperature=0 and return raw text."""
+def call_gemini(prompt: str, max_output_tokens: int = 32768) -> tuple[str, dict]:
+    """Call Gemini 2.5 Flash; return (raw_text, usage_dict).
+
+    usage_dict keys: input_tokens, output_tokens, total_tokens, calls, elapsed_s.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
@@ -274,6 +279,8 @@ def call_gemini(prompt: str, max_output_tokens: int = 32768) -> str:
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODEL_NAME)
+    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
+    t0 = time.time()
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = model.generate_content(
@@ -283,9 +290,16 @@ def call_gemini(prompt: str, max_output_tokens: int = 32768) -> str:
                     max_output_tokens=max_output_tokens,
                 ),
             )
+            usage["calls"] += 1
+            meta = getattr(resp, "usage_metadata", None)
+            if meta is not None:
+                usage["input_tokens"] += getattr(meta, "prompt_token_count", 0) or 0
+                usage["output_tokens"] += getattr(meta, "candidates_token_count", 0) or 0
+                usage["total_tokens"] += getattr(meta, "total_token_count", 0) or 0
             text = resp.text or ""
             if text.strip():
-                return text
+                usage["elapsed_s"] = round(time.time() - t0, 3)
+                return text, usage
         except Exception as exc:
             if attempt == MAX_RETRIES:
                 raise
@@ -502,11 +516,16 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
 
     print(f"  calling Gemini ({est_tokens:,} input tokens)...", flush=True)
     try:
-        raw = call_gemini(prompt)
+        raw, usage = call_gemini(prompt)
     except Exception as exc:
         audit["status"] = "error"
         audit["error"] = f"llm call: {exc}"
         return audit
+    audit["llm_fix_input_tokens"] = usage["input_tokens"]
+    audit["llm_fix_output_tokens"] = usage["output_tokens"]
+    audit["llm_fix_total_tokens"] = usage["total_tokens"]
+    audit["llm_fix_time_s"] = usage["elapsed_s"]
+    audit["llm_fix_calls"] = usage["calls"]
 
     try:
         llm_obj = parse_llm_json(raw)
@@ -571,6 +590,7 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
     audit["status"] = "fixed"
     audit["index_path"] = str(index_path)
     audit["backup_path"] = str(backup_path)
+    audit["category"] = parser_doc.get("jenis_folder") or index_path.parent.name
     return audit
 
 
@@ -603,6 +623,36 @@ def append_audit(entry: dict) -> None:
     records.append(entry)
     with open(AUDIT_LOG, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+
+
+def update_cost_manifest(doc_id: str, category: str, audit: dict) -> None:
+    """Merge LLM fix cost into data/indexing_logs/cost_pasal.json.
+
+    Appends llm_fix_* fields alongside existing parse_time_s / llm_* fields
+    so all cost metrics live in one per-doc record.
+    """
+    if not audit.get("llm_fix_time_s"):
+        return  # skip if no actual LLM call happened
+    manifest = {}
+    if COST_MANIFEST.exists():
+        try:
+            manifest = json.load(open(COST_MANIFEST, encoding="utf-8"))
+        except Exception:
+            manifest = {}
+    entry = manifest.get(doc_id, {})
+    if category and not entry.get("category"):
+        entry["category"] = category
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    entry["llm_fix_time_s"] = audit.get("llm_fix_time_s", 0.0)
+    entry["llm_fix_input_tokens"] = audit.get("llm_fix_input_tokens", 0)
+    entry["llm_fix_output_tokens"] = audit.get("llm_fix_output_tokens", 0)
+    entry["llm_fix_total_tokens"] = audit.get("llm_fix_total_tokens", 0)
+    entry["llm_fix_calls"] = audit.get("llm_fix_calls", 0)
+    entry["llm_fix_applied_at"] = entry["updated_at"]
+    manifest[doc_id] = entry
+    COST_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    with open(COST_MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
 
 
 def main() -> None:
@@ -653,6 +703,8 @@ def main() -> None:
                 flush=True,
             )
         append_audit(audit)
+        if not args.dry_run and audit.get("status") == "fixed":
+            update_cost_manifest(doc_id, audit.get("category", ""), audit)
 
 
 if __name__ == "__main__":
