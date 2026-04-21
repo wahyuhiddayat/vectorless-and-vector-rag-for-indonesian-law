@@ -454,6 +454,13 @@ def main():
         help="Comma-separated doc_ids to skip (e.g. uu-1-2026,uu-20-2025)",
     )
     parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max docs to scrape per jenis (0 = no limit). Counts only "
+             "successfully-scraped docs (skipped/errored do not count).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -486,6 +493,7 @@ def main():
     for jenis_id in args.jenis:
         jenis_name = JENIS_MAP.get(jenis_id, f"jenis-{jenis_id}")
         kategori = KATEGORI_MAP.get(jenis_id, "Lainnya")
+        jenis_scraped_count = 0  # counts successful new scrapes for --limit
 
         # Per-jenis subdirectories: data/UU/metadata/, data/UU/pdfs/
         metadata_dir = output_dir / jenis_name / "metadata"
@@ -624,7 +632,19 @@ def main():
                         )
 
                     total_scraped += 1
+                    jenis_scraped_count += 1
                     time.sleep(args.delay)
+
+                    if args.limit and jenis_scraped_count >= args.limit:
+                        log.info(
+                            "    Reached --limit %d for %s. Stopping this jenis.",
+                            args.limit, jenis_name,
+                        )
+                        break
+                if args.limit and jenis_scraped_count >= args.limit:
+                    break
+            if args.limit and jenis_scraped_count >= args.limit:
+                break
 
     # Generate unified registry from all jenis subfolders
     log.info("=== Generating registry ===")

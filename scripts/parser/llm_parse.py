@@ -98,6 +98,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
             print(f"  retry {attempt}/{MAX_RETRIES}: {type(exc).__name__}: {exc}", flush=True)
     raise RuntimeError("LLM returned empty response after retries")
 from scripts.parser.detect_perubahan import is_amendment_title  # noqa: E402
+from scripts._shared import find_pdf_path  # noqa: E402
 
 INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 BACKUP_DIR = REPO_ROOT / "data" / "index_pasal_pre_llm_parse"
@@ -335,6 +336,32 @@ def build_navigation_paths(
         node["navigation_path"] = " > ".join(path)
         if node.get("nodes"):
             build_navigation_paths(node["nodes"], path)
+
+
+def attach_penjelasan(
+    structure: list[dict], penj_pasal_map: dict[str, str]
+) -> int:
+    """Attach per-Pasal penjelasan text to Pasal nodes in the tree.
+
+    Walks the tree, finds every Pasal N node, and sets node["penjelasan"]
+    to the matching explanation text from penj_pasal_map. The downstream
+    re-split step (ayat_split_leaves / deep_split_leaves) picks up this
+    field and distributes the per-ayat/huruf explanations automatically
+    via _distribute_penjelasan.
+
+    Returns count of Pasal nodes matched.
+    """
+    matched = 0
+    for node in iter_nodes(structure):
+        title = (node.get("title") or "").strip()
+        m = re.match(r"^Pasal\s+(\d+[A-Z]?)$", title)
+        if not m:
+            continue
+        num = m.group(1).upper()
+        if num in penj_pasal_map:
+            node["penjelasan"] = penj_pasal_map[num]
+            matched += 1
+    return matched
 
 
 def backfill_page_indices(
@@ -867,6 +894,26 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     assign_readable_node_ids(structure)
     build_navigation_paths(structure)
     backfill_page_indices(structure, pages, total_pages)
+
+    # Attach penjelasan (per-Pasal explanations from PENJELASAN section).
+    # Re-split picks these up and distributes to ayat/huruf children.
+    penjelasan_page = parser_doc.get("penjelasan_page")
+    penj_match_count = 0
+    if penjelasan_page:
+        try:
+            from vectorless.indexing.parser import (
+                extract_pages as full_extract_pages,
+                parse_penjelasan,
+            )
+            full_pages = full_extract_pages(str(find_pdf_path(doc_id)))
+            penj_data = parse_penjelasan(full_pages, penjelasan_page, total_pages)
+            penj_match_count = attach_penjelasan(
+                structure, penj_data.get("pasal", {})
+            )
+            audit["penjelasan_pasals_matched"] = penj_match_count
+            audit["penjelasan_umum_len"] = len(penj_data.get("umum", ""))
+        except Exception as exc:
+            audit["penjelasan_error"] = str(exc)
 
     # Validate.
     output = {"structure": structure}

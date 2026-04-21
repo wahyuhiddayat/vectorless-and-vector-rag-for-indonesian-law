@@ -420,7 +420,19 @@ def _should_resplit_doc(output_path: Path, rebuild: str | None, doc_id: str, sta
 
 def _load_pdf_for_doc(entry: dict, metadata: dict | None,
                       data_index: Path) -> tuple[Path, str | None]:
-    """Return (pdf_path, error_message). error_message is None on success."""
+    """Return (pdf_path, error_message). error_message is None on success.
+
+    Preferred: registry entry's `pdf_path` (set by the scraper). Falls back
+    to metadata pick_main_pdf or constructed "bentuk Nomor N Tahun Y.pdf"
+    pattern for legacy corpora.
+    """
+    # Preferred path: explicit pdf_path from registry (deterministic scraper output).
+    explicit = entry.get("pdf_path") or (metadata or {}).get("pdf_path")
+    if explicit:
+        pdf_path = DATA_RAW / explicit
+        if pdf_path.exists():
+            return pdf_path, None
+
     jenis_folder = entry.get("jenis_folder", entry["doc_id"].split("-")[0].upper())
     if metadata:
         pdf_filename = pick_main_pdf(metadata)
