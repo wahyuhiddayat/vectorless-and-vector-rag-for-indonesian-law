@@ -259,21 +259,37 @@ def _parse_status_peraturan(card_body) -> list[dict]:
 
 
 def download_pdf(
+    doc_id: str,
     file_id: str,
     filename: str,
     href: str,
     output_dir: Path,
     session: requests.Session,
-) -> bool:
-    """Stream-download a PDF file. Skips if already exists."""
-    safe_name = sanitize_filename(filename) if filename else f"{file_id}.pdf"
-    if not safe_name.endswith(".pdf"):
-        safe_name += ".pdf"
+    suffix_idx: int = 0,
+) -> Path | None:
+    """Stream-download a PDF file with deterministic doc_id-based naming.
+
+    Main PDF → "{doc_id}.pdf".
+    Additional PDFs (lampiran/etc) → "{doc_id}_lampiran_N.pdf" or
+    "{doc_id}_extra_N.pdf" based on source filename hint.
+
+    Returns: destination Path on success (or if already exists), None on error.
+    """
+    original_name = sanitize_filename(filename) if filename else ""
+    is_lampiran = bool(original_name) and (
+        "lampiran" in original_name.lower() or "lamp_" in original_name.lower()
+    )
+    if suffix_idx == 0 and not is_lampiran:
+        safe_name = f"{doc_id}.pdf"
+    elif is_lampiran:
+        safe_name = f"{doc_id}_lampiran_{suffix_idx}.pdf"
+    else:
+        safe_name = f"{doc_id}_extra_{suffix_idx}.pdf"
     dest = output_dir / safe_name
 
     if dest.exists() and dest.stat().st_size > 0:
         log.debug("PDF already exists, skipping: %s", dest)
-        return True
+        return dest
 
     url = urljoin(BASE_URL, href)
     try:
@@ -283,12 +299,12 @@ def download_pdf(
             for chunk in resp.iter_content(chunk_size=8192):
                 f.write(chunk)
         log.info("Downloaded PDF: %s", dest.name)
-        return True
+        return dest
     except requests.RequestException as exc:
         log.error("Failed to download PDF %s: %s", url, exc)
         if dest.exists():
             dest.unlink()
-        return False
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +361,14 @@ def generate_registry(output_dir: Path) -> dict:
                 entry["relasi"] = relasi_summary
 
             entry["has_pdf"] = bool(data.get("pdf_files"))
+            # Deterministic PDF paths (relative to data/raw/). Populated by the
+            # download step; consumers should prefer these over filename guessing.
+            if data.get("pdf_path"):
+                entry["pdf_path"] = data["pdf_path"]
+            if data.get("lampiran_paths"):
+                entry["lampiran_paths"] = data["lampiran_paths"]
+            if data.get("extra_paths"):
+                entry["extra_paths"] = data["extra_paths"]
 
             registry[doc_id] = entry
 
@@ -425,6 +449,11 @@ def main():
         help="Skip already-scraped detail pages (resume interrupted scrape)",
     )
     parser.add_argument(
+        "--skip-doc-ids",
+        default="",
+        help="Comma-separated doc_ids to skip (e.g. uu-1-2026,uu-20-2025)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -448,6 +477,11 @@ def main():
     total_errors = 0
 
     tahun_list = parse_tahun_arg(args.tahun)
+    skip_doc_ids = {
+        d.strip().lower() for d in args.skip_doc_ids.split(",") if d.strip()
+    }
+    if skip_doc_ids:
+        log.info("Will skip doc_ids: %s", sorted(skip_doc_ids))
 
     for jenis_id in args.jenis:
         jenis_name = JENIS_MAP.get(jenis_id, f"jenis-{jenis_id}")
@@ -506,6 +540,11 @@ def main():
                         continue
 
                     doc_id = meta.get("doc_id", f"unknown-{detail_id}")
+                    if doc_id.lower() in skip_doc_ids:
+                        log.info("    Skipped (on skip list): %s", doc_id)
+                        total_skipped += 1
+                        time.sleep(args.delay)
+                        continue
                     meta["kategori"] = kategori
 
                     # Add judul from list page if not in detail metadata
@@ -521,16 +560,68 @@ def main():
                     )
                     log.info("    Saved metadata: %s", json_path.name)
 
-                    # Download PDF
+                    # Download PDF with deterministic doc_id-based filename.
+                    # Record local paths in metadata so registry can resolve
+                    # doc_id → PDF without filename guessing later.
                     if not args.skip_pdf and meta.get("pdf_files"):
-                        for pdf_info in meta["pdf_files"]:
-                            download_pdf(
+                        main_pdf_path: Path | None = None
+                        lampiran_paths: list[Path] = []
+                        extra_paths: list[Path] = []
+                        suffix_counter = {"lampiran": 0, "extra": 0}
+                        for idx, pdf_info in enumerate(meta["pdf_files"]):
+                            original_name = pdf_info.get("filename", "")
+                            is_lampiran = bool(original_name) and (
+                                "lampiran" in original_name.lower()
+                                or "lamp_" in original_name.lower()
+                            )
+                            if is_lampiran:
+                                suffix_counter["lampiran"] += 1
+                                sfx = suffix_counter["lampiran"]
+                            elif main_pdf_path is not None:
+                                # Second non-lampiran PDF → treat as extra.
+                                suffix_counter["extra"] += 1
+                                sfx = suffix_counter["extra"]
+                            else:
+                                sfx = 0  # main slot
+                            result = download_pdf(
+                                doc_id,
                                 pdf_info["file_id"],
                                 pdf_info["filename"],
                                 pdf_info["href"],
                                 pdfs_dir,
                                 session,
+                                suffix_idx=sfx,
                             )
+                            if result is None:
+                                continue
+                            rel = result.relative_to(output_dir)
+                            pdf_info["local_path"] = str(rel).replace("\\", "/")
+                            if is_lampiran:
+                                lampiran_paths.append(result)
+                            elif sfx == 0:
+                                main_pdf_path = result
+                            else:
+                                extra_paths.append(result)
+                        # Persist resolved paths back to metadata (registry will pick up).
+                        if main_pdf_path is not None:
+                            meta["pdf_path"] = str(
+                                main_pdf_path.relative_to(output_dir)
+                            ).replace("\\", "/")
+                        if lampiran_paths:
+                            meta["lampiran_paths"] = [
+                                str(p.relative_to(output_dir)).replace("\\", "/")
+                                for p in lampiran_paths
+                            ]
+                        if extra_paths:
+                            meta["extra_paths"] = [
+                                str(p.relative_to(output_dir)).replace("\\", "/")
+                                for p in extra_paths
+                            ]
+                        # Re-save metadata with resolved paths.
+                        json_path.write_text(
+                            json.dumps(meta, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
 
                     total_scraped += 1
                     time.sleep(args.delay)

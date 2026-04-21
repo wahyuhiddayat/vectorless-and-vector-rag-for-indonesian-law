@@ -62,6 +62,16 @@ MAX_INPUT_TOKENS_HINT = 200_000
 CHUNK_PASAL_THRESHOLD = 30
 # Fallback chunk size when a doc has no BAB structure (pure pasal list).
 PASALS_PER_CHUNK = 15
+# Max concurrent LLM calls per doc in chunked mode (Gemini 2.5 Flash paid tier
+# allows 1000 RPM; 4 concurrent gives ~3x speedup without rate-limit risk).
+CHUNK_PARALLEL_WORKERS = 4
+# Buffer pages to include on each side of a chunk's page range (handles body
+# content that spills into adjacent pages).
+CHUNK_PAGE_BUFFER = 1
+# For amendment docs: split Pasal Roman nodes with many Angka children into
+# sub-chunks of this many Angka each, to keep LLM output within token budget.
+ANGKA_PER_CHUNK = 8
+_PASAL_ROMAN_TITLE_RE = re.compile(r"^Pasal\s+[IVX]+$")
 
 
 PROMPT_TEMPLATE = """\
@@ -219,18 +229,11 @@ def load_pdf_text(doc_id: str) -> str:
     return "\n\n".join(p.get("raw_text", "") for p in pages)
 
 
-def load_pdf_blocks(doc_id: str) -> str:
-    """Read the PDF and return per-page blocks with spatial (x, y) coords.
+def load_pdf_pages(doc_id: str) -> list[dict]:
+    """Read the PDF and return list of {page_num, blocks} per page.
 
-    Format:
-        === PAGE N ===
-        [x=50 y=100] text block 1
-        [x=300 y=100] text block 2
-        ...
-
-    Helps LLM disambiguate multi-column layouts where heading clusters appear
-    in one column while body content is in another (common in Indonesian
-    government gazette format).
+    Each block: {x0, y0, text}. Blocks sorted (y, x) for reading order.
+    Use format_pdf_pages() to render a page range as prompt text.
     """
     import pymupdf
 
@@ -238,10 +241,9 @@ def load_pdf_blocks(doc_id: str) -> str:
     if not pdf_path:
         raise FileNotFoundError(f"PDF not found for {doc_id}")
 
-    out: list[str] = []
+    pages: list[dict] = []
     with pymupdf.open(str(pdf_path)) as doc:
         for page_i, page in enumerate(doc, 1):
-            out.append(f"=== PAGE {page_i} ===")
             blocks = []
             for b in page.get_text("dict").get("blocks", []):
                 if b.get("type") != 0:
@@ -260,14 +262,38 @@ def load_pdf_blocks(doc_id: str) -> str:
                     "y0": round(bbox[1]),
                     "text": text,
                 })
-            # Sort by (y, x) approximates reading order for most single-column
-            # pages; multi-column ambiguity remains in x coordinates (which the
-            # LLM can use to group into columns).
             blocks.sort(key=lambda b: (b["y0"], b["x0"]))
-            for b in blocks:
-                out.append(f"[x={b['x0']} y={b['y0']}] {b['text']}")
-            out.append("")  # blank line between pages
+            pages.append({"page_num": page_i, "blocks": blocks})
+    return pages
+
+
+def format_pdf_pages(
+    pages: list[dict],
+    start_page: int | None = None,
+    end_page: int | None = None,
+) -> str:
+    """Render pages as '=== PAGE N ===' sections with [x=y=] tagged blocks.
+
+    If start_page/end_page given, only include pages in that inclusive range
+    (1-indexed). Used to scope PDF context per chunk for efficiency.
+    """
+    out: list[str] = []
+    for p in pages:
+        n = p["page_num"]
+        if start_page is not None and n < start_page:
+            continue
+        if end_page is not None and n > end_page:
+            continue
+        out.append(f"=== PAGE {n} ===")
+        for b in p["blocks"]:
+            out.append(f"[x={b['x0']} y={b['y0']}] {b['text']}")
+        out.append("")
     return "\n".join(out)
+
+
+def load_pdf_blocks(doc_id: str) -> str:
+    """Legacy: return all pages formatted as a single string (full doc scope)."""
+    return format_pdf_pages(load_pdf_pages(doc_id))
 
 
 def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
@@ -396,6 +422,90 @@ def chunk_body_by_bab(body: list[dict]) -> list[list[dict]]:
     return chunks
 
 
+def chunk_body_for_amendment(
+    body: list[dict],
+) -> tuple[list[list[dict]], list[dict]]:
+    """For amendment docs: split big Pasal Roman nodes by Angka group.
+
+    Returns (chunks, meta). For each Pasal Roman with > ANGKA_PER_CHUNK Angka
+    children, emits multiple chunks each wrapping a slice of the children.
+    Non-splittable nodes become their own chunk.
+
+    meta[i] is {"kind": "angka_group"|"whole", "parent_title": str|None}. The
+    stitcher uses parent_title to merge consecutive angka_group chunks back
+    under the same Pasal Roman wrapper.
+    """
+    chunks: list[list[dict]] = []
+    meta: list[dict] = []
+    for node in body:
+        title = node.get("title", "")
+        children = node.get("nodes", []) or []
+        is_pasal_roman = bool(_PASAL_ROMAN_TITLE_RE.match(title))
+        if is_pasal_roman and len(children) > ANGKA_PER_CHUNK:
+            # Parse all Angka numbers present under this wrapper to detect gaps.
+            present_nums: list[int] = []
+            for c in children:
+                m = re.search(r"Angka\s+(\d+)", c.get("title", ""))
+                if m:
+                    present_nums.append(int(m.group(1)))
+            global_min = min(present_nums) if present_nums else 1
+            global_max = max(present_nums) if present_nums else 0
+            # Expected range starts at 1 (amendment Angka always starts at 1),
+            # ends at max observed. Gaps anywhere in [1..global_max] are missing.
+            for i in range(0, len(children), ANGKA_PER_CHUNK):
+                subset = children[i : i + ANGKA_PER_CHUNK]
+                wrapper = {
+                    **{k: v for k, v in node.items() if k != "nodes"},
+                    "nodes": subset,
+                }
+                # Per-chunk expected range: widen chunk 1 to include Angka 1..
+                subset_nums = []
+                for c in subset:
+                    m = re.search(r"Angka\s+(\d+)", c.get("title", ""))
+                    if m:
+                        subset_nums.append(int(m.group(1)))
+                if not subset_nums:
+                    lo, hi = 0, 0
+                else:
+                    lo = 1 if i == 0 else min(subset_nums)
+                    hi = max(subset_nums)
+                missing = sorted(set(range(lo, hi + 1)) - set(subset_nums)) if hi else []
+                chunks.append([wrapper])
+                meta.append({
+                    "kind": "angka_group",
+                    "parent_title": title,
+                    "angka_range": (lo, hi),
+                    "angka_missing": missing,
+                    "angka_global_max": global_max,
+                })
+        else:
+            chunks.append([node])
+            meta.append({"kind": "whole", "parent_title": None})
+    return chunks, meta
+
+
+def stitch_amendment_chunks(
+    fixed_chunks: list[list[dict]], meta: list[dict]
+) -> list[dict]:
+    """Merge consecutive angka_group chunks sharing parent_title into one node."""
+    out: list[dict] = []
+    for chunk, m in zip(fixed_chunks, meta):
+        if not chunk:
+            continue
+        if m["kind"] == "angka_group":
+            wrapper = chunk[0]
+            parent_title = m["parent_title"]
+            if out and out[-1].get("title") == parent_title:
+                out[-1].setdefault("nodes", []).extend(
+                    wrapper.get("nodes", []) or []
+                )
+            else:
+                out.append({**wrapper, "nodes": list(wrapper.get("nodes", []) or [])})
+        else:
+            out.extend(chunk)
+    return out
+
+
 def filter_issues_for_chunk(
     chunk_nodes: list[dict], all_issues: dict
 ) -> dict:
@@ -480,35 +590,58 @@ def assign_node_ids(structure: list[dict]) -> None:
 
 
 def _assign_child_ids(parent: dict) -> None:
-    """Recursively assign suffixed node_ids based on the DEEPEST marker in title.
+    """Recursively assign suffixed node_ids based on the FIRST marker in title.
 
-    Case-insensitive on marker keywords (LLM sometimes writes lowercase
-    "ayat (1)" / "huruf a"), but maps to deterministic numeric/letter suffixes.
+    Amendment docs often have verbose titles like
+    "Pasal I Angka 2 — Di antara Pasal 3 dan Pasal 4 disisipkan..."
+    where the structural marker ("Angka 2") appears at the start, not the end.
+    So we match the first Angka/Huruf/Ayat token in the title, preferring the
+    most specific (innermost) one by type priority: Angka > Huruf > Ayat.
 
     Title format examples and resulting suffix:
-        "Pasal 3 Ayat (1)"                    -> a1
-        "Pasal 3 Huruf a"                     -> h1
-        "Pasal 3 Angka 2"                     -> n2
-        "Pasal 3 Ayat (2) Huruf a"            -> h1 (huruf is deepest)
-        "Pasal 3 Ayat (2) Huruf c Angka 4"    -> n4 (angka is deepest)
+        "Pasal 3 Ayat (1)"                             -> a1
+        "Pasal 3 Huruf a"                              -> h1
+        "Pasal I Angka 2 — Di antara Pasal 3..."       -> n2 (amendment)
+        "Pasal 3 Ayat (2) Huruf a"                     -> h1 (deepest wins)
+        "Pasal 3 Ayat (2) Huruf c Angka 4"             -> n4
     """
     parent_id = parent.get("node_id", "")
     for i, child in enumerate(parent.get("nodes", []), 1):
         title = child.get("title", "")
-        # Match end-of-string markers, most specific first. IGNORECASE handles
-        # LLM inconsistency (Ayat vs ayat, Huruf vs huruf).
-        m_angka = re.search(r"Angka\s+(\d+)\s*$", title, re.IGNORECASE)
-        m_huruf = re.search(r"Huruf\s+([a-z])\s*$", title, re.IGNORECASE)
-        m_ayat = re.search(r"Ayat\s+\((\d+)\)\s*$", title, re.IGNORECASE)
-        if m_angka:
-            suffix = f"n{m_angka.group(1)}"
-        elif m_huruf:
-            letter = m_huruf.group(1).lower()
+        # Find last occurrence of each marker type (to pick deepest for
+        # clean short titles like "Pasal 3 Ayat (2) Huruf a").
+        all_angka = list(re.finditer(r"Angka\s+(\d+)", title, re.IGNORECASE))
+        all_huruf = list(re.finditer(r"Huruf\s+([a-z])", title, re.IGNORECASE))
+        all_ayat = list(re.finditer(r"Ayat\s+\((\d+)\)", title, re.IGNORECASE))
+        # Deepest means the marker type with highest specificity PRESENT in title.
+        # But for verbose amendment titles like "Pasal I Angka 2 — ...",
+        # we want Angka 2 (not Pasal).
+        # Priority: Angka > Huruf > Ayat.
+        suffix = None
+        if all_angka:
+            suffix = f"n{all_angka[0].group(1)}"
+        elif all_huruf:
+            letter = all_huruf[0].group(1).lower()
             suffix = f"h{ord(letter) - ord('a') + 1}"
-        elif m_ayat:
-            suffix = f"a{m_ayat.group(1)}"
+        elif all_ayat:
+            suffix = f"a{all_ayat[0].group(1)}"
         else:
             suffix = f"x{i}"
+        # For normal titles with multiple markers, use the LAST one (deepest).
+        # This matters when title is clean e.g. "Pasal 3 Ayat (2) Huruf a" —
+        # we want h1 not a2. But for amendment "Pasal I Angka 2 — Pasal 3A..."
+        # the first Angka is correct. Heuristic: if title ends with a marker,
+        # trust the last marker; otherwise trust the first.
+        m_end_angka = re.search(r"Angka\s+(\d+)\s*$", title, re.IGNORECASE)
+        m_end_huruf = re.search(r"Huruf\s+([a-z])\s*$", title, re.IGNORECASE)
+        m_end_ayat = re.search(r"Ayat\s+\((\d+)\)\s*$", title, re.IGNORECASE)
+        if m_end_angka:
+            suffix = f"n{m_end_angka.group(1)}"
+        elif m_end_huruf:
+            letter = m_end_huruf.group(1).lower()
+            suffix = f"h{ord(letter) - ord('a') + 1}"
+        elif m_end_ayat:
+            suffix = f"a{m_end_ayat.group(1)}"
         child["node_id"] = f"{parent_id}_{suffix}"
         if "nodes" in child:
             _assign_child_ids(child)
@@ -523,6 +656,47 @@ def build_navigation_paths(structure: list[dict], ancestors: list[str] | None = 
         node["navigation_path"] = " > ".join(ancestors + [title])
         if "nodes" in node:
             build_navigation_paths(node["nodes"], ancestors + [title])
+
+
+def ensure_page_indices(
+    structure: list[dict],
+    original_structure: list[dict],
+    doc_total_pages: int,
+) -> None:
+    """Populate start_index / end_index on every node in-place.
+
+    LLM output lacks page indices. We derive them by matching node titles to
+    the original parser output when possible; otherwise inherit from parent
+    or fall back to the full doc page range.
+    """
+    # Build title -> (start, end) map from original parser structure.
+    title_map: dict[str, tuple[int, int]] = {}
+
+    def _collect(nodes: list[dict]):
+        for n in nodes:
+            t = n.get("title", "")
+            s = n.get("start_index")
+            e = n.get("end_index")
+            if t and s is not None and e is not None and t not in title_map:
+                title_map[t] = (int(s), int(e))
+            if "nodes" in n:
+                _collect(n["nodes"])
+
+    _collect(original_structure)
+
+    def _assign(nodes: list[dict], parent_range: tuple[int, int]) -> None:
+        for n in nodes:
+            t = n.get("title", "")
+            if t in title_map:
+                start, end = title_map[t]
+            else:
+                start, end = parent_range
+            n["start_index"] = start
+            n["end_index"] = end
+            if "nodes" in n:
+                _assign(n["nodes"], (start, end))
+
+    _assign(structure, (1, doc_total_pages if doc_total_pages > 0 else 1))
 
 
 def _expand_shortcut_title(title: str) -> str:
@@ -603,9 +777,16 @@ def validate_fix(before: dict, after: dict, pdf_pasal_count: int) -> tuple[bool,
     before_count = count_pasals_in_tree(before.get("structure", []))
     after_count = count_pasals_in_tree(new_structure)
 
-    if after_count > max(before_count * 1.3, before_count + 5):
+    # Upper bound: the PDF's own regex pasal count is the hard ceiling.
+    # When parser under-counted (before << pdf_pasal_count), allow LLM to
+    # recover up to pdf_pasal_count * 1.1 even if that exceeds before * 1.3.
+    upper = max(before_count * 1.3, before_count + 5)
+    if pdf_pasal_count > 0:
+        upper = max(upper, pdf_pasal_count * 1.1)
+    if after_count > upper:
         errors.append(
-            f"too many pasal added: before={before_count} after={after_count}"
+            f"too many pasal added: before={before_count} after={after_count} "
+            f"upper_bound={upper:.0f} (pdf_count={pdf_pasal_count})"
         )
     if after_count < before_count * 0.7:
         errors.append(
@@ -657,6 +838,7 @@ DO NOT drop content, DO NOT return only the BAB title.
 
 === KNOWN ISSUES IN THIS SECTION ===
 {issues_list}
+{missing_angka_hint}
 
 === FULL PDF TEXT (ground truth, with spatial coordinates) ===
 Blocks tagged with [x=column-left y=top]. Two-column gazette layouts put
@@ -701,6 +883,37 @@ Rules:
 4. Drop footer noise: "SK No ...", page numbers "- N -", repeated
    "PRESIDEN REPUBLIK INDONESIA".
 5. Output ONLY valid JSON, no markdown fences, no prose.
+
+=== AMENDMENT (PERUBAHAN) DOCS — SPECIAL HANDLING ===
+
+When is_perubahan=true, the document amends another law. Structure is:
+  Pasal I (roman, root)
+  └── Angka 1, Angka 2, Angka 3, ...  (each is one amendment instruction)
+       └── the NEW pasal/ayat/huruf text being inserted/modified
+
+Rules for amendment:
+- Keep "Pasal I" as the top-level root (title exactly "Pasal I").
+- Each Angka instruction is a child of Pasal I. Title format:
+    "Pasal I Angka N"   (short and clean — do NOT concatenate the instruction
+                        text into the title).
+- Inside each Angka, place the amended Pasal/Ayat/Huruf as nested children.
+  For example, Angka 2 that inserts new Pasal 3A with 2 Ayat would look like:
+    {{
+      "title": "Pasal I Angka 2",
+      "text": "Di antara Pasal 3 dan Pasal 4 disisipkan 1 (satu) pasal, yakni Pasal 3A sehingga berbunyi sebagai berikut:",
+      "nodes": [
+        {{
+          "title": "Pasal 3A",
+          "nodes": [
+            {{ "title": "Pasal 3A Ayat (1)", "text": "..." }},
+            {{ "title": "Pasal 3A Ayat (2)", "text": "..." }}
+          ]
+        }}
+      ]
+    }}
+- Do NOT bleed next Angka's content into previous Angka. When you see
+  "3. Bab II dihapus" appearing right after a Pasal body, that is Angka 3
+  starting — put it in its OWN Angka sibling, not in the previous Ayat text.
 """
 
 
@@ -712,10 +925,46 @@ def _fix_chunk(
     chunk_total: int,
     pdf_text: str,
     issues: dict,
+    chunk_meta: dict | None = None,
 ) -> tuple[list[dict] | None, dict, str | None]:
     """Fix a single chunk of the body. Returns (fixed_nodes, usage, error)."""
     chunk_label = chunk_nodes[0].get("title", "")[:40] if chunk_nodes else ""
+    # For amendment angka_group chunks, suffix the Angka range for clarity.
+    if (
+        chunk_nodes
+        and _PASAL_ROMAN_TITLE_RE.match(chunk_nodes[0].get("title", ""))
+        and chunk_nodes[0].get("nodes")
+    ):
+        inner = chunk_nodes[0]["nodes"]
+        first = re.search(r"Angka\s+(\d+)", inner[0].get("title", ""))
+        last = re.search(r"Angka\s+(\d+)", inner[-1].get("title", ""))
+        if first and last:
+            chunk_label += f" Angka {first.group(1)}-{last.group(1)}"
     chunk_issues = filter_issues_for_chunk(chunk_nodes, issues)
+    # Build missing-Angka hint for amendment angka_group chunks.
+    missing_angka_hint = ""
+    if chunk_meta and chunk_meta.get("kind") == "angka_group":
+        missing = chunk_meta.get("angka_missing") or []
+        lo, hi = chunk_meta.get("angka_range", (0, 0))
+        parent = chunk_meta.get("parent_title", "")
+        if missing:
+            hint_lines = [
+                "",
+                "=== MISSING ANGKA (parser skipped these — RECOVER FROM PDF) ===",
+                f"Expected Angka range for {parent} in this section: {lo}-{hi}.",
+                f"Parser is missing: Angka {', Angka '.join(str(n) for n in missing)}.",
+                (
+                    "Scan the PDF text for these numbered items and include them"
+                    " as siblings in your output. Each missing Angka should be a"
+                    f" direct child of \"{parent}\" with title \"{parent} Angka N\"."
+                ),
+                (
+                    "If a missing number truly does not appear in the PDF text"
+                    " (e.g. the document skips numbering), omit it rather than"
+                    " hallucinating."
+                ),
+            ]
+            missing_angka_hint = "\n".join(hint_lines)
     prompt = CHUNK_PROMPT_TEMPLATE.format(
         doc_id=doc_id,
         judul=parser_doc.get("judul", "(unknown)"),
@@ -725,6 +974,7 @@ def _fix_chunk(
         chunk_total=chunk_total,
         chunk_view=compact_tree_view(chunk_nodes),
         issues_list=build_issues_list(chunk_issues),
+        missing_angka_hint=missing_angka_hint,
         pdf_text=pdf_text,
     )
     est_tokens = len(prompt) // 4
@@ -830,11 +1080,29 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
             return audit
         new_structure = llm_obj["structure"]
     else:
-        # Chunked flow: split body by BAB (or fallback chunks of 15 pasals).
+        # Chunked flow: split body by BAB (or per-Angka for amendment docs).
+        # Scope PDF per chunk + parallel execution + skip chunks without issues.
         preamble, body = split_preamble_and_body(parser_doc.get("structure", []))
-        chunks = chunk_body_by_bab(body)
+        # Amendment mode triggers on Pasal Roman pattern, regardless of
+        # is_perubahan flag (parser's detection can miss amendment docs).
+        has_big_pasal_roman = any(
+            _PASAL_ROMAN_TITLE_RE.match(n.get("title", ""))
+            and len(n.get("nodes", []) or []) > ANGKA_PER_CHUNK
+            for n in body
+        )
+        if has_big_pasal_roman:
+            chunks, chunk_meta = chunk_body_for_amendment(body)
+            chunk_mode = "amendment"
+        else:
+            chunks = chunk_body_by_bab(body)
+            chunk_meta = None
+            chunk_mode = "bab"
+        audit["chunk_mode"] = chunk_mode
+        pdf_pages = load_pdf_pages(doc_id)
+        total_pdf_pages = len(pdf_pages)
         print(
-            f"  chunked mode: {total_pasals} pasals across {len(chunks)} chunk(s)",
+            f"  chunked mode: {total_pasals} pasals across {len(chunks)} chunk(s), "
+            f"parallel={CHUNK_PARALLEL_WORKERS}",
             flush=True,
         )
         agg_usage = {
@@ -844,36 +1112,121 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
             "calls": 0,
             "elapsed_s": 0.0,
         }
-        fixed_chunks: list[list[dict]] = []
+        fixed_chunks: list[list[dict]] = [None] * len(chunks)  # type: ignore
         chunk_errors: list[str] = []
+        skipped_count = 0
+
+        # Build per-chunk task list: (index, chunk_nodes, chunk_pdf_text,
+        # chunk_issues, has_issues).
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        tasks: list[dict] = []
         for i, chunk_nodes in enumerate(chunks, 1):
-            fixed, usage, err = _fix_chunk(
-                doc_id,
-                parser_doc,
-                chunk_nodes,
-                i,
-                len(chunks),
-                pdf_text,
-                report_entry,
+            chunk_issues = filter_issues_for_chunk(chunk_nodes, report_entry)
+            has_issues = (
+                chunk_issues.get("empty_pasal_count", 0) > 0
+                or chunk_issues.get("bleed_count", 0) > 0
+                or chunk_issues.get("underspilt_count", 0) > 0
+                or report_entry.get("gap_count", 0) > 0
+                or report_entry.get("completeness", 1.0) < 1.0
+                or not report_entry.get("monotonic", True)
             )
-            _accumulate_usage(agg_usage, usage)
-            if err or fixed is None:
-                # Fallback: keep the original parser chunk unchanged.
-                print(f"  chunk {i} failed: {err} — keeping original", flush=True)
-                fixed = chunk_nodes
-                chunk_errors.append(f"chunk{i}:{err}")
-            fixed_chunks.append(fixed)
+            if not has_issues:
+                # Skip this chunk — parser output is clean. Keep original nodes.
+                fixed_chunks[i - 1] = chunk_nodes
+                skipped_count += 1
+                print(f"  chunk {i}/{len(chunks)}: no issues, kept as-is", flush=True)
+                continue
+            # Scope PDF to this chunk's page range (+ buffer for body continuation).
+            # For amendment angka_group chunks, derive range from inner Angka
+            # children (not the wrapper, which spans the whole Pasal Roman).
+            if (
+                chunk_mode == "amendment"
+                and chunk_meta is not None
+                and chunk_meta[i - 1]["kind"] == "angka_group"
+                and chunk_nodes
+                and chunk_nodes[0].get("nodes")
+            ):
+                wrapper = chunk_nodes[0]
+                inner = wrapper["nodes"]
+                lo = chunk_meta[i - 1].get("angka_range", (0, 0))[0]
+                # First chunk of wrapper (Angka 1 expected): parser's start_index
+                # can be off (it may have missed the Pasal I header on an earlier
+                # page). Scope from page 1 so the LLM sees the missing early
+                # Angka + preamble→body transition.
+                if lo == 1:
+                    chunk_start = 1
+                else:
+                    chunk_start = inner[0].get("start_index")
+                chunk_end = inner[-1].get("end_index")
+            else:
+                chunk_start = chunk_nodes[0].get("start_index") if chunk_nodes else None
+                chunk_end = chunk_nodes[-1].get("end_index") if chunk_nodes else None
+            if chunk_start is None or chunk_end is None:
+                scoped_pdf = pdf_text  # fallback to full doc
+            else:
+                s = max(1, int(chunk_start) - CHUNK_PAGE_BUFFER)
+                e = min(total_pdf_pages, int(chunk_end) + CHUNK_PAGE_BUFFER)
+                scoped_pdf = format_pdf_pages(pdf_pages, s, e)
+            tasks.append({
+                "index": i,
+                "chunk_nodes": chunk_nodes,
+                "chunk_pdf": scoped_pdf,
+                "chunk_issues": chunk_issues,
+                "chunk_meta": (chunk_meta[i - 1] if chunk_meta is not None else None),
+            })
+
+        # Run remaining chunks in parallel.
+        if tasks:
+            with ThreadPoolExecutor(max_workers=CHUNK_PARALLEL_WORKERS) as pool:
+                futures = {
+                    pool.submit(
+                        _fix_chunk,
+                        doc_id,
+                        parser_doc,
+                        t["chunk_nodes"],
+                        t["index"],
+                        len(chunks),
+                        t["chunk_pdf"],
+                        t["chunk_issues"],
+                        t["chunk_meta"],
+                    ): t
+                    for t in tasks
+                }
+                for future in as_completed(futures):
+                    t = futures[future]
+                    try:
+                        fixed, usage, err = future.result()
+                    except Exception as exc:
+                        fixed, usage, err = None, {}, f"worker exception: {exc}"
+                    _accumulate_usage(agg_usage, usage)
+                    i = t["index"]
+                    if err or fixed is None:
+                        print(
+                            f"  chunk {i} failed: {err} — keeping original",
+                            flush=True,
+                        )
+                        fixed = t["chunk_nodes"]
+                        chunk_errors.append(f"chunk{i}:{err}")
+                    fixed_chunks[i - 1] = fixed
+
         audit["llm_fix_input_tokens"] = agg_usage["input_tokens"]
         audit["llm_fix_output_tokens"] = agg_usage["output_tokens"]
         audit["llm_fix_total_tokens"] = agg_usage["total_tokens"]
         audit["llm_fix_time_s"] = agg_usage["elapsed_s"]
         audit["llm_fix_calls"] = agg_usage["calls"]
         audit["chunk_count"] = len(chunks)
+        audit["chunk_skipped"] = skipped_count
         audit["chunk_errors"] = chunk_errors
-        # Stitch: preamble + all fixed chunks.
-        new_structure = list(preamble)
-        for c in fixed_chunks:
-            new_structure.extend(c)
+        # Stitch: preamble + fixed chunks (merge angka groups for amendment mode).
+        if chunk_mode == "amendment":
+            new_structure = list(preamble) + stitch_amendment_chunks(
+                fixed_chunks, chunk_meta  # type: ignore[arg-type]
+            )
+        else:
+            new_structure = list(preamble)
+            for c in fixed_chunks:
+                new_structure.extend(c or [])
 
     # Count pasals from raw PDF (flat text) for sanity check.
     try:
@@ -899,6 +1252,14 @@ def fix_doc(doc_id: str, quality_report_docs: dict, dry_run: bool = False) -> di
     normalize_titles(new_structure)
     assign_node_ids(new_structure)
     build_navigation_paths(new_structure)
+    # LLM output lacks start_index/end_index — re-populate from original
+    # so downstream re-split (ayat/full_split) does not KeyError.
+    doc_total_pages = parser_doc.get("total_pages") or 1
+    for node in parser_doc.get("structure", []):
+        end = node.get("end_index")
+        if end is not None:
+            doc_total_pages = max(doc_total_pages, int(end))
+    ensure_page_indices(new_structure, parser_doc.get("structure", []), doc_total_pages)
 
     corrected = {**parser_doc}
     corrected["structure"] = new_structure

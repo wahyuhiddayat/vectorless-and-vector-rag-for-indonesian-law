@@ -2735,6 +2735,8 @@ def print_tree(nodes: list[dict], indent: int = 0):
 # Patterns for detecting sub-Pasal structure and penjelasan section headings.
 _AYAT_RE = re.compile(r'(?:^|\n)\((\d+)\)\s', re.MULTILINE)
 _HURUF_RE = re.compile(r'(?:^|\n)([a-z])\.\s', re.MULTILINE)
+# Sub-huruf: "a) b) c)" style, used inside angka bodies as a deeper level.
+_SUB_HURUF_RE = re.compile(r'(?:^|\n)\s*([a-z])\)\s', re.MULTILINE)
 _ANGKA_ITEM_RE = re.compile(r'(?:^|\n)(\d+)\.\s', re.MULTILINE)
 _PENJ_AYAT_RE = re.compile(r'Ayat\s*\((\d+)\)\s*\n', re.MULTILINE)
 _PENJ_HURUF_RE = re.compile(r'Huruf\s+([a-z])\s*\n', re.MULTILINE)
@@ -2939,7 +2941,7 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
         segment = re.sub(r'^\(\d+\)\s*', '', segment)
         if not segment.strip():
             continue  # Skip ayat with no content (PDF extraction gap between consecutive markers)
-        sub_id = f"{parent_id}_a{i}"
+        sub_id = f"{parent_id}_ayat_{label}"
         sub_title = f"{parent_title} Ayat ({label})"
         node: dict = {
             "title": sub_title,
@@ -3012,19 +3014,25 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
     """Try splitting text into Huruf sub-nodes (a., b., c., ...) without recursing further.
 
     Used by Angka items that may contain sub-lists like definitions with a./b./c./d.
+    Falls back to paren-style "a) b) c)" when period style not found.
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
+    # Prefer period-style (standard huruf); fall back to paren-style when absent.
     huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    marker_strip = r'^[a-z]\.\s*'
+    if not huruf_markers:
+        huruf_markers = _find_and_validate_markers(text, _SUB_HURUF_RE, "a")
+        marker_strip = r'^\s*[a-z]\)\s*'
     if not huruf_markers:
         return None
     intro, segments = _split_text_by_markers(text, huruf_markers)
     sub_nodes = []
     for i, (label, segment) in enumerate(segments, 1):
-        segment = re.sub(r'^[a-z]\.\s*', '', segment)
+        segment = re.sub(marker_strip, '', segment)
         if not segment.strip():
             continue  # Skip huruf with no content (PDF extraction gap)
-        sub_id = f"{parent_id}_h{i}"
+        sub_id = f"{parent_id}_huruf_{label}"
         sub_title = f"{parent_title} Huruf {label}"
         sub_nodes.append({
             "title": sub_title,
@@ -3060,7 +3068,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             segment = re.sub(r'^\(\d+\)\s*', '', segment)
             if not segment.strip():
                 continue  # Skip ayat with no content (PDF extraction gap)
-            sub_id = f"{parent_id}_a{i}"
+            sub_id = f"{parent_id}_ayat_{label}"
             sub_title = f"{parent_title} Ayat ({label})"
             children = _try_deep_split(
                 segment, sub_id, sub_title, parent_start, parent_end, penjelasan=None
@@ -3098,7 +3106,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             segment = re.sub(r'^\d+\.\s*', '', segment)
             if not segment.strip():
                 continue  # Skip angka with no content (PDF extraction gap)
-            sub_id = f"{parent_id}_n{i}"
+            sub_id = f"{parent_id}_angka_{label}"
             sub_title = f"{parent_title} Angka {label}"
             # Recurse into Huruf sub-structure (e.g. definitions with a./b./c. lists).
             children = _try_huruf_split(
@@ -3133,7 +3141,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             segment = re.sub(r'^[a-z]\.\s*', '', segment)
             if not segment.strip():
                 continue  # Skip huruf with no content (PDF extraction gap)
-            sub_id = f"{parent_id}_h{i}"
+            sub_id = f"{parent_id}_huruf_{label}"
             sub_title = f"{parent_title} Huruf {label}"
             children = _try_deep_split(
                 segment, sub_id, sub_title, parent_start, parent_end, penjelasan=None
@@ -3207,7 +3215,10 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
         if m:
             pasal_ref = m.group(1)  # e.g. "Pasal 1"
             cleaned_text = _AMENDMENT_INSTR_PREFIX_RE.sub('', text, count=1)
-            pasal_id = f"{node['node_id']}_p"
+            # Extract the pasal number for a readable node_id suffix.
+            ref_m = re.match(r"Pasal\s+(\d+[A-Z]?)", pasal_ref)
+            ref_num = ref_m.group(1) if ref_m else "x"
+            pasal_id = f"{node['node_id']}_pasal_{ref_num}"
             children = _try_deep_split(
                 text=cleaned_text,
                 parent_id=pasal_id,
