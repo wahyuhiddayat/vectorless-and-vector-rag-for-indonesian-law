@@ -2804,6 +2804,39 @@ def _normalize_flat_structural_text(text: str) -> str:
     return text
 
 
+def _fix_list_ocr(text: str) -> str:
+    """Normalize OCR-misread list prefixes in-place.
+
+    Cases:
+    - "l." at line start followed (possibly with intervening non-list lines)
+      by "2." at line start → OCR'd "1.", replace with "1."
+    - "I." or "i." similar to "l." (OCR of digit 1)
+    - "O." → "0." (rare but possible)
+
+    Conservative: only rewrites when a plausible digit sequence follows,
+    so we don't corrupt legitimate huruf markers.
+    """
+    lines = text.split('\n')
+    fixed = list(lines)
+    n = len(lines)
+    for i, line in enumerate(lines):
+        m = re.match(r'^(\s*)([lIiO])\.\s', line)
+        if not m:
+            continue
+        # Scan subsequent lines for next list marker. Expected: 2. after OCR'd 1.
+        for j in range(i + 1, min(n, i + 8)):
+            mj = re.match(r'^\s*(\d+)\.\s', lines[j])
+            if mj and mj.group(1) == '2':
+                # Confirmed: OCR'd 1.
+                letter = m.group(2)
+                digit = '1' if letter in 'lIi' else '0'
+                fixed[i] = m.group(1) + digit + '. ' + line[m.end():]
+                break
+            if mj:
+                break  # Different number, not OCR of 1
+    return '\n'.join(fixed)
+
+
 def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: str) -> list[tuple[int, str]] | None:
     """Find structural markers in text and verify they form a consecutive sequence.
 
@@ -2869,13 +2902,14 @@ def _split_text_by_markers(text: str, markers: list[tuple[int, str]]) -> tuple[s
 
 
 def _distribute_penjelasan(penjelasan: str | None, sub_nodes: list[dict], kind: str) -> None:
-    """Assign penjelasan text to each sub-node in-place.
+    """DISABLED in re-split — distribution handled by post-pass.
 
-    Parses the penjelasan for per-item section headings (Ayat (N) or Huruf X) and
-    assigns each matched sub-node its specific excerpt. Sub-nodes with no matching
-    entry receive the full penjelasan text. For Angka items, the full text is always
-    assigned since there is no known per-item heading pattern.
+    The in-split distribution leaked across boundaries on OCR quirks
+    ("Hurufb" without space) and duplicated parent text to siblings.
+    Distribute_penjelasan_to_tree() in scripts/parser/llm_parse.py now
+    handles proper recursive distribution after the tree is fully built.
     """
+    return
     if not penjelasan:
         return
 
@@ -2909,6 +2943,21 @@ def _strip_leading_junk(text: str) -> str:
     return re.sub(r'^[\s:;,\-]+', '', text)
 
 
+def _stash_intro_for_parent(sub_nodes: list[dict], intro: str) -> None:
+    """Stash parent intro text on the first sub-node for the caller to retrieve.
+
+    The caller in `_split_leaves_with` moves `_intro_for_parent` off the first
+    sub-node and places it as `text` on the parent container. This keeps
+    intro text at the structurally-correct level (container) instead of
+    contaminating the first child's body.
+    """
+    if not intro or not sub_nodes:
+        return
+    intro = intro.strip()
+    if intro:
+        sub_nodes[0]["_intro_for_parent"] = intro
+
+
 def _prepend_intro_to_first_child(sub_nodes: list[dict], intro: str) -> None:
     """Preserve text before the first split marker by prepending it to child 1."""
     if not intro or not sub_nodes:
@@ -2928,6 +2977,7 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
+    text = _fix_list_ocr(text)
 
     ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
     if not ayat_markers:
@@ -2952,7 +3002,7 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
             "_split_label": label,
         }
         sub_nodes.append(node)
-    _prepend_intro_to_first_child(sub_nodes, intro)
+    _stash_intro_for_parent(sub_nodes, intro)
     _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
     for n in sub_nodes:
         n.pop("_split_label", None)
@@ -2962,33 +3012,51 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
 def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
     """Apply a split function to every leaf node, preserving the container structure."""
     result = []
-    # Recurse into container nodes; apply split_func only to leaves that have text.
+    # Recurse into container nodes; apply split_func only to leaves that have
+    # text. Container text is intro text — kept on container (no synthetic
+    # "Pembukaan" child — LLM-first output is already structured).
     for node in nodes:
         if "nodes" in node and node["nodes"]:
-            # If node has both text and children (e.g. Pasal I amendment preamble),
-            # promote the text to a synthetic intro child so it can be split too.
-            if "text" in node and node["text"].strip():
-                preamble = {
-                    "title": f"{node['title']} Pembukaan",
-                    "node_id": f"{node['node_id']}_intro",
-                    "start_index": node["start_index"],
-                    "end_index": node.get("end_index", node["start_index"]),
-                    "text": node.pop("text"),
-                }
-                node["nodes"].insert(0, preamble)
             node["nodes"] = _split_leaves_with(node["nodes"], split_func)
             result.append(node)
-        elif "text" in node:
+        elif "text" in node and node.get("text"):
             sub_nodes = split_func(node)
             if sub_nodes:
-                branch = {k: v for k, v in node.items() if k not in ("text", "penjelasan")}
+                # Keep penjelasan on the container — distribution to children
+                # is disabled (see _distribute_penjelasan).
+                # Recover intro text stashed by split function BEFORE adding
+                # nodes, so JSON serializes as {title, ..., text, nodes}.
+                branch = {k: v for k, v in node.items() if k != "text"}
+                if sub_nodes and "_intro_for_parent" in sub_nodes[0]:
+                    branch["text"] = sub_nodes[0].pop("_intro_for_parent")
                 branch["nodes"] = sub_nodes
                 result.append(branch)
             else:
                 result.append(node)
         else:
             result.append(node)
+    # Migrate deeper intros up through any container levels the split functions
+    # produced (nested deep_split → huruf_split chains stash intro on the
+    # deepest leaf; we walk up and surface each to its immediate parent).
+    _migrate_stashed_intros(result)
     return result
+
+
+def _migrate_stashed_intros(nodes: list[dict]) -> None:
+    """Walk tree; for every container whose first child has _intro_for_parent,
+    move that text onto the container and clear the stash. Also re-orders
+    keys so `text` appears before `nodes` in JSON serialization."""
+    for node in nodes:
+        if node.get("nodes"):
+            _migrate_stashed_intros(node["nodes"])
+            first = node["nodes"][0] if node["nodes"] else None
+            if first and "_intro_for_parent" in first:
+                text_val = first.pop("_intro_for_parent")
+                if not node.get("text"):
+                    # Re-insert keys to put text before nodes.
+                    nodes_val = node.pop("nodes")
+                    node["text"] = text_val
+                    node["nodes"] = nodes_val
 
 
 def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
@@ -3018,6 +3086,7 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
+    text = _fix_list_ocr(text)
     # Prefer period-style (standard huruf); fall back to paren-style when absent.
     huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
     marker_strip = r'^[a-z]\.\s*'
@@ -3042,7 +3111,7 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
             "text": segment,
             "_split_label": label,
         })
-    _prepend_intro_to_first_child(sub_nodes, intro)
+    _stash_intro_for_parent(sub_nodes, intro)
     for n in sub_nodes:
         n.pop("_split_label", None)
     return sub_nodes
@@ -3056,6 +3125,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
+    text = _fix_list_ocr(text)
 
     # Try Ayat: (1), (2), (3), ...
     ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
@@ -3085,18 +3155,25 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             else:
                 node["text"] = segment
             sub_nodes.append(node)
-        _prepend_intro_to_first_child(sub_nodes, intro)
+        _stash_intro_for_parent(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
         for n in sub_nodes:
             n.pop("_split_label", None)
         return sub_nodes
 
-    # Try Angka items: 1., 2., 3., ...
-    # Angka is tried before Huruf so that amendment Angka bodies (which contain numbered
-    # definitions with nested huruf) split correctly at the Angka level first. Without this
-    # ordering, Huruf markers deep inside (e.g. "a." in definition 3) would win over the
-    # top-level Angka structure.
+    # Try Angka vs Huruf — pick whichever appears EARLIEST in text.
+    # Text like "a. ... b. ... h. ... 1. ... 9." should split at a/b/c...
+    # (huruf first), letting Huruf h's body recurse into Angka 1-9.
+    # Text like "1. Definisi A... 2. Definisi B..." with occasional inner
+    # a/b should split at 1/2/... (angka first), letting each Angka's body
+    # recurse into Huruf a/b.
     angka_markers = _find_and_validate_markers(text, _ANGKA_ITEM_RE, "1")
+    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    if angka_markers and huruf_markers:
+        first_angka_pos = angka_markers[0][0]
+        first_huruf_pos = huruf_markers[0][0]
+        if first_huruf_pos < first_angka_pos:
+            angka_markers = None  # Skip Angka branch; Huruf is the parent level.
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
         sub_nodes = []
@@ -3124,7 +3201,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             else:
                 node["text"] = segment
             sub_nodes.append(node)
-        _prepend_intro_to_first_child(sub_nodes, intro)
+        _stash_intro_for_parent(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "angka")
         for n in sub_nodes:
             n.pop("_split_label", None)
@@ -3158,7 +3235,7 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             else:
                 node["text"] = segment
             sub_nodes.append(node)
-        _prepend_intro_to_first_child(sub_nodes, intro)
+        _stash_intro_for_parent(sub_nodes, intro)
         _distribute_penjelasan(penjelasan, sub_nodes, "huruf")
         for n in sub_nodes:
             n.pop("_split_label", None)

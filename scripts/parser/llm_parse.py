@@ -173,12 +173,131 @@ inside Pasal nodes. Only BAB and Bagian can wrap Pasal nodes.
   ]
 }}
 
-For amendment docs (is_perubahan=true): emit "Pasal I", "Pasal II" as
-LEAVES too. The body text of "Pasal I" is the ENTIRE amendment payload
-(all Angka 1..N + each Angka's nested Pasal + Ayat + Huruf) as one flat
-string preserving the PDF's "1. ... 2. ... a. ..." markers. A separate
-re-split pass splits Angka/Huruf/Angka-sub deterministically. Do NOT
-split Pasal I into Angka children yourself.
+For amendment docs (is_perubahan=true): emit "Pasal I" / "Pasal II" as
+CONTAINERS with nested Angka children. Each Angka represents ONE
+amendment instruction. When an Angka says "Ketentuan Pasal X diubah",
+"Di antara Pasal X dan Pasal Y disisipkan Pasal XA", or similar, the
+NEW Pasal MUST be emitted as a nested child of that Angka, NOT as a
+flat text blob. Preserve the new Pasal's own structure (Ayat, Huruf)
+as further nested children.
+
+Example amendment structure (note Pasal I has BOTH text preamble AND nodes,
+and prior-amendment references a./b./c. emitted as Huruf siblings alongside
+Angka siblings):
+{{
+  "structure": [
+    {{
+      "title": "Pasal I",
+      "node_id": "pasal_I",
+      "text": "Undang-Undang Nomor 19 Tahun 2003 tentang Badan Usaha Milik Negara (Lembaran Negara Republik Indonesia Tahun 2003 Nomor 70, Tambahan Lembaran Negara Republik Indonesia Nomor 4297) yang telah beberapa kali diubah dengan Undang-Undang:",
+      "nodes": [
+        {{
+          "title": "Pasal I Huruf a",
+          "node_id": "pasal_I_huruf_a",
+          "text": "Nomor 11 Tahun 2020 tentang Cipta Kerja (Lembaran Negara Republik Indonesia Tahun 2020 Nomor 245, Tambahan Lembaran Negara Republik Indonesia Nomor 6573);"
+        }},
+        {{
+          "title": "Pasal I Huruf b",
+          "node_id": "pasal_I_huruf_b",
+          "text": "Nomor 6 Tahun 2023 tentang Penetapan Peraturan Pemerintah Pengganti Undang-Undang ...;"
+        }},
+        {{
+          "title": "Pasal I Huruf c",
+          "node_id": "pasal_I_huruf_c",
+          "text": "Nomor 1 Tahun 2025 tentang Perubahan Ketiga atas Undang-Undang Nomor 19 Tahun 2003 ...;"
+        }},
+        {{
+          "title": "Pasal I Angka 1",
+          "node_id": "pasal_I_angka_1",
+          "text": "Ketentuan Pasal 1 diubah sehingga berbunyi sebagai berikut:",
+          "nodes": [
+            {{
+              "title": "Pasal 1",
+              "node_id": "pasal_I_angka_1_pasal_1",
+              "text": "Dalam Peraturan ini yang dimaksud dengan:\\n1. Penyelenggara adalah ...\\n2. Pemodal adalah ..."
+            }}
+          ]
+        }},
+        {{
+          "title": "Pasal I Angka 2",
+          "node_id": "pasal_I_angka_2",
+          "text": "Di antara Pasal 3 dan Pasal 4 disisipkan 1 (satu) pasal, yakni Pasal 3A sehingga berbunyi sebagai berikut:",
+          "nodes": [
+            {{
+              "title": "Pasal 3A",
+              "node_id": "pasal_I_angka_2_pasal_3A",
+              "text": "(1) Aset Keuangan Digital terdiri atas:\\na. Aset Kripto; dan\\nb. Aset Keuangan Digital lainnya."
+            }}
+          ]
+        }},
+        {{
+          "title": "Pasal I Angka 3",
+          "node_id": "pasal_I_angka_3",
+          "text": "Pasal 5 dihapus."
+        }}
+      ]
+    }},
+    {{
+      "title": "Pasal II",
+      "node_id": "pasal_II",
+      "text": "Peraturan ini mulai berlaku pada tanggal diundangkan."
+    }}
+  ]
+}}
+
+Rules for amendment nesting:
+- Pasal I / Pasal II = CONTAINER (Roman numerals). Do NOT put amendment
+  body as flat text on the Pasal Roman.
+- Pasal I typically has a PREAMBLE paragraph before the first Angka, e.g.:
+    "Undang-Undang Nomor X Tahun Y tentang ABC (Lembaran Negara ...),
+     yang telah beberapa kali diubah dengan Undang-Undang:
+     a. Nomor ... Tahun ... tentang ...;
+     b. Nomor ... Tahun ... tentang ...;
+     diubah sebagai berikut:"
+  This preamble belongs to Pasal I ITSELF — emit as `"text"` on the Pasal I
+  container node (alongside its "nodes" array of Angka children). DO NOT
+  stuff it into Angka 1's intro — Angka 1 starts at the literal "1." marker.
+- If the preamble contains a lettered list (a./b./c. listing prior amending
+  laws), emit those as HURUF CHILDREN of Pasal I, sibling to the Angka
+  children. Sequence: first Huruf a..c siblings (prior amendment refs),
+  then Angka 1..N siblings (amendment instructions). Pasal I `text` then
+  holds only the lead-in "UU Nomor X Tahun Y tentang ABC ..., yang telah
+  beberapa kali diubah dengan Undang-Undang:" and the trailing transition
+  "diubah sebagai berikut:" can be appended to the text or omitted
+  (it's just a structural connector).
+- Each Angka = child of Pasal Roman. Title format "Pasal I Angka N".
+- Angka that inserts/modifies a Pasal = CONTAINER with the new Pasal as
+  single child. The Angka's OWN text is just the instruction sentence
+  ("Ketentuan Pasal X diubah...", "Di antara X dan Y disisipkan Pasal Z...").
+- Angka that deletes ("Pasal 5 dihapus.") = LEAF with short text.
+
+CRITICAL — nested amended Pasal numbering:
+- The nested new Pasal inside an Angka is ALWAYS ARABIC: "Pasal 1",
+  "Pasal 2", "Pasal 3A", "Pasal 568A" — NEVER Roman ("Pasal I", "Pasal II").
+- Even if the PDF's visual rendering makes the arabic "1" look like Roman "I",
+  USE ARABIC. Check the instruction text: "Ketentuan Pasal 1 diubah..." means
+  nested title = "Pasal 1" (arabic), NOT "Pasal I".
+- node_id for nested: pasal_I_angka_{{N}}_pasal_{{arabic}}
+  e.g. pasal_I_angka_1_pasal_1, pasal_I_angka_2_pasal_3A.
+- Do NOT reuse the outer Roman numeral as the nested pasal's number.
+
+CRITICAL — nested Pasal body: keep ENTIRELY FLAT.
+- Nested new Pasal body = ONE flat "text" string containing ALL markers
+  inline: "(1) ...\\na. ...\\nb. ...\\n1. ...\\n2. ...", verbatim from PDF.
+- DO NOT emit any children under nested Pasal. No Ayat, no Huruf, no Angka
+  sub-nodes. The deterministic re-split pass handles Ayat/Huruf/Angka
+  splitting based on inline markers.
+- This applies REGARDLESS of depth: if nested Pasal 3F has Ayat (1), (2),
+  Huruf a-h under (2), Angka 1-9 under h — ALL of that stays in ONE text
+  string on Pasal 3F. Re-split produces the hierarchy deterministically.
+- Example (what to emit, regardless of apparent nesting in PDF):
+    {{ "title": "Pasal 3F", "node_id": "pasal_I_angka_8_pasal_3F",
+       "text": "(1) Badan bertugas ...\\n(2) Dalam melaksanakan tugas ..., Badan berwenang:\\na. mengelola dividen ...\\nb. menyetujui ...\\nh. menetapkan pedoman/kebijakan strategis dalam bidang:\\n1. akuntansi ...\\n2. pengembangan ...\\n9. program ESG." }}
+- This avoids LLM judgment calls on ambiguous deep-nesting layouts and
+  keeps the output consistent. Only top-level containers (BAB, Bagian,
+  Paragraf, Pasal I/II, Pasal I Angka N) are emitted as structural nodes.
+
+- DO include every Angka number from the PDF; skip none.
 
 NODE_ID CONVENTIONS (lowercase, underscore-separated):
 - bab_{{arabic}}                          e.g. bab_1, bab_12
@@ -336,6 +455,99 @@ def build_navigation_paths(
         node["navigation_path"] = " > ".join(path)
         if node.get("nodes"):
             build_navigation_paths(node["nodes"], path)
+
+
+# Patterns for splitting a parent's penjelasan text into per-child slices.
+# Tolerant to OCR quirks like "Hurufb" without space.
+_PENJ_AYAT_HEADER_RE = re.compile(r"(?:^|\n)\s*Ayat\s*\(?(\d+)\)?\s*\n?", re.IGNORECASE)
+_PENJ_HURUF_HEADER_RE = re.compile(r"(?:^|\n)\s*Huruf\s*([a-z])\b", re.IGNORECASE)
+_PENJ_ANGKA_HEADER_RE = re.compile(r"(?:^|\n)\s*Angka\s+(\d+)\b", re.IGNORECASE)
+
+
+def _split_penj_by_marker(
+    parent_penj: str, regex: re.Pattern
+) -> tuple[str, dict[str, str]]:
+    """Split parent penjelasan text at marker headers.
+
+    Returns (lead_text, {label: slice_text}). `lead_text` is the portion
+    before the first marker (stays on parent). `label` is the match group 1
+    (ayat number, huruf letter, or angka number), lowercased.
+    """
+    matches = list(regex.finditer(parent_penj))
+    if not matches:
+        return parent_penj, {}
+    lead = parent_penj[: matches[0].start()].strip()
+    slices: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        label = m.group(1).lower()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(parent_penj)
+        slices[label] = parent_penj[m.end() : end].strip()
+    return lead, slices
+
+
+def _child_key(title: str) -> tuple[str, str] | None:
+    """Extract (kind, label) from child title for penjelasan lookup.
+
+    Examples:
+        "Pasal 8 Ayat (1)"              → ("ayat", "1")
+        "Pasal 3A Ayat (2) Huruf a"     → ("huruf", "a")
+        "Pasal 3 Huruf b"               → ("huruf", "b")
+        "Pasal 3 Ayat (2) Huruf a Angka 1" → ("angka", "1")
+    """
+    t = title.strip()
+    # Match the RIGHTMOST sub-element in the title (deepest level).
+    for kind, rex in (
+        ("angka", r"Angka\s+(\d+)\s*$"),
+        ("huruf", r"Huruf\s+([a-z])\s*$"),
+        ("ayat", r"Ayat\s*\((\d+)\)\s*$"),
+    ):
+        m = re.search(rex, t, re.IGNORECASE)
+        if m:
+            return kind, m.group(1).lower()
+    return None
+
+
+def distribute_penjelasan_to_tree(structure: list[dict]) -> None:
+    """Recursively split each Pasal's penjelasan into per-child slices.
+
+    Walks the tree. For every container node with a `penjelasan` field AND
+    children, detects the child type (Ayat/Huruf/Angka) from titles and
+    splits the parent's penjelasan text at matching headers. Each child
+    inherits its matching slice. Recurses into each child.
+
+    If no markers found in parent penjelasan OR child labels don't match,
+    children inherit full parent penjelasan (graceful fallback).
+    """
+    for node in structure:
+        children = node.get("nodes") or []
+        if children and node.get("penjelasan"):
+            parent_penj = node["penjelasan"]
+            # Detect child kind from first child with recognizable title.
+            kind = None
+            for c in children:
+                k = _child_key(c.get("title", ""))
+                if k:
+                    kind = k[0]
+                    break
+            if kind == "ayat":
+                lead, slices = _split_penj_by_marker(parent_penj, _PENJ_AYAT_HEADER_RE)
+            elif kind == "huruf":
+                lead, slices = _split_penj_by_marker(parent_penj, _PENJ_HURUF_HEADER_RE)
+            elif kind == "angka":
+                lead, slices = _split_penj_by_marker(parent_penj, _PENJ_ANGKA_HEADER_RE)
+            else:
+                lead, slices = parent_penj, {}
+            # Leading text stays on parent (could be "Cukup jelas." intro).
+            node["penjelasan"] = lead if lead else parent_penj
+            # Assign per-child slice when label matches; else no penjelasan on child
+            # (child inherits navigation_path context — no blind copy).
+            for c in children:
+                key = _child_key(c.get("title", ""))
+                if key and key[1] in slices and slices[key[1]]:
+                    c["penjelasan"] = slices[key[1]]
+        # Recurse into children regardless.
+        if children:
+            distribute_penjelasan_to_tree(children)
 
 
 def attach_penjelasan(
@@ -895,25 +1107,12 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     build_navigation_paths(structure)
     backfill_page_indices(structure, pages, total_pages)
 
-    # Attach penjelasan (per-Pasal explanations from PENJELASAN section).
-    # Re-split picks these up and distributes to ayat/huruf children.
-    penjelasan_page = parser_doc.get("penjelasan_page")
-    penj_match_count = 0
-    if penjelasan_page:
-        try:
-            from vectorless.indexing.parser import (
-                extract_pages as full_extract_pages,
-                parse_penjelasan,
-            )
-            full_pages = full_extract_pages(str(find_pdf_path(doc_id)))
-            penj_data = parse_penjelasan(full_pages, penjelasan_page, total_pages)
-            penj_match_count = attach_penjelasan(
-                structure, penj_data.get("pasal", {})
-            )
-            audit["penjelasan_pasals_matched"] = penj_match_count
-            audit["penjelasan_umum_len"] = len(penj_data.get("umum", ""))
-        except Exception as exc:
-            audit["penjelasan_error"] = str(exc)
+    # Penjelasan intentionally NOT attached to tree nodes.
+    # Rationale: GT target is body text (pasal/ayat/huruf/angka); penjelasan
+    # is supplementary and its regex-based attribution had layout-specific
+    # bugs (mis-attributing across pasals). Raw penjelasan map stays at
+    # doc-level (penjelasan_pasal_demi_pasal, penjelasan_umum) for optional
+    # display; not indexed, not retrieval target.
 
     # Validate.
     output = {"structure": structure}
