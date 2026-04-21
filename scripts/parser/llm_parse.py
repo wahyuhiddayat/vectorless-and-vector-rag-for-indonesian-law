@@ -382,6 +382,111 @@ def _sanitize_node_id(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", s).strip("_")
 
 
+def _canonical_title_from_node_id(node_id: str, original_title: str) -> str:
+    """Reconstruct canonical title from node_id (LLM-consistent source).
+
+    LLM tends to produce cleaner node_ids than titles because IDs are
+    structural and less susceptible to verbatim copy of OCR artifacts.
+    Use the TAIL of the node_id path as the source of truth for title.
+
+    Handles path shapes:
+        pasal_3                       → "Pasal 3"
+        pasal_3_ayat_2                → "Pasal 3 Ayat (2)"
+        pasal_3_ayat_2_huruf_a        → "Pasal 3 Ayat (2) Huruf a"
+        pasal_3_ayat_2_huruf_a_angka_1 → "Pasal 3 Ayat (2) Huruf a Angka 1"
+        pasal_I                       → "Pasal I"
+        pasal_I_angka_2               → "Pasal I Angka 2"
+        pasal_I_angka_2_pasal_3A      → "Pasal 3A"   (deepest pasal wins)
+        pasal_I_angka_33_pasal_15I    → "Pasal 15I"  (OCR recovered: l5I→15I in id)
+        bab_1                         → keep original
+        bagian_kesatu                 → keep original
+    """
+    # Only reconstruct pasal-family titles; keep BAB/Bagian/Paragraf as-is.
+    parts = node_id.split("_")
+    # Find last `pasal` segment in node_id.
+    last_pasal_idx = -1
+    for i, seg in enumerate(parts):
+        if seg == "pasal" and i + 1 < len(parts):
+            last_pasal_idx = i
+    if last_pasal_idx == -1:
+        return original_title  # Not a pasal-family node; keep as-is.
+    # Slice from last pasal onwards.
+    tail = parts[last_pasal_idx:]
+    # Build canonical title from tail.
+    # tail looks like: ["pasal", "3"] or ["pasal", "3", "ayat", "2", "huruf", "a", "angka", "1"]
+    out = []
+    i = 0
+    while i < len(tail):
+        seg = tail[i]
+        if seg == "pasal":
+            if i + 1 < len(tail):
+                num = tail[i + 1]
+                # Uppercase single letter suffix: pasal_3A → keep capital.
+                # Roman pasal: pasal_I → keep I.
+                # Arabic with letter suffix: pasal_15I → "15I".
+                if re.match(r"^[IVX]+$", num):
+                    out.append(f"Pasal {num}")
+                elif re.match(r"^\d+[A-Z]?$", num, re.IGNORECASE):
+                    # Normalize: digits keep, suffix uppercase.
+                    m = re.match(r"^(\d+)([A-Za-z]?)$", num)
+                    if m:
+                        n, suf = m.group(1), m.group(2).upper()
+                        out.append(f"Pasal {n}{suf}")
+                    else:
+                        out.append(f"Pasal {num}")
+                else:
+                    out.append(f"Pasal {num}")
+                i += 2
+                continue
+        elif seg == "ayat":
+            if i + 1 < len(tail):
+                out.append(f"Ayat ({tail[i + 1]})")
+                i += 2
+                continue
+        elif seg == "huruf":
+            if i + 1 < len(tail):
+                out.append(f"Huruf {tail[i + 1]}")
+                i += 2
+                continue
+        elif seg == "angka":
+            if i + 1 < len(tail):
+                out.append(f"Angka {tail[i + 1]}")
+                i += 2
+                continue
+        i += 1
+    canonical = " ".join(out)
+    # Special case: for nested amendment (pasal_I_angka_N_pasal_X),
+    # the last_pasal_idx above already picks the deepest pasal. Good.
+    # For "pasal_I" (amendment root), tail=[pasal, I] → "Pasal I". Good.
+    # For "pasal_I_angka_N" without nested pasal: last_pasal_idx=0,
+    # tail = full path → "Pasal I Angka N". Good.
+    return canonical if canonical else original_title
+
+
+def normalize_pasal_titles_in_tree(structure: list[dict]) -> int:
+    """Reconstruct canonical title for every node from node_id.
+
+    node_id is LLM-consistent (structural), title may have OCR artifacts
+    (verbatim from PDF). Use node_id as source of truth. Only reconstructs
+    pasal-family titles; BAB/Bagian/Paragraf keep their original title
+    (which has the proper display name).
+
+    Returns count of titles modified.
+    """
+    count = 0
+    for node in structure:
+        title = node.get("title", "")
+        nid = node.get("node_id", "")
+        if nid and title.startswith("Pasal "):
+            new = _canonical_title_from_node_id(nid, title)
+            if new != title:
+                node["title"] = new
+                count += 1
+        if node.get("nodes"):
+            count += normalize_pasal_titles_in_tree(node["nodes"])
+    return count
+
+
 def assign_readable_node_ids(
     structure: list[dict], ancestor_id: str = ""
 ) -> None:
@@ -1103,6 +1208,10 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     audit["usage"] = agg_usage
 
     # Post-process.
+    # Normalize OCR'd digit-letters in Pasal titles before building
+    # navigation_path so paths reflect canonical form ("Pasal 15I", not
+    # "Pasal l5I"). BM25 tokenization depends on clean title/text tokens.
+    normalize_pasal_titles_in_tree(structure)
     assign_readable_node_ids(structure)
     build_navigation_paths(structure)
     backfill_page_indices(structure, pages, total_pages)

@@ -225,6 +225,9 @@ def fix_ocr_artifacts(text: str) -> str:
         line = re.sub(r'\((\d+)[t]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\b[tl](\d+)[tl]\b', lambda m: '(' + m.group(1) + ')', line)
         line = re.sub(r'\(s\)', '(5)', line)
+        # Close paren OCR'd as trailing "1"/"l"/"I": "(21 " → "(2) " (common in
+        # numbered-ayat lists where trailing char is misread).
+        line = re.sub(r'\((\d)[1lI](?=\s)', lambda m: '(' + m.group(1) + ')', line)
         # Numbered list prefixes with OCR-garbled trailing digit: "1O." → "10.", "2l." → "21.".
         # Capital-O and lowercase-l are common OCR misreads of 0 and 1 respectively when they
         # follow another digit at the start of a list-item line.
@@ -2804,37 +2807,185 @@ def _normalize_flat_structural_text(text: str) -> str:
     return text
 
 
-def _fix_list_ocr(text: str) -> str:
-    """Normalize OCR-misread list prefixes in-place.
+# Fuzzy marker candidate regex — tolerate common OCR noise around digits.
+# Ayat: digit-ish token optionally wrapped in () or [] with OCR noise.
+#   Accepted: (1), (l), (I), (O), (21, 21), (2l), l2l, t2t, lN), (Nt, etc.
+# The char-class 'OIilot' captures both digits and their common OCR letter
+# substitutes (O/0, I/1, i/1, l/1, o/0, t as paren substitute).
+_FUZZY_AYAT_RE = re.compile(
+    r'(?:^|\n)[ \t]*[(\[lt]?[ \t]*(\d[0-9OIilot]{0,2}|[OIilot]\d[OIilot]?|[OIilo])[ \t]*[)\]lt]?(?=\s|$)',
+    re.MULTILINE,
+)
+# Angka: digit-ish token followed by period.
+_FUZZY_ANGKA_ITEM_RE = re.compile(
+    r'(?:^|\n)[ \t]*(\d[0-9OIilot]{0,2}|[OIilo])\.(?=\s)',
+    re.MULTILINE,
+)
 
-    Cases:
-    - "l." at line start followed (possibly with intervening non-list lines)
-      by "2." at line start → OCR'd "1.", replace with "1."
-    - "I." or "i." similar to "l." (OCR of digit 1)
-    - "O." → "0." (rare but possible)
 
-    Conservative: only rewrites when a plausible digit sequence follows,
-    so we don't corrupt legitimate huruf markers.
+def _find_fuzzy_markers(
+    text: str, kind: str, expected_start: str
+) -> list[tuple[int, str, int]] | None:
+    """OCR-tolerant marker detection.
+
+    Scans text for loose candidates matching the marker kind
+    ("ayat", "angka", "huruf"), normalizes each via _normalize_ocr_digits
+    (for digit kinds), filters inline cross-references, validates the
+    sequence is consecutive starting at expected_start, and falls back
+    to one-slot gap-fill if validation initially fails.
+
+    Returns list of (match_start, normalized_label, match_end) tuples,
+    or None if no valid sequence found.
     """
-    lines = text.split('\n')
-    fixed = list(lines)
-    n = len(lines)
-    for i, line in enumerate(lines):
-        m = re.match(r'^(\s*)([lIiO])\.\s', line)
-        if not m:
+    if kind == "ayat":
+        pattern = _FUZZY_AYAT_RE
+        is_numeric = True
+    elif kind == "angka":
+        pattern = _FUZZY_ANGKA_ITEM_RE
+        is_numeric = True
+    elif kind == "huruf":
+        pattern = _HURUF_RE
+        is_numeric = False
+    else:
+        raise ValueError(f"unknown kind: {kind}")
+
+    # Stage 1: collect raw candidates, normalize, filter inline refs.
+    candidates: list[tuple[int, str, int]] = []
+    for m in pattern.finditer(text):
+        if _is_inline_ref(text, m):
             continue
-        # Scan subsequent lines for next list marker. Expected: 2. after OCR'd 1.
-        for j in range(i + 1, min(n, i + 8)):
-            mj = re.match(r'^\s*(\d+)\.\s', lines[j])
-            if mj and mj.group(1) == '2':
-                # Confirmed: OCR'd 1.
-                letter = m.group(2)
-                digit = '1' if letter in 'lIi' else '0'
-                fixed[i] = m.group(1) + digit + '. ' + line[m.end():]
-                break
-            if mj:
-                break  # Different number, not OCR of 1
-    return '\n'.join(fixed)
+        raw_label = m.group(1)
+        if is_numeric:
+            norm = _normalize_ocr_digits(raw_label)
+            # Must normalize to pure digits with plausible magnitude.
+            if not norm.isdigit():
+                continue
+            # Ayat/Angka rarely exceed 3 digits; reject noise like "000".
+            if len(norm) > 3 or (norm.startswith("0") and norm != "0"):
+                continue
+        else:
+            # Huruf: single lowercase letter, already strict.
+            norm = raw_label
+        candidates.append((m.start(), norm, m.end()))
+
+    if len(candidates) < 2:
+        return None
+
+    # Stage 2: deduplicate adjacent duplicates (page-break overlap).
+    deduped: list[tuple[int, str, int]] = [candidates[0]]
+    for c in candidates[1:]:
+        if c[1] == deduped[-1][1]:
+            deduped[-1] = c  # keep later, more complete occurrence
+        else:
+            deduped.append(c)
+    if len(deduped) < 2:
+        return None
+
+    # Stage 3: validate sequence. Try strict pass first.
+    def _validate(seq: list[tuple[int, str, int]]) -> bool:
+        labels = [s[1] for s in seq]
+        if is_numeric:
+            try:
+                nums = [int(l) for l in labels]
+            except ValueError:
+                return False
+            if nums[0] != int(expected_start):
+                return False
+            return all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
+        if labels[0] != expected_start:
+            return False
+        return all(
+            ord(labels[i + 1]) == ord(labels[i]) + 1
+            for i in range(len(labels) - 1)
+        )
+
+    if _validate(deduped):
+        return deduped
+
+    # Stage 4a: huruf sequence recovery.
+    # If majority of positions match expected consecutive sequence
+    # (≥70%), assume outliers are OCR artifacts and remap them to the
+    # canonical expected letter. Bounded: requires solid majority + first
+    # position anchored at expected_start.
+    if not is_numeric:
+        labels = [lab for _, lab, _ in deduped]
+        if not labels or labels[0] != expected_start:
+            return None
+        expected_seq = [
+            chr(ord(expected_start) + i) for i in range(len(labels))
+        ]
+        matches = sum(1 for a, b in zip(labels, expected_seq) if a == b)
+        if matches / len(labels) < 0.7:
+            return None
+        # Remap all outlier labels to canonical expected letters.
+        remapped = [
+            (pos, exp, end)
+            for (pos, _, end), exp in zip(deduped, expected_seq)
+        ]
+        if _validate(remapped):
+            return remapped
+        return None
+
+    try:
+        nums = [int(lab) for _, lab, _ in deduped]
+    except ValueError:
+        return None
+    # Sequence must at least start correctly for gap-fill to make sense.
+    if nums[0] != int(expected_start):
+        return None
+    # Find first gap: where nums[i+1] != nums[i] + 1.
+    for i in range(len(nums) - 1):
+        if nums[i + 1] != nums[i] + 1:
+            # Missing number(s) between nums[i] and nums[i+1].
+            missing = nums[i] + 1
+            if nums[i + 1] != missing + 1:
+                # Gap is >1; one-slot fill can't repair. Abort.
+                return None
+            # Scan raw pattern matches in text[between] for any candidate
+            # that normalizes to `missing`. Permit slightly wider character
+            # class (include letters that OCR-collapse to digit).
+            window_start = deduped[i][2]
+            window_end = deduped[i + 1][0]
+            window = text[window_start:window_end]
+            # Adjust match positions to global coordinates.
+            for fm in pattern.finditer(window):
+                # Filter inline-ref using global text position.
+                global_start = window_start + fm.start()
+                # Re-create match-like object for _is_inline_ref (simpler:
+                # check prev-line heuristic manually).
+                if _window_is_inline_ref(text, global_start):
+                    continue
+                raw = fm.group(1)
+                norm = _normalize_ocr_digits(raw)
+                if not norm.isdigit():
+                    continue
+                if int(norm) == missing:
+                    new_marker = (
+                        global_start,
+                        str(missing),
+                        window_start + fm.end(),
+                    )
+                    filled = deduped[: i + 1] + [new_marker] + deduped[i + 1 :]
+                    if _validate(filled):
+                        return filled
+                    break  # Only try first fitting candidate per slot.
+            return None  # No fitting candidate found.
+    # Loop fell through = no gap found, but strict validation already failed
+    # (possibly wrong start). Abort.
+    return None
+
+
+def _window_is_inline_ref(text: str, pos: int) -> bool:
+    """Check if position is preceded by a structural word hinting at cross-ref."""
+    nl = text.rfind('\n', 0, pos)
+    if nl == -1:
+        return False
+    prev_nl = text.rfind('\n', 0, nl)
+    prev_line = text[prev_nl + 1 : nl].strip().lower()
+    if not prev_line:
+        return False
+    last_word = prev_line.split()[-1]
+    return last_word in _INLINE_REF_PREV_WORDS
 
 
 def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: str) -> list[tuple[int, str]] | None:
@@ -2880,22 +3031,38 @@ def _find_and_validate_markers(text: str, pattern: re.Pattern, expected_start: s
     return [(m.start(), m.group(1)) for m in matches]
 
 
-def _split_text_by_markers(text: str, markers: list[tuple[int, str]]) -> tuple[str, list[tuple[str, str]]]:
+def _split_text_by_markers(
+    text: str,
+    markers: list[tuple[int, str]] | list[tuple[int, str, int]],
+) -> tuple[str, list[tuple[str, str]]]:
     """Split text at each marker position into labelled segments.
 
-    Returns a 2-tuple of (intro_text, segments) where intro_text is the content
-    before the first marker and segments is a list of (label, segment_text) pairs.
-    """
-    positions = [pos for pos, _ in markers]
-    labels = [label for _, label in markers]
+    Accepts either 2-tuple (start, label) or 3-tuple (start, label, end).
+    When the 3-tuple is used, the segment starts at `end` (skipping the
+    marker text entirely) so callers don't need to strip OCR-varied
+    marker prefixes. For 2-tuple legacy calls, segment starts at `start`
+    and caller must strip the prefix.
 
-    intro = text[:positions[0]].strip()
+    Returns (intro_text, segments) where intro_text is content before
+    the first marker and segments is a list of (label, segment_text).
+    """
+    if not markers:
+        return text.strip(), []
+
+    has_end = len(markers[0]) == 3
+    starts = [m[0] for m in markers]
+    labels = [m[1] for m in markers]
+    ends = [m[2] for m in markers] if has_end else None
+
+    intro = text[:starts[0]].strip()
 
     segments = []
-    # Slice between adjacent markers; the final segment extends to the end of the text.
-    for i, (pos, label) in enumerate(zip(positions, labels)):
-        end = positions[i + 1] if i + 1 < len(positions) else len(text)
-        segment = text[pos:end].strip()
+    for i, label in enumerate(labels):
+        next_start = starts[i + 1] if i + 1 < len(starts) else len(text)
+        # 3-tuple: slice after marker span. 2-tuple: slice from marker start
+        # (caller must strip prefix).
+        seg_start = ends[i] if has_end else starts[i]
+        segment = text[seg_start:next_start].strip()
         segments.append((label, segment))
 
     return intro, segments
@@ -2977,9 +3144,9 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
-    text = _fix_list_ocr(text)
+    text = fix_ocr_artifacts(text)
 
-    ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
+    ayat_markers = _find_fuzzy_markers(text, "ayat", "1")
     if not ayat_markers:
         return None
 
@@ -2987,10 +3154,8 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
     sub_nodes = []
     # Build one Ayat sub-node for each matched segment.
     for i, (label, segment) in enumerate(segments, 1):
-        # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
-        segment = re.sub(r'^\(\d+\)\s*', '', segment)
         if not segment.strip():
-            continue  # Skip ayat with no content (PDF extraction gap between consecutive markers)
+            continue  # Skip ayat with no content (PDF extraction gap)
         sub_id = f"{parent_id}_ayat_{label}"
         sub_title = f"{parent_title} Ayat ({label})"
         node: dict = {
@@ -3086,19 +3251,21 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
-    text = _fix_list_ocr(text)
+    text = fix_ocr_artifacts(text)
+
     # Prefer period-style (standard huruf); fall back to paren-style when absent.
-    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
-    marker_strip = r'^[a-z]\.\s*'
+    # Paren-style "a) b) c)" still uses legacy strict matcher — no OCR variation
+    # known for parens-style markers in practice.
+    huruf_markers = _find_fuzzy_markers(text, "huruf", "a")
     if not huruf_markers:
-        huruf_markers = _find_and_validate_markers(text, _SUB_HURUF_RE, "a")
-        marker_strip = r'^\s*[a-z]\)\s*'
+        legacy = _find_and_validate_markers(text, _SUB_HURUF_RE, "a")
+        if legacy:
+            huruf_markers = [(s, lab, s + 3) for s, lab in legacy]  # approx end
     if not huruf_markers:
         return None
     intro, segments = _split_text_by_markers(text, huruf_markers)
     sub_nodes = []
     for i, (label, segment) in enumerate(segments, 1):
-        segment = re.sub(marker_strip, '', segment)
         if not segment.strip():
             continue  # Skip huruf with no content (PDF extraction gap)
         sub_id = f"{parent_id}_huruf_{label}"
@@ -3125,17 +3292,15 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     """
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
-    text = _fix_list_ocr(text)
+    text = fix_ocr_artifacts(text)
 
     # Try Ayat: (1), (2), (3), ...
-    ayat_markers = _find_and_validate_markers(text, _AYAT_RE, "1")
+    ayat_markers = _find_fuzzy_markers(text, "ayat", "1")
     if ayat_markers:
         intro, segments = _split_text_by_markers(text, ayat_markers)
         sub_nodes = []
         # Build one Ayat sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
-            # Strip the leading "(N) " ayat marker that _split_text_by_markers keeps.
-            segment = re.sub(r'^\(\d+\)\s*', '', segment)
             if not segment.strip():
                 continue  # Skip ayat with no content (PDF extraction gap)
             sub_id = f"{parent_id}_ayat_{label}"
@@ -3167,8 +3332,8 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     # Text like "1. Definisi A... 2. Definisi B..." with occasional inner
     # a/b should split at 1/2/... (angka first), letting each Angka's body
     # recurse into Huruf a/b.
-    angka_markers = _find_and_validate_markers(text, _ANGKA_ITEM_RE, "1")
-    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    angka_markers = _find_fuzzy_markers(text, "angka", "1")
+    huruf_markers = _find_fuzzy_markers(text, "huruf", "a")
     if angka_markers and huruf_markers:
         first_angka_pos = angka_markers[0][0]
         first_huruf_pos = huruf_markers[0][0]
@@ -3179,8 +3344,6 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         sub_nodes = []
         # Build one Angka sub-node per segment, recursing into Huruf if present.
         for i, (label, segment) in enumerate(segments, 1):
-            # Strip the leading "N. " angka marker that _split_text_by_markers keeps.
-            segment = re.sub(r'^\d+\.\s*', '', segment)
             if not segment.strip():
                 continue  # Skip angka with no content (PDF extraction gap)
             sub_id = f"{parent_id}_angka_{label}"
@@ -3208,14 +3371,12 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
         return sub_nodes
 
     # Try Huruf: a., b., c., ...
-    huruf_markers = _find_and_validate_markers(text, _HURUF_RE, "a")
+    huruf_markers = _find_fuzzy_markers(text, "huruf", "a")
     if huruf_markers:
         intro, segments = _split_text_by_markers(text, huruf_markers)
         sub_nodes = []
         # Build one Huruf sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
-            # Strip the leading "x. " huruf marker that _split_text_by_markers keeps.
-            segment = re.sub(r'^[a-z]\.\s*', '', segment)
             if not segment.strip():
                 continue  # Skip huruf with no content (PDF extraction gap)
             sub_id = f"{parent_id}_huruf_{label}"
