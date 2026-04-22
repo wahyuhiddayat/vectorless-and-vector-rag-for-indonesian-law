@@ -371,25 +371,6 @@ def detect_perubahan(pages: list[dict]) -> bool:
     return False
 
 
-def detect_omnibus(pages: list[dict], elements: list[dict]) -> bool:
-    """Return True if the document is an omnibus law (e.g. UU Cipta Kerja).
-
-    Omnibus laws skip Pasal sequence validation because their Pasal numbering
-    is non-linear by design. Detection uses two signals: the document title
-    and a Pasal count heuristic.
-    """
-    # Check title text for "CIPTA KERJA". Match must be in the title, not in
-    # preamble references to other laws (hence the TENTANG...DENGAN RAHMAT bound).
-    for page in pages[:3]:
-        title_m = re.search(r'TENTANG\s*(.+?)DENGAN\s+RAHMAT', page["raw_text"],
-                            re.DOTALL | re.IGNORECASE)
-        if title_m and re.search(r'CIPTA\s*KERJA', title_m.group(1), re.IGNORECASE):
-            return True
-    # Heuristic: >500 Pasals strongly indicates an omnibus structure.
-    pasal_count = sum(1 for e in elements if e["type"] == "pasal")
-    return pasal_count > 500
-
-
 def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) -> dict:
     """Parse the PENJELASAN section and return structured explanation text.
 
@@ -641,7 +622,14 @@ def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
         # Non-Pasal leaf nodes (Pembukaan, etc.) are left without penjelasan.
 
 # ============================================================
-# 3. STRUCTURAL ELEMENT DETECTION
+# 3. STRUCTURAL ELEMENT DETECTION [LEGACY — REGEX PARSER]
+# ------------------------------------------------------------
+# Used ONLY by build.py --parse-only for initial metadata stubs.
+# The structure tree produced here is immediately OVERWRITTEN by
+# scripts/parser/llm_parse.py (LLM-first flow). DO NOT build new
+# features on this regex path — future structural logic belongs in
+# llm_parse.py. Kept functional so metadata extraction (judul,
+# is_perubahan, body_pages, penjelasan_page) still works.
 # ============================================================
 
 # Roman numerals with optional trailing letter (e.g. BAB VIIA in amendments).
@@ -1179,7 +1167,10 @@ def detect_elements(pages: list[dict], body_end_page: int,
     return _dedupe_detected_elements(elements)
 
 # ============================================================
-# 4. PASAL NUMBERING VALIDATION
+# 4. PASAL NUMBERING VALIDATION [LEGACY — REGEX PARSER]
+# ------------------------------------------------------------
+# Validates elements produced by section 3. Only affects warnings
+# logged during --parse-only. No effect on the LLM-first structure.
 # ============================================================
 
 def validate_pasal_sequence(elements: list[dict], is_perubahan: bool = False) -> list[str]:
@@ -1236,7 +1227,12 @@ def validate_pasal_sequence(elements: list[dict], is_perubahan: bool = False) ->
     return warnings
 
 # ============================================================
-# 5. TREE BUILDING
+# 5. TREE BUILDING [LEGACY — REGEX PARSER]
+# ------------------------------------------------------------
+# Builds structure tree from detected elements. Output overwritten
+# by llm_parse.py. Kept for --parse-only metadata-stub generation.
+# Includes preamble splitting (Menimbang/Mengingat/Menetapkan) —
+# still useful as the LLM-first flow skips preamble.
 # ============================================================
 
 def assign_page_boundaries(elements: list[dict], total_pages: int):
@@ -1337,103 +1333,6 @@ def fix_node_boundaries(nodes: list[dict], parent_end: int, parent_end_char_offs
             node["end_index"] = max(node["end_index"], child_max)
 
         node["end_index"] = max(node["end_index"], node["start_index"])
-
-
-def consolidate_bab_in_perubahan(tree: list[dict]) -> int:
-    """Move orphaned Pasals into their BAB node when the amendment splits them across Angkas.
-
-    In some Perubahan UUs, one Angka introduces a new BAB heading and the next Angka
-    contains the Pasals that belong under it. This function detects that pattern and
-    re-parents those Pasals under the BAB. Mutates the tree in place.
-
-    Returns the total number of Pasals moved.
-    """
-    moved_count = 0
-
-    for root_node in tree:
-        if root_node.get("type") != "pasal_roman":
-            continue
-        children = root_node.get("nodes", [])
-        if not children:
-            continue
-
-        indices_to_remove = []
-        i = 0
-        # Walk each Angka child, looking for a BAB-only Angka followed by a Pasal-bearing Angka.
-        while i < len(children):
-            angka = children[i]
-            if angka.get("type") != "angka":
-                i += 1
-                continue
-
-            # Qualify the current Angka: it must contain a childless BAB and no Pasals.
-            # Angkas that already have Pasals are BAB renames, not introductions.
-            angka_children = angka.get("nodes", [])
-            has_pasal = any(c.get("type") == "pasal" for c in angka_children)
-            if has_pasal:
-                i += 1
-                continue
-            bab_node = None
-            for child in angka_children:
-                if child.get("type") == "bab" and not child.get("nodes"):
-                    bab_node = child
-                    break
-            if bab_node is None:
-                i += 1
-                continue
-
-            # Check the next sibling for Pasals to absorb.
-            if i + 1 >= len(children):
-                i += 1
-                continue
-            next_angka = children[i + 1]
-            if next_angka.get("type") != "angka":
-                i += 1
-                continue
-
-            pasal_children = [n for n in next_angka.get("nodes", []) if n.get("type") == "pasal"]
-            if not pasal_children:
-                i += 1
-                continue
-
-            # Re-parent each Pasal under the BAB and record which Angka it came from.
-            for pasal in pasal_children:
-                pasal["_moved_from_angka"] = next_angka.get("number")
-            bab_node["nodes"] = pasal_children
-            moved_count += len(pasal_children)
-
-            # Expand BAB and Angka boundaries to cover the adopted children.
-            bab_node["end_index"] = max(
-                bab_node["end_index"],
-                max(p["end_index"] for p in pasal_children),
-            )
-            angka["end_index"] = max(angka["end_index"], bab_node["end_index"])
-
-            # Remove the absorbed Angka if it is now empty; otherwise strip the Pasals.
-            remaining = [n for n in next_angka.get("nodes", []) if n.get("type") != "pasal"]
-            if remaining:
-                next_angka["nodes"] = remaining
-            else:
-                indices_to_remove.append(i + 1)
-
-            i += 2
-
-        # Delete absorbed Angkas in reverse order to keep earlier indices stable.
-        for idx in reversed(indices_to_remove):
-            children.pop(idx)
-
-    return moved_count
-
-
-def _collect_numeric_node_ids(nodes: list[dict], out: list[int]) -> None:
-    """Accumulate all numeric node_ids found anywhere in the tree into out."""
-    for node in nodes:
-        try:
-            out.append(int(node["node_id"]))
-        except (ValueError, KeyError):
-            pass
-        if node.get("nodes"):
-            _collect_numeric_node_ids(node["nodes"], out)
 
 
 def wrap_orphan_pasals_in_angka1(
@@ -2592,10 +2491,7 @@ def parse_legal_pdf(pdf_path: str, verbose: bool = True,
     if verbose:
         log.info(f"found: {type_counts} ({time.time() - t0:.1f}s)")
 
-    is_omnibus = detect_omnibus(pages, elements)
-    if verbose and is_omnibus:
-        log.info("detected as Omnibus law")
-    warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan or is_omnibus)
+    warnings = validate_pasal_sequence(elements, is_perubahan=is_perubahan)
     # Emit each sequence warning to the log.
     for w in warnings:
         log.warning(w)
@@ -2729,7 +2625,14 @@ def print_tree(nodes: list[dict], indent: int = 0):
             print_tree(node["nodes"], indent + 1)
 
 # ============================================================
-# 8. SUB-PASAL LEAF SPLITTING
+# 8. SUB-PASAL LEAF SPLITTING [ACTIVE — CORE OF RE-SPLIT]
+# ------------------------------------------------------------
+# Called by build.py --from-pasal to derive ayat + full_split
+# granularities from pasal-level bodies (source of truth is LLM
+# output, whether regex-produced or llm_parse-produced).
+# OCR-tolerant via _find_fuzzy_markers. DO NOT simplify without
+# preserving the fuzzy matcher's fallback chain (majority-match
+# letter remap, one-slot gap-fill, OCR digit normalization).
 # ============================================================
 # Splits Pasal leaf nodes into finer sub-nodes based on the requested granularity.
 # The split hierarchy is: Pasal, then Ayat (1)/(2)/..., then Huruf a./b./..., then Angka 1./2./...
@@ -3068,43 +2971,6 @@ def _split_text_by_markers(
     return intro, segments
 
 
-def _distribute_penjelasan(penjelasan: str | None, sub_nodes: list[dict], kind: str) -> None:
-    """DISABLED in re-split — distribution handled by post-pass.
-
-    The in-split distribution leaked across boundaries on OCR quirks
-    ("Hurufb" without space) and duplicated parent text to siblings.
-    Distribute_penjelasan_to_tree() in scripts/parser/llm_parse.py now
-    handles proper recursive distribution after the tree is fully built.
-    """
-    return
-    if not penjelasan:
-        return
-
-    if kind == "ayat":
-        split_re = _PENJ_AYAT_RE
-    elif kind == "huruf":
-        split_re = _PENJ_HURUF_RE
-    else:
-        # Angka has no per-item penjelasan heading pattern; assign full text to all.
-        for node in sub_nodes:
-            node["penjelasan"] = penjelasan
-        return
-
-    parts = split_re.split(penjelasan)
-    # re.split with a capturing group produces alternating [text, label, text, label, ...]
-    penj_map = {}
-    for i in range(1, len(parts) - 1, 2):
-        penj_map[parts[i]] = parts[i + 1].strip()
-
-    # Assign each sub-node its specific excerpt, or the full text if no match found.
-    for node in sub_nodes:
-        label = node.get("_split_label")
-        if label and label in penj_map:
-            node["penjelasan"] = penj_map[label]
-        else:
-            node["penjelasan"] = penjelasan
-
-
 def _strip_leading_junk(text: str) -> str:
     """Strip leading non-structural characters (colon, whitespace) from text."""
     return re.sub(r'^[\s:;,\-]+', '', text)
@@ -3123,18 +2989,6 @@ def _stash_intro_for_parent(sub_nodes: list[dict], intro: str) -> None:
     intro = intro.strip()
     if intro:
         sub_nodes[0]["_intro_for_parent"] = intro
-
-
-def _prepend_intro_to_first_child(sub_nodes: list[dict], intro: str) -> None:
-    """Preserve text before the first split marker by prepending it to child 1."""
-    if not intro or not sub_nodes:
-        return
-    intro = intro.strip()
-    if not intro:
-        return
-    first = sub_nodes[0]
-    existing = first.get("text", "").strip()
-    first["text"] = f"{intro}\n{existing}".strip() if existing else intro
 
 
 def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
@@ -3168,7 +3022,6 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
         }
         sub_nodes.append(node)
     _stash_intro_for_parent(sub_nodes, intro)
-    _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
     for n in sub_nodes:
         n.pop("_split_label", None)
     return sub_nodes
@@ -3187,8 +3040,8 @@ def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
         elif "text" in node and node.get("text"):
             sub_nodes = split_func(node)
             if sub_nodes:
-                # Keep penjelasan on the container — distribution to children
-                # is disabled (see _distribute_penjelasan).
+                # Keep penjelasan on the container. Per-child distribution
+                # is handled by distribute_penjelasan_to_tree in llm_parse.
                 # Recover intro text stashed by split function BEFORE adding
                 # nodes, so JSON serializes as {title, ..., text, nodes}.
                 branch = {k: v for k, v in node.items() if k != "text"}
@@ -3321,7 +3174,6 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
                 node["text"] = segment
             sub_nodes.append(node)
         _stash_intro_for_parent(sub_nodes, intro)
-        _distribute_penjelasan(penjelasan, sub_nodes, "ayat")
         for n in sub_nodes:
             n.pop("_split_label", None)
         return sub_nodes
@@ -3365,7 +3217,6 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
                 node["text"] = segment
             sub_nodes.append(node)
         _stash_intro_for_parent(sub_nodes, intro)
-        _distribute_penjelasan(penjelasan, sub_nodes, "angka")
         for n in sub_nodes:
             n.pop("_split_label", None)
         return sub_nodes
@@ -3397,7 +3248,6 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
                 node["text"] = segment
             sub_nodes.append(node)
         _stash_intro_for_parent(sub_nodes, intro)
-        _distribute_penjelasan(penjelasan, sub_nodes, "huruf")
         for n in sub_nodes:
             n.pop("_split_label", None)
         return sub_nodes
@@ -3488,7 +3338,7 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
     return _split_leaves_with(nodes, _split)
 
 # ============================================================
-# MAIN
+# 9. CLI ENTRY POINT (__main__)
 # ============================================================
 
 if __name__ == "__main__":

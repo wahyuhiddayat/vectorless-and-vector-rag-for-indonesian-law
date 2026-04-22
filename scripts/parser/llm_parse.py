@@ -38,7 +38,7 @@ load_dotenv()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.parser.llm_fix import (  # noqa: E402
+from scripts.parser._common import (  # noqa: E402
     count_pasals_in_tree,
     format_pdf_pages,
     load_pdf_pages,
