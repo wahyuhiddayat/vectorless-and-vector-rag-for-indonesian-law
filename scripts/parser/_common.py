@@ -18,6 +18,33 @@ from scripts._shared import find_pdf_path  # noqa: E402
 
 _PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
 
+# OCR corruptions in Pasal headings that cause the LLM parser to skip them.
+# Applied to each block's text on load, before prompt assembly.
+_PASAL_FIXES = [
+    # "Pasal22" glued → "Pasal 22"
+    (re.compile(r"\bPasal(\d)"), r"Pasal \1"),
+    # "Pasal 2 1" standalone heading (OCR split digits) → "Pasal 21".
+    # Anchored to line start + end to avoid collapsing inline references.
+    (re.compile(r"(?m)^Pasal\s+(\d)\s+(\d{1,2})\s*$"), r"Pasal \1\2"),
+    # "Pasal 2O" (capital O) → "Pasal 20"; matches 1-3 digit prefix then O.
+    (re.compile(r"\bPasal\s+(\d{1,3})O\b"), r"Pasal \g<1>0"),
+    # "Pasal 2l" (lowercase l) → "Pasal 21"
+    (re.compile(r"\bPasal\s+(\d{1,3})l\b"), r"Pasal \g<1>1"),
+    # "PasaT N" / "Pasa1 N" → "Pasal N" (letter-in-word OCR)
+    (re.compile(r"\bPasa[T1I](?=\s+\d)"), "Pasal"),
+]
+
+
+def _normalize_pasal_headings(text: str) -> str:
+    """Fix common OCR corruptions in Pasal heading tokens.
+
+    Only touches the token `Pasal <digits>...`; body text and Roman-numeral
+    amendment headings (`Pasal I`, `Pasal II`) are untouched.
+    """
+    for pat, repl in _PASAL_FIXES:
+        text = pat.sub(repl, text)
+    return text
+
 
 def load_pdf_pages(doc_id: str) -> list[dict]:
     """Read the PDF and return list of {page_num, blocks} per page.
@@ -46,6 +73,7 @@ def load_pdf_pages(doc_id: str) -> list[dict]:
                 text = text.strip()
                 if not text:
                     continue
+                text = _normalize_pasal_headings(text)
                 bbox = b["bbox"]
                 blocks.append({
                     "x0": round(bbox[0]),
