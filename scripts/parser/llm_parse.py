@@ -320,6 +320,28 @@ TITLE CONVENTIONS:
    and "1. ..." markers inline. A deterministic re-split pass handles
    Ayat/Huruf/Angka splitting. DO NOT pre-split them.
 
+   This is the single most important rule. A Pasal is EITHER a leaf with
+   flat text OR a container with children — NEVER both. If the body
+   contains any "(1)", "(2)", "a.", "b.", "1.", "2." markers, they MUST
+   all sit inline inside one "text" string. Do not extract any of them
+   into child nodes, even when the PDF visually indents them.
+
+   BAD (hybrid — ayat in text, huruf as children):
+   {{
+     "title": "Pasal 7",
+     "text": "(1) Tugas pokok ...\\n(2) Tugas pokok ... dilakukan dengan:",
+     "nodes": [
+       {{"title": "Pasal 7 Huruf a", "text": "operasi militer untuk perang;"}},
+       {{"title": "Pasal 7 Huruf b", "text": "operasi militer selain perang ..."}}
+     ]
+   }}
+
+   GOOD (flat — everything inline, no children):
+   {{
+     "title": "Pasal 7",
+     "text": "(1) Tugas pokok ...\\n(2) Tugas pokok ... dilakukan dengan:\\na. operasi militer untuk perang;\\nb. operasi militer selain perang ..., yaitu untuk:\\n1. mengatasi gerakan separatis ...\\n2. mengatasi pemberontakan ..."
+   }}
+
 3. Drop noise: page numbers ("- 5 -"), footers ("SK No 12345"), repeated
    headers ("PRESIDEN REPUBLIK INDONESIA", "MENTERI ..."), signing blocks.
 
@@ -721,6 +743,27 @@ def backfill_page_indices(
 # --- validation ----------------------------------------------------------
 
 
+_INLINE_MARKER_RE = re.compile(
+    r"(?:^|\n)\s*(?:\(\d+\)|[a-z]\.|\d+\.)\s",
+    re.MULTILINE,
+)
+
+
+def _find_hybrid_nodes(structure: list[dict]) -> list[str]:
+    """Return node_ids where text has inline ayat/huruf/angka markers AND
+    the node also has children — indicates the LLM partially pre-split
+    sub-structure, which breaks the deterministic re-split pass.
+    """
+    hybrids: list[str] = []
+    for n in iter_nodes(structure):
+        if not n.get("nodes"):
+            continue
+        text = n.get("text") or ""
+        if _INLINE_MARKER_RE.search(text):
+            hybrids.append(n.get("node_id") or n.get("title") or "?")
+    return hybrids
+
+
 def validate_parse(
     output: dict, pdf_pasal_numbers: set[str], is_perubahan: bool = False
 ) -> tuple[bool, list[str]]:
@@ -736,6 +779,13 @@ def validate_parse(
     structure = output["structure"]
     if not isinstance(structure, list) or not structure:
         return False, ["'structure' must be a non-empty list"]
+
+    hybrids = _find_hybrid_nodes(structure)
+    if hybrids:
+        errors.append(
+            f"hybrid nodes (text has inline markers AND has children, "
+            f"breaks re-split): {hybrids[:20]}"
+        )
 
     # Amendment doc: validate presence of Pasal Roman root(s) only.
     if is_perubahan:

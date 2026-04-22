@@ -19,6 +19,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -35,6 +36,7 @@ from .parser import (  # noqa: E402
 )
 
 REGISTRY_PATH = Path("data/raw/registry.json")
+INDEXING_LOGS_DIR = Path("data/indexing_logs")
 
 GRANULARITY_INDEX_MAP = {
     "pasal": Path("data/index_pasal"),
@@ -104,6 +106,27 @@ def _resolve_targets(doc_ids: list[str], category: str | None) -> list[str]:
     )
 
 
+def _update_cost_log(granularity: str, doc_id: str, entry: dict) -> None:
+    """Overwrite the per-doc cost entry in data/indexing_logs/cost_<granularity>.json.
+
+    The cost log is needed for RQ3 (vectorless vs vector cost comparison):
+    indexing tokens, time, leaf counts per granularity per doc. Entries are
+    replaced wholesale on re-indexing so stale fields from prior pipelines
+    do not accumulate.
+    """
+    INDEXING_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    path = INDEXING_LOGS_DIR / f"cost_{granularity}.json"
+    data = {}
+    if path.exists():
+        try:
+            data = json.load(open(path, encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = {}
+    data[doc_id] = entry
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[str, int]:
     """Re-split pasal doc to ayat + full_split. Returns leaf counts per granularity."""
     with open(pasal_path, encoding="utf-8") as f:
@@ -142,8 +165,17 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
             return summary
         with open(pasal_path, encoding="utf-8") as f:
             jenis_folder = json.load(f).get("jenis_folder") or pasal_path.parent.name
+        t_resplit = time.time()
         derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
+        resplit_elapsed = round(time.time() - t_resplit, 3)
         summary.update({"status": "resplit_ok", "derived_counts": derived, "elapsed_s": round(time.time() - t0, 2)})
+        for gran in ("ayat", "full_split"):
+            _update_cost_log(gran, doc_id, {
+                "category": jenis_folder.upper(),
+                "updated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+                "resplit_time_s": resplit_elapsed,
+                "leaf_count": derived[gran],
+            })
         return summary
 
     audit = llm_parse_doc(doc_id, dry_run=dry_run)
@@ -159,7 +191,35 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
 
     pasal_path = Path(audit["index_path"])
     jenis_folder = pasal_path.parent.name
+    t_resplit = time.time()
     derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
+    resplit_elapsed = round(time.time() - t_resplit, 3)
+    usage = audit.get("usage") or {}
+    now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+    # Pasal-level cost entry: LLM token usage and latency.
+    _update_cost_log("pasal", doc_id, {
+        "category": jenis_folder.upper(),
+        "updated_at": now_iso,
+        "llm_time_s": usage.get("elapsed_s"),
+        "llm_input_tokens": usage.get("input_tokens"),
+        "llm_output_tokens": usage.get("output_tokens"),
+        "llm_total_tokens": usage.get("total_tokens"),
+        "llm_calls": usage.get("calls"),
+        "mode": audit.get("mode"),
+        "pasal_count": audit.get("pasal_count"),
+        "pdf_pasal_regex_count": audit.get("pdf_pasal_regex_count"),
+        "pdf_chars": audit.get("pdf_chars"),
+        "body_pages": audit.get("body_pages"),
+    })
+    for gran in ("ayat", "full_split"):
+        _update_cost_log(gran, doc_id, {
+            "category": jenis_folder.upper(),
+            "updated_at": now_iso,
+            "resplit_time_s": resplit_elapsed,
+            "leaf_count": derived[gran],
+        })
+
     summary.update({
         "status": "indexed",
         "derived_counts": derived,

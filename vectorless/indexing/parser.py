@@ -885,6 +885,18 @@ def _normalize_flat_structural_text(text: str) -> str:
     return text
 
 
+# Strict marker patterns — only match well-formed tokens. Fast path for
+# clean LLM-produced text. Used before the OCR-tolerant fuzzy variants.
+_STRICT_AYAT_RE = re.compile(r'(?:^|\n)[ \t]*\((\d+)\)(?=\s|$)', re.MULTILINE)
+# Angka: digits at line start. Accept closing with period ("1."), closing
+# paren ("1)"), or no closing char at all (OCR that drops the period).
+# Sequence validation downstream rejects random digit lines that do not
+# form a consecutive run starting at 1.
+_STRICT_ANGKA_ITEM_RE = re.compile(
+    r'(?:^|\n)[ \t]*(\d+)[.)]?(?=[ \t]+\S)',
+    re.MULTILINE,
+)
+
 # Fuzzy marker candidate regex — tolerate common OCR noise around digits.
 # Ayat: digit-ish token optionally wrapped in () or [] with OCR noise.
 #   Accepted: (1), (l), (I), (O), (21, 21), (2l), l2l, t2t, lN), (Nt, etc.
@@ -917,15 +929,48 @@ def _find_fuzzy_markers(
     """
     if kind == "ayat":
         pattern = _FUZZY_AYAT_RE
+        strict_pattern: re.Pattern | None = _STRICT_AYAT_RE
         is_numeric = True
     elif kind == "angka":
         pattern = _FUZZY_ANGKA_ITEM_RE
+        strict_pattern = _STRICT_ANGKA_ITEM_RE
         is_numeric = True
     elif kind == "huruf":
         pattern = _HURUF_RE
+        strict_pattern = None  # _HURUF_RE is already strict.
         is_numeric = False
     else:
         raise ValueError(f"unknown kind: {kind}")
+
+    # Fast path: strict regex only. Clean LLM output has well-formed markers;
+    # avoid the fuzzy pattern's false positives (bare digits matching as ayats
+    # when the body actually contains angka items like "\n1 mengatasi...").
+    if strict_pattern is not None:
+        strict_hits: list[tuple[int, str, int]] = []
+        for m in strict_pattern.finditer(text):
+            if _is_inline_ref(text, m):
+                continue
+            strict_hits.append((m.start(), m.group(1), m.end()))
+        if len(strict_hits) >= 2:
+            dd: list[tuple[int, str, int]] = [strict_hits[0]]
+            for c in strict_hits[1:]:
+                if c[1] == dd[-1][1]:
+                    dd[-1] = c  # page-break overlap dedup
+                else:
+                    dd.append(c)
+            try:
+                nums = [int(lab) for _, lab, _ in dd]
+            except ValueError:
+                nums = None
+            if nums and nums[0] == int(expected_start) and all(
+                nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1)
+            ):
+                return dd
+        # Ayat only exists as "(N)" in Indonesian legal text. If strict found
+        # no valid consecutive sequence, there ARE no ayats here — do NOT fall
+        # through to fuzzy (which would match bare digits as ayat labels).
+        if kind == "ayat":
+            return None
 
     # Stage 1: collect raw candidates, normalize, filter inline refs.
     candidates: list[tuple[int, str, int]] = []
