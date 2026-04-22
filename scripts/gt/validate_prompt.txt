@@ -1,7 +1,7 @@
 Kamu adalah validator kualitas dataset evaluasi retrieval dokumen hukum Indonesia.
 Di bawah ini adalah output JSON dari ChatGPT yang perlu divalidasi sebelum dimasukkan ke benchmark.
 
-Dokumen sumber: vectorless-and-vector-rag-for-indonesian-law\data\index_full_split\BSSN\peraturan-bssn-13-2024.json
+Dokumen sumber: vectorless-and-vector-rag-for-indonesian-law\data\index_full_split\UU\uu-7-2025.json
 
 === ATURAN VALIDASI ===
 
@@ -97,5 +97,15 @@ node_id, keberadaan field wajib) dan memberikan [WARN] untuk kasus yang butuh ko
 Skrip ini BUKAN validator semantik — tugasmu adalah melakukan validasi semantik berdasarkan 6
 aturan di atas, dengan [WARN] sebagai petunjuk tambahan (bukan keputusan final).
 
-- vectorless-and-vector-rag-for-indonesian-law\data\ground_truth_raw\BSSN\peraturan-bssn-13-2024.json
+- vectorless-and-vector-rag-for-indonesian-law\data\ground_truth_raw\UU\uu-7-2025.json
 
+(base) PS D:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vector-rag-for-indonesian-law> python scripts/gt/collect.py --check-only --file "data\ground_truth_raw\UU\uu-7-2025.json"
+
+Memvalidasi 1 file...
+
+  ✓ uu-7-2025: 5 valid, 0 errors
+
+Total: 5 pertanyaan valid, 0 hard errors, 0 warnings
+
+[check-only] Tidak menulis output.
+(base) PS D:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vector-rag-for-indonesian-law> 

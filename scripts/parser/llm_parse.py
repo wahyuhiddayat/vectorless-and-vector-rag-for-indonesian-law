@@ -102,7 +102,9 @@ AUDIT_LOG = REPO_ROOT / "data" / "llm_parse_log.json"
 MAX_WHOLE_DOC_PASALS = 35  # Above this, always chunk (output token budget).
 MAX_WHOLE_DOC_INPUT_CHARS = 120_000  # ~30K tokens; also gate single-call mode.
 PAGES_PER_CHUNK = 15
-CHUNK_OVERLAP_PAGES = 2
+CHUNK_OVERLAP_PAGES = 4  # wider overlap so a pasal body spanning the chunk
+                        # boundary is visible in full from at least one chunk.
+                        # Adjacent chunks re-emit and the merger picks longest.
 PARALLEL_WORKERS = 4
 
 
@@ -923,6 +925,13 @@ def build_prompt(
         hint_lines.append(
             "REQUIRED: every Pasal listed above MUST appear in your output "
             "tree, even if its body is short or incomplete. Do not drop any."
+        )
+        hint_lines.append(
+            "The page range is a focus zone, NOT a hard cutoff: if a Pasal "
+            "body continues onto pages just past your range (visible in the "
+            "included PDF text as overlap), capture the ENTIRE body verbatim. "
+            "An adjacent chunk will also see these pages — the merger keeps "
+            "the most complete copy, so emit fully rather than truncate."
         )
     page_range_hint = ("\n".join(hint_lines) + "\n") if hint_lines else ""
     return PROMPT_TEMPLATE.format(
