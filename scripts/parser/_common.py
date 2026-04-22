@@ -32,6 +32,12 @@ _PASAL_FIXES = [
     (re.compile(r"\bPasal\s+(\d{1,3})l\b"), r"Pasal \g<1>1"),
     # "PasaT N" / "Pasa1 N" → "Pasal N" (letter-in-word OCR)
     (re.compile(r"\bPasa[T1I](?=\s+\d)"), "Pasal"),
+    # Angka list items at line start: "1O. text" → "10. text",
+    # "2l. text" → "21. text". Anchored to line start so we never
+    # touch embedded legal references like "ayat (1O)" (those go
+    # through the ayat normalizer separately).
+    (re.compile(r"(?m)^(\s*\d+)O(?=\.\s)"), r"\g<1>0"),
+    (re.compile(r"(?m)^(\s*\d+)l(?=\.\s)"), r"\g<1>1"),
 ]
 
 
