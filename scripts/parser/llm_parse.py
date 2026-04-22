@@ -310,37 +310,47 @@ TITLE CONVENTIONS:
 
 === CONTENT RULES ===
 
-1. Body text follows the PDF exactly in WORD ORDER, STRUCTURE, NUMBERS,
-   and MEANING. The only permitted rewriting is conservative OCR repair
-   where the intended Indonesian word is UNAMBIGUOUS from surrounding
-   context. When uncertain, keep the garbled text verbatim — never guess.
+1. Body text preserves PDF WORD ORDER, STRUCTURE, NUMBERS, and MEANING
+   exactly — but ACTIVELY REPAIR OCR corruption. Downstream retrieval
+   (BM25) depends on clean Indonesian tokens. A garbled token that a
+   fluent Indonesian legal reader would recognize MUST be fixed; leaving
+   it verbatim means that passage becomes unsearchable.
 
-   ALLOWED (OCR repair — produces searchable Indonesian words without
-   changing meaning):
-   - Garbled letters inside one word:
-       "perenczrna.an"      → "perencanaan"
-       "kebiiakan"          → "kebijakan"
-       "pemeriniah"         → "pemerintah"
-       "Meneapkan"          → "Menetapkan"
-       "Undang-tlndang"     → "Undang-Undang"
-   - Digit-for-letter in a word (only when obvious):
-       "Pasa1"              → "Pasal"
-       "PasaT"              → "Pasal"
-       "5684" → "568A"      (only when adjacent Pasal sequence confirms)
-   - Missing spaces between glued words (very common at column/page breaks):
-       "KecamatanWonggeduku"→ "Kecamatan Wonggeduku"
-       "diaturdalam"        → "diatur dalam"
+   Standard: fix when a fluent reader would agree on the intended word.
+   Leave verbatim only when the intended word is genuinely ambiguous
+   (multiple valid Indonesian words could equally fit the context).
+   "I am not 100% sure" is NOT the bar — near-total agreement is.
+
+   REPAIR THESE (produce searchable Indonesian words without changing meaning):
+   - Mid-word character corruption of any length (1-5 chars):
+       "perenczrna.an"       → "perencanaan"
+       "terfi.ang"           → "tentang"
+       "kebiiakan"           → "kebijakan"
+       "pemeriniah"          → "pemerintah"
+       "Meneapkan"           → "Menetapkan"
+       "Undang-tlndang"      → "Undang-Undang"
+       "menyeleng.gartrkan"  → "menyelenggarakan"
+       "Kera.jaan"           → "Kerajaan"  (proper nouns included)
+       "INOONESIA"           → "INDONESIA"
+   - Digit-for-letter in a word:
+       "Pasa1" / "PasaT" / "PasaI"  → "Pasal"
+       "5684" → "568A"  (only when adjacent Pasal sequence confirms)
+   - Spurious punctuation inside words:
+       "pe.rencanaan"        → "perencanaan"
+       "menyelenggarak,an"   → "menyelenggarakan"
+   - Missing spaces at column/page breaks:
+       "KecamatanWonggeduku" → "Kecamatan Wonggeduku"
+       "diaturdalam"         → "diatur dalam"
    - Collapse redundant whitespace; de-duplicate page-break headings.
 
-   FORBIDDEN (will invalidate the parse):
+   HARD FORBIDDEN (invalidates the parse):
    - Changing any digit or number, even if it looks wrong. "(3)" stays
-     "(3)"; "pasal 12" stays "pasal 12". Never renumber.
+     "(3)"; "Pasal 12" stays "Pasal 12"; "Tahun 2022" stays "Tahun 2022".
    - Changing legal terminology: "wajib" stays "wajib" (never "harus"),
      "memprioritaskan" stays "memprioritaskan", etc.
    - Paraphrasing, reordering words, translating, or summarizing.
-   - Adding words, clauses, or explanations not present in the PDF.
-   - "Fixing" a word whose intended form is not OBVIOUS — leave it
-     verbatim. Better a few garbled words than a silent meaning change.
+   - Adding clauses not present in the PDF.
+   - Guessing when genuinely ambiguous — leave verbatim.
 
 2. Keep Pasal body as ONE flat "text" string. Preserve "(1) ...", "a. ..."
    and "1. ..." markers inline. A deterministic re-split pass handles
@@ -368,8 +378,11 @@ TITLE CONVENTIONS:
      "text": "(1) Tugas pokok ...\\n(2) Tugas pokok ... dilakukan dengan:\\na. operasi militer untuk perang;\\nb. operasi militer selain perang ..., yaitu untuk:\\n1. mengatasi gerakan separatis ...\\n2. mengatasi pemberontakan ..."
    }}
 
-3. Drop noise: page numbers ("- 5 -"), footers ("SK No 12345"), repeated
-   headers ("PRESIDEN REPUBLIK INDONESIA", "MENTERI ..."), signing blocks.
+3. Drop noise including OCR-garbled variants — page numbers ("- 5 -",
+   "-2L-"), footers ("SK No 12345"), repeated headers ("PRESIDEN
+   REPUBLIK INDONESIA", "MENTERI ..."), signing blocks. Garbled forms
+   like "REFI.IBI.IK INOONESIA" or "FRESIDEN" are the SAME noise —
+   strip them entirely, do not try to repair into body text.
 
 4. Skip preamble entirely (Pembukaan, Menimbang, Mengingat, Menetapkan).
    Output begins at the first body section (first BAB or first Pasal).
