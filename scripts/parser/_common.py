@@ -13,20 +13,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from vectorless.indexing.parser import extract_pages  # noqa: E402
 from scripts._shared import find_pdf_path  # noqa: E402
 
 
 _PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
-
-
-def load_pdf_text(doc_id: str) -> str:
-    """Read the document's main PDF and concatenate all pages (flat text)."""
-    pdf_path = find_pdf_path(doc_id)
-    if not pdf_path:
-        raise FileNotFoundError(f"PDF not found for {doc_id}")
-    pages = extract_pages(str(pdf_path))
-    return "\n\n".join(p.get("raw_text", "") for p in pages)
 
 
 def load_pdf_pages(doc_id: str) -> list[dict]:

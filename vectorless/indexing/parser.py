@@ -122,9 +122,7 @@ def extract_pages(pdf_path: str) -> list[dict]:
     """Extract raw text from every page of a PDF using PyMuPDF.
 
     If a cached reordered-pages JSON exists at
-    `data/reordered_pages/<doc_id>.json`, use it instead. These caches are
-    produced by `scripts/llm_reorder_pages.py` for docs with multi-column
-    layouts that pymupdf cannot reorder correctly on its own.
+    `data/reordered_pages/<doc_id>.json`, use it instead.
 
     Returns a list of dicts with keys: page_num (1-indexed), raw_text.
     """

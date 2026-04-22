@@ -65,14 +65,6 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
 }
 
 
-def get_embedding_dim() -> int:
-    """Return embedding dimension for the currently configured model."""
-    cfg = _EMBEDDING_MODEL_MAP.get(EMBEDDING_MODEL)
-    if not cfg:
-        raise ValueError(f"Unknown embedding model: {EMBEDDING_MODEL!r}")
-    return cfg["dim"]
-
-
 # ============================================================
 # QDRANT CLIENT
 # ============================================================

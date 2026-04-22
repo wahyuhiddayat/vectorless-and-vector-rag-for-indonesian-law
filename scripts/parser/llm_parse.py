@@ -42,7 +42,6 @@ from scripts.parser._common import (  # noqa: E402
     count_pasals_in_tree,
     format_pdf_pages,
     load_pdf_pages,
-    load_pdf_text,
     parse_llm_json,
     _normalize_keys,
 )
@@ -811,16 +810,6 @@ def validate_parse(
         )
 
     return len(errors) == 0, errors
-
-
-def extract_pdf_pasal_numbers(pdf_text: str) -> set[str]:
-    """Regex-scan PDF text for 'Pasal N' headings (whole line, trailing-space tolerant)."""
-    nums: set[str] = set()
-    for line in pdf_text.splitlines():
-        m = re.match(r"\s*[Pp]asa[l1]\s+(\d+[A-Z]?)\s*[']?\s*$", line)
-        if m:
-            nums.add(m.group(1).upper())
-    return nums
 
 
 # --- main parse flow -----------------------------------------------------

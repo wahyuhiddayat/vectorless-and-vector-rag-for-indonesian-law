@@ -5,7 +5,7 @@ Sparse: BM25 keyword search on all chunk texts loaded from Qdrant
 Dense:  configured embedding model + Qdrant cosine similarity
 Merge:  dense first (semantic priority), then sparse (keyword), deduplicated
 
-Configuration via env vars (see retrieve_common.py):
+Configuration via env vars (see common.py):
     VECTOR_EMBEDDING_MODEL, VECTOR_COLLECTION, QDRANT_PATH / QDRANT_URL, VECTOR_GRANULARITY
 
 Usage:
@@ -19,7 +19,7 @@ import time
 
 from rank_bm25 import BM25Okapi
 
-from .retrieve_common import (
+from .common import (
     embed_query, reset_token_counters, get_token_stats,
     generate_answer, save_log,
     COLLECTION_NAME, GRANULARITY, EMBEDDING_MODEL,
