@@ -1,26 +1,24 @@
+"""LLM-first indexing: LLM parse + deterministic re-split.
+
+For each target doc:
+  1. LLM-parse → data/index_pasal/<CAT>/<doc_id>.json
+  2. Re-split ayat → data/index_ayat/<CAT>/<doc_id>.json
+  3. Re-split full_split → data/index_full_split/<CAT>/<doc_id>.json
+
+Usage:
+    python -m vectorless.indexing.build --category UU
+    python -m vectorless.indexing.build --doc-id uu-3-2025
+    python -m vectorless.indexing.build --category UU --resplit-only
+    python -m vectorless.indexing.build --category UU --dry-run
 """
-Build structural indices from scraped Indonesian legal PDFs.
-
-Granularity outputs:
-- pasal: data/index_pasal/
-- ayat: data/index_ayat/
-- full_split: data/index_full_split/
-
-Pipeline:
-- Pass 1 (parse): PDF -> tree (offline)
-- Pass 2 (LLM): Gemini cleanup -> llm_cleaned=true
-
-Use --help for CLI examples.
-"""
+from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone, timedelta
-
-WIB = timezone(timedelta(hours=7))
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,106 +27,29 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-from .parser import (parse_legal_pdf, parse_penjelasan, attach_penjelasan,
-                     extract_pages, clean_page_text, find_penjelasan_page,
-                     iter_leaves, ayat_split_leaves, deep_split_leaves,
-                     strip_ocr_headers, apply_llm_cleanup)
-from .status import (
-    apply_verify_results,
-    clear_doc_error,
-    is_cleanup_stale,
-    load_status_manifest,
-    set_doc_error,
-    sync_manifest_from_indexes,
-    write_status_manifest,
+from .parser import (  # noqa: E402
+    ayat_split_leaves,
+    deep_split_leaves,
+    iter_leaves,
+    strip_ocr_headers,
 )
 
-DATA_RAW = Path("data/raw")
-REGISTRY_PATH = DATA_RAW / "registry.json"
-PARSER_VERSION = "2026-04-02"
-LLM_CLEANUP_VERSION = "2026-04-02"
+REGISTRY_PATH = Path("data/raw/registry.json")
+
+GRANULARITY_INDEX_MAP = {
+    "pasal": Path("data/index_pasal"),
+    "ayat": Path("data/index_ayat"),
+    "full_split": Path("data/index_full_split"),
+}
+
+CATALOG_FIELDS = (
+    "doc_id", "judul", "nomor", "tahun", "bentuk_singkat", "status",
+    "tanggal_penetapan", "bidang", "subjek", "materi_pokok", "relasi",
+    "total_pages", "jenis_folder",
+)
 
 
-class CostManifest:
-    """Per-doc indexing cost tracker written to data/indexing_logs/cost_{granularity}.json.
-
-    One entry per doc_id, updated in-place across separate parse and LLM passes.
-    Re-running a doc overwrites its entry. Load directly into pandas:
-        pd.DataFrame(json.load(open("data/indexing_logs/cost_pasal.json"))).T
-    """
-
-    def __init__(self, granularity: str):
-        log_dir = Path("data/indexing_logs")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._path = log_dir / f"cost_{granularity}.json"
-        self._data: dict = json.loads(self._path.read_text(encoding="utf-8")) if self._path.exists() else {}
-        log.info(f"cost manifest  {self._path}")
-
-    def update(self, doc_id: str, fields: dict):
-        """Merge fields into the doc_id entry and persist immediately."""
-        entry = self._data.get(doc_id, {})
-        entry.update(fields)
-        self._data[doc_id] = entry
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
-
-
-def now_iso() -> str:
-    return datetime.now(WIB).replace(microsecond=0).isoformat()
-
-
-def load_registry() -> dict:
-    """Load registry.json produced by the scraper."""
-    with open(REGISTRY_PATH, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_metadata(doc_id: str, detail_id: str, jenis_folder: str) -> dict | None:
-    """Load per-document metadata; return None when metadata file is missing."""
-    meta_dir = DATA_RAW / jenis_folder / "metadata"
-    meta_path = meta_dir / f"{doc_id}__{detail_id}.json"
-    if not meta_path.exists():
-        return None
-    with open(meta_path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def pick_main_pdf(metadata: dict) -> str | None:
-    """Return the main law PDF filename, excluding Lampiran appendix files.
-
-    Filters out Lampiran PDFs (tables, maps, org charts) that would break the
-    parser, then picks the shortest remaining filename as a heuristic for the
-    primary law text. Returns None if no pdf_files are listed in metadata.
-    """
-    pdf_files = metadata.get("pdf_files", [])
-    if not pdf_files:
-        return None
-
-    # Filter to PDF files only — BPK sometimes attaches .zip archives with
-    # supporting docs that would otherwise win the shortest-filename heuristic.
-    pdfs_only = [p for p in pdf_files if p["filename"].lower().endswith(".pdf")]
-    if not pdfs_only:
-        return None
-    if len(pdfs_only) == 1:
-        return pdfs_only[0]["filename"]
-
-    candidates = [p["filename"] for p in pdfs_only if "Lampiran" not in p["filename"]]
-    if not candidates:
-        candidates = [p["filename"] for p in pdfs_only]
-
-    return min(candidates, key=len)
-
-
-def pick_penjelasan_pdf(metadata: dict) -> str | None:
-    """Return the separate Penjelasan PDF filename if present."""
-    pdf_files = metadata.get("pdf_files", [])
-    for p in pdf_files:
-        if "Penjelasan" in p["filename"] or "penjelasan" in p["filename"]:
-            return p["filename"]
-    return None
-
-
-def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None):
+def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None) -> None:
     """Populate navigation_path for each node recursively."""
     if ancestors is None:
         ancestors = []
@@ -139,790 +60,177 @@ def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None):
             add_navigation_paths(node["nodes"], path)
 
 
-def enrich_doc(parse_result: dict, registry_entry: dict, metadata: dict | None) -> dict:
-    """Merge parser output with registry and metadata for index storage."""
-    doc = {
-        "doc_id": registry_entry["doc_id"],
-        "judul": registry_entry["judul"],
-        "nomor": registry_entry.get("nomor"),
-        "tahun": registry_entry.get("tahun"),
-        "bentuk_singkat": registry_entry.get("bentuk_singkat"),
-        "status": registry_entry.get("status"),
-        "tanggal_penetapan": registry_entry.get("tanggal_penetapan"),
-        "jenis_folder": registry_entry.get("jenis_folder"),
-    }
-
-    # Prefer richer fields from metadata when available.
-    if metadata:
-        doc["bidang"] = metadata.get("bidang")
-        doc["subjek"] = metadata.get("subjek")
-        doc["materi_pokok"] = metadata.get("materi_pokok")
-        # Metadata relasi includes richer details than registry relasi.
-        doc["relasi"] = metadata.get("relasi", registry_entry.get("relasi", []))
-    else:
-        doc["relasi"] = registry_entry.get("relasi", [])
-
-    # Parser-derived fields.
-    doc["total_pages"] = parse_result["total_pages"]
-    doc["body_pages"] = parse_result["body_pages"]
-    doc["penjelasan_page"] = parse_result["penjelasan_page"]
-    doc["penjelasan_umum"] = parse_result.get("penjelasan_umum")
-    doc["penjelasan_pasal_demi_pasal"] = parse_result.get("penjelasan_pasal_demi_pasal")
-    doc["element_counts"] = parse_result["element_counts"]
-    doc["warnings"] = parse_result["warnings"]
-
-    # Add navigation_path to every node.
-    structure = parse_result["structure"]
-    add_navigation_paths(structure)
-    doc["structure"] = structure
-
+def resplit_one(pasal_doc: dict, granularity: str) -> dict:
+    """Derive ayat or full_split doc from a pasal-granularity doc."""
+    split_fn = ayat_split_leaves if granularity == "ayat" else deep_split_leaves
+    doc = copy.deepcopy(pasal_doc)
+    doc["structure"] = split_fn(doc["structure"])
+    strip_ocr_headers(doc["structure"])
+    add_navigation_paths(doc["structure"])
     return doc
 
 
 def build_catalog(index_dir: Path) -> list[dict]:
-    """Build catalog.json summary from all indexed document JSON files."""
+    """Compact per-doc summary written as catalog.json in each index_* dir."""
     catalog = []
     for path in sorted(index_dir.rglob("*.json")):
-        if path.name.startswith("catalog"):
+        if path.name == "catalog.json":
             continue
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
         if not isinstance(doc, dict) or "doc_id" not in doc:
-            log.warning(f"skip non-document json while building catalog: {path}")
             continue
-        catalog.append({
-            "doc_id": doc["doc_id"],
-            "judul": doc["judul"],
-            "nomor": doc.get("nomor"),
-            "tahun": doc.get("tahun"),
-            "bentuk_singkat": doc.get("bentuk_singkat"),
-            "status": doc.get("status"),
-            "tanggal_penetapan": doc.get("tanggal_penetapan"),
-            "bidang": doc.get("bidang"),
-            "subjek": doc.get("subjek"),
-            "materi_pokok": doc.get("materi_pokok"),
-            "relasi": doc.get("relasi", []),
-            "total_pages": doc.get("total_pages"),
-            "element_counts": doc.get("element_counts"),
-            "jenis_folder": doc.get("jenis_folder"),
-        })
+        catalog.append({f: doc.get(f) for f in CATALOG_FIELDS})
     return catalog
 
 
-GRANULARITY_INDEX_MAP = {
-    "pasal": Path("data/index_pasal"),
-    "ayat": Path("data/index_ayat"),
-    "full_split": Path("data/index_full_split"),
-}
+def _load_registry() -> dict:
+    if not REGISTRY_PATH.exists():
+        raise FileNotFoundError(f"registry not found at {REGISTRY_PATH}")
+    with open(REGISTRY_PATH, encoding="utf-8") as f:
+        return json.load(f)
 
 
-def _resplit_from_pasal(granularity: str, doc_id: str | None, rebuild: str | None,
-                        manifest: dict, registry: dict, category: str | None = None,
-                        clog: "CostManifest | None" = None):
-    """Re-split pasal index to ayat/full_split without PDF parse or LLM calls."""
-    import copy
-
-    pasal_dir = GRANULARITY_INDEX_MAP["pasal"]
-    target_dir = GRANULARITY_INDEX_MAP[granularity]
-    split_fn = ayat_split_leaves if granularity == "ayat" else deep_split_leaves
-    categories = _normalize_categories(category)
-
-    log.info(f"re-split from pasal to {granularity}  output {target_dir}  rebuild {rebuild or 'missing'}")
-    if category:
-        log.info(f"category {category}")
-
-    pasal_files = sorted(pasal_dir.rglob("*.json"))
-    pasal_files = [f for f in pasal_files if not f.name.startswith("catalog")]
-
-    if not pasal_files:
-        log.error(f"no pasal index files found in {pasal_dir}")
-        sys.exit(1)
-
-    success, skipped = 0, 0
-    t_start = time.time()
-
-    for pf in pasal_files:
-        with open(pf, encoding="utf-8") as f:
-            doc = json.load(f)
-        if not isinstance(doc, dict) or "doc_id" not in doc:
-            log.warning(f"skip non-document json: {pf}")
-            skipped += 1
-            continue
-
-        did = doc["doc_id"]
-        if doc_id and did != doc_id:
-            continue
-        if categories:
-            doc_category = (doc.get("jenis_folder") or did.split("-")[0]).upper()
-            if doc_category not in categories:
-                continue
-
-        # Preserve pasal directory layout in target index.
-        rel = pf.relative_to(pasal_dir)
-        out_path = target_dir / rel
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        status_entry = manifest.get("docs", {}).get(did, {})
-        if status_entry.get("stale_parse"):
-            log.info(f"  skip  {did:30s}  pasal parse is stale, rebuild pasal first")
-            skipped += 1
-            continue
-
-        if out_path.exists() and not _should_resplit_doc(out_path, rebuild, did, status_entry):
-            skipped += 1
-            continue
-
-        # Re-split copied structure and normalize residual OCR headers.
-        t_doc = time.time()
-        structure = copy.deepcopy(doc["structure"])
-        structure = split_fn(structure)
-        strip_ocr_headers(structure)
-        add_navigation_paths(structure)
-
-        doc["structure"] = structure
-        doc["parser_version"] = doc.get("parser_version") or PARSER_VERSION
-        doc["source_pasal_parser_version"] = doc["parser_version"]
-        doc["source_pasal_parse_updated_at"] = doc.get("parse_updated_at") or now_iso()
-        doc["source_pasal_updated_at"] = doc.get("pasal_updated_at") or now_iso()
-        doc["derived_updated_at"] = now_iso()
-
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(doc, f, ensure_ascii=False, indent=2)
-
-        leaves = sum(1 for _ in iter_leaves(structure))
-        doc_elapsed = time.time() - t_doc
-        log.info(f"  {did:30s}  {leaves:5d} leaves  {out_path}")
-        if clog:
-            clog.update(did, {
-                "category": (doc.get("jenis_folder") or did.split("-")[0]).upper(),
-                "updated_at": now_iso(),
-                "resplit_time_s": round(doc_elapsed, 3),
-                "leaf_count": leaves,
-            })
-        clear_doc_error(manifest, did, registry.get(did))
-        sync_manifest_from_indexes(
-            manifest,
-            registry,
-            PARSER_VERSION,
-            LLM_CLEANUP_VERSION,
-            doc_ids=[did],
-        )
-        write_status_manifest(manifest)
-        success += 1
-
-    # Rebuild target catalog after re-splitting.
-    log.info("building catalog")
-    catalog = build_catalog(target_dir)
-    catalog_path = target_dir / "catalog.json"
-    with open(catalog_path, "w", encoding="utf-8") as f:
-        json.dump(catalog, f, ensure_ascii=False, indent=2)
-    log.info(f"catalog  {len(catalog)} documents  {catalog_path}")
-
-    elapsed = time.time() - t_start
-    log.info(f"re-split done  {success} re-split, {skipped} skipped  {elapsed:.1f}s (no LLM)")
-
-
-# Shared helpers for parse and LLM passes.
-
-def _normalize_categories(category: str | None) -> set[str]:
+def _resolve_targets(doc_ids: list[str], category: str | None) -> list[str]:
+    if doc_ids:
+        return doc_ids
     if not category:
-        return set()
-    return {part.strip().upper() for part in category.split(",") if part.strip()}
+        raise SystemExit("must pass --doc-id(s) or --category")
+    reg = _load_registry()
+    target = category.upper()
+    return sorted(
+        did for did, entry in reg.items()
+        if (entry.get("jenis_folder") or "").upper() == target
+    )
 
 
-def _resolve_docs(registry: dict, rebuild: str | None, doc_id: str | None,
-                  category: str | None = None) -> dict:
-    """Return the filtered docs dict based on --rebuild, --doc-id, and --category flags."""
-    docs = {k: v for k, v in registry.items() if v.get("has_pdf")}
-    categories = _normalize_categories(category)
+def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[str, int]:
+    """Re-split pasal doc to ayat + full_split. Returns leaf counts per granularity."""
+    with open(pasal_path, encoding="utf-8") as f:
+        pasal_doc = json.load(f)
 
-    if doc_id:
-        if doc_id not in docs:
-            log.error(f"doc_id '{doc_id}' not found in registry (or has no PDF)")
-            sys.exit(1)
-        return {doc_id: docs[doc_id]}
-
-    if categories:
-        docs = {
-            k: v for k, v in docs.items()
-            if (v.get("jenis_folder") or k.split("-")[0]).upper() in categories
-        }
-
-    return docs
+    counts: dict[str, int] = {}
+    for gran in ("ayat", "full_split"):
+        out_path = GRANULARITY_INDEX_MAP[gran] / jenis_folder / f"{doc_id}.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        resplit_doc = resplit_one(pasal_doc, gran)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(resplit_doc, f, ensure_ascii=False, indent=2)
+        counts[gran] = sum(1 for _ in iter_leaves(resplit_doc["structure"]))
+    return counts
 
 
-def _output_path(data_index: Path, doc_id: str, jenis_folder: str | None = None) -> Path:
-    """Return the expected output JSON path for a given doc_id.
+def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
+    """Index one doc end-to-end: LLM-parse + re-split ayat + re-split full_split.
 
-    Prefers jenis_folder (from registry) when provided; otherwise falls back
-    to the doc_id's first dash segment. Required for multi-word categories
-    like BSSN (doc_id "peraturan-bssn-*") where the split heuristic is wrong.
+    Returns a dict with status, pasal_count, and leaf counts per derived granularity.
     """
-    category = (jenis_folder or doc_id.split("-")[0]).upper()
-    return data_index / category / f"{doc_id}.json"
-
-
-def _targeted_doc_ids(rebuild: str | None) -> set[str]:
-    if rebuild and rebuild not in ("all", "uncleaned", "stale"):
-        return {doc_id.strip() for doc_id in rebuild.split(",") if doc_id.strip()}
-    return set()
-
-
-def _should_parse_doc(output_path: Path, rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
-    """Return True if a parse pass should run for this document."""
-    if rebuild == "all":
-        return True
-    if rebuild == "stale":
-        return (status_entry or {}).get("stale_parse", False) or not output_path.exists()
-    if rebuild == "uncleaned":
-        return not output_path.exists()
-    if rebuild:
-        return doc_id in _targeted_doc_ids(rebuild)
-    return not output_path.exists()
-
-
-def _should_force_llm(rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
-    """Return True if LLM cleanup should re-run even on already-clean docs."""
-    entry = status_entry or {}
-    if rebuild == "all":
-        return True
-    if rebuild == "stale":
-        return bool(
-            entry.get("pasal_exists")
-            and entry.get("llm_cleaned")
-            and not entry.get("stale_parse")
-            and entry.get("llm_cleanup_version") != LLM_CLEANUP_VERSION
-        )
-    if rebuild == "uncleaned":
-        return bool(
-            entry.get("pasal_exists")
-            and entry.get("llm_cleaned")
-            and entry.get("llm_cleanup_version") != LLM_CLEANUP_VERSION
-            and not entry.get("stale_parse")
-        )
-    if rebuild:
-        return doc_id in _targeted_doc_ids(rebuild)
-    return False
-
-
-def _should_resplit_doc(output_path: Path, rebuild: str | None, doc_id: str, status_entry: dict | None) -> bool:
-    """Return True if ayat/full_split should be regenerated from pasal."""
-    if rebuild == "all":
-        return True
-    if rebuild == "stale":
-        return (status_entry or {}).get("stale_derived", False) or not output_path.exists()
-    if rebuild == "uncleaned":
-        return not output_path.exists()
-    if rebuild:
-        return doc_id in _targeted_doc_ids(rebuild)
-    return not output_path.exists()
-
-
-def _load_pdf_for_doc(entry: dict, metadata: dict | None,
-                      data_index: Path) -> tuple[Path, str | None]:
-    """Return (pdf_path, error_message). error_message is None on success.
-
-    Preferred: registry entry's `pdf_path` (set by the scraper). Falls back
-    to metadata pick_main_pdf or constructed "bentuk Nomor N Tahun Y.pdf"
-    pattern for legacy corpora.
-    """
-    # Preferred path: explicit pdf_path from registry (deterministic scraper output).
-    explicit = entry.get("pdf_path") or (metadata or {}).get("pdf_path")
-    if explicit:
-        pdf_path = DATA_RAW / explicit
-        if pdf_path.exists():
-            return pdf_path, None
-
-    jenis_folder = entry.get("jenis_folder", entry["doc_id"].split("-")[0].upper())
-    if metadata:
-        pdf_filename = pick_main_pdf(metadata)
-    else:
-        bentuk = entry.get("bentuk_singkat", "UU")
-        nomor = entry.get("nomor", "")
-        tahun = entry.get("tahun", "")
-        pdf_filename = f"{bentuk} Nomor {nomor} Tahun {tahun}.pdf"
-
-    pdf_path = DATA_RAW / jenis_folder / "pdfs" / pdf_filename
-    if not pdf_path.exists():
-        return pdf_path, f"PDF not found: {pdf_path}"
-    return pdf_path, None
-
-
-# Pass 1 parses PDFs and saves llm_cleaned as false.
-
-def _parse_pass(data_index: Path, docs: dict, granularity: str,
-                rebuild: str | None, manifest: dict,
-                clog: "CostManifest | None" = None) -> tuple[int, int, int]:
-    """Parse PDFs into tree JSON and save with llm_cleaned=false.
-
-    Fully offline (no network calls). Skips existing outputs unless targeted by --rebuild.
-    Returns (success, skipped, failed).
-    """
-    log.info("pass 1  parse PDFs (offline, no LLM)")
-
-    success, skipped, failed = 0, 0, 0
-    t_total = time.time()
-
-    for i, (doc_id, entry) in enumerate(docs.items(), 1):
-        output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        status_entry = manifest.get("docs", {}).get(doc_id, {})
-
-        # Skip existing files unless they are selected for rebuild.
-        if output_path.exists() and not _should_parse_doc(output_path, rebuild, doc_id, status_entry):
-            log.info(f"[{i}/{len(docs)}] skip  {doc_id}")
-            skipped += 1
-            continue
-
-        judul = entry.get("judul", "")
-        log.info(f"[{i}/{len(docs)}] {doc_id}  {judul}")
-
-        detail_id = entry.get("detail_id", "")
-        jenis_folder = entry.get("jenis_folder", doc_id.split("-")[0].upper())
-        metadata = load_metadata(doc_id, detail_id, jenis_folder)
-        if metadata is None:
-            log.warning("no metadata file, using registry only")
-
-        pdf_path, err = _load_pdf_for_doc(entry, metadata, data_index)
-        log.info(f"pdf  {pdf_path.name}")
-        if err:
-            log.error(f"{err}")
-            set_doc_error(manifest, doc_id, err, entry)
-            write_status_manifest(manifest)
-            failed += 1
-            continue
-
-        t0 = time.time()
-        try:
-            parse_result = parse_legal_pdf(str(pdf_path), verbose=False,
-                                           use_llm_cleanup=False,
-                                           granularity=granularity)
-        except Exception as e:
-            log.error(f"parse failed: {e}")
-            set_doc_error(manifest, doc_id, f"parse failed: {e}", entry)
-            write_status_manifest(manifest)
-            failed += 1
-            continue
-
-        # Parse separate Penjelasan PDF when it is split from the main PDF.
-        if not parse_result["penjelasan_page"] and metadata:
-            penjelasan_filename = pick_penjelasan_pdf(metadata)
-            if penjelasan_filename:
-                penjelasan_path = DATA_RAW / jenis_folder / "pdfs" / penjelasan_filename
-                if penjelasan_path.exists():
-                    log.info(f"penjelasan  {penjelasan_filename}")
-                    try:
-                        penj_pages = extract_pages(str(penjelasan_path))
-                        for p in penj_pages:
-                            p["clean_text"] = clean_page_text(p["raw_text"])
-                        penj_start = find_penjelasan_page(penj_pages) or 1
-                        penj_data = parse_penjelasan(penj_pages, penj_start, len(penj_pages))
-                        parse_result["penjelasan_umum"] = penj_data.get("umum")
-                        attach_penjelasan(parse_result["structure"], penj_data["pasal"])
-                        matched = sum(1 for n in iter_leaves(parse_result["structure"])
-                                      if n.get("penjelasan"))
-                        log.info(f"{len(penj_data['pasal'])} pasal parsed, {matched} matched")
-                    except Exception as e:
-                        log.warning(f"failed to parse separate penjelasan: {e}")
-
-        counts = parse_result["element_counts"]
-        parts = [f"{parse_result['total_pages']} pages"]
-        for key in ("bab", "bagian", "paragraf", "pasal"):
-            if counts.get(key):
-                parts.append(f"{counts[key]} {key}")
-        elapsed = time.time() - t0
-        leaf_count = sum(1 for _ in iter_leaves(parse_result["structure"]))
-        log.info(f"parse  {', '.join(parts)}  {leaf_count} leaves  ({elapsed:.1f}s)")
-        if clog:
-            clog.update(doc_id, {
-                "category": entry.get("jenis_folder", doc_id.split("-")[0]).upper(),
-                "updated_at": now_iso(),
-                "parse_time_s": round(elapsed, 3),
-                "leaf_count": leaf_count,
-            })
-
-        if parse_result["warnings"]:
-            log.warning(f"{len(parse_result['warnings'])} OCR warning(s)")
-
-        enriched = enrich_doc(parse_result, entry, metadata)
-        enriched["llm_cleaned"] = False
-        enriched["parser_version"] = PARSER_VERSION
-        enriched["llm_cleanup_version"] = None
-        enriched["parse_updated_at"] = now_iso()
-        enriched["pasal_updated_at"] = enriched["parse_updated_at"]
-        enriched["llm_cleaned_at"] = None
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(enriched, f, ensure_ascii=False, indent=2)
-        log.info("saved (pending LLM cleanup)")
-        clear_doc_error(manifest, doc_id, entry)
-        sync_manifest_from_indexes(
-            manifest,
-            docs,
-            PARSER_VERSION,
-            LLM_CLEANUP_VERSION,
-            doc_ids=[doc_id],
-        )
-        write_status_manifest(manifest)
-        success += 1
-
-    total_elapsed = time.time() - t_total
-    log.info(f"pass 1 done  {success} parsed, {skipped} skipped, {failed} failed  {total_elapsed:.1f}s")
-    return success, skipped, failed
-
-
-# Pass 2 runs LLM cleanup and updates llm_cleaned to true.
-
-def _llm_cleanup_one_doc(
-    i: int, total: int, doc_id: str, entry: dict,
-    data_index: Path, rebuild: str | None, manifest: dict, docs: dict,
-    clog: "CostManifest | None", state_lock,
-) -> str:
-    """Run LLM cleanup for a single doc. Returns 'success' | 'skipped' | 'failed'.
-
-    Safe for concurrent invocation when callers pass a shared threading.Lock;
-    the lock only guards manifest reads/writes and clog updates (small critical
-    sections). The expensive API call runs outside the lock.
-    """
-    output_path = _output_path(data_index, doc_id, entry.get("jenis_folder"))
-    with state_lock:
-        status_entry = manifest.get("docs", {}).get(doc_id, {})
-        stale = status_entry.get("stale_parse")
-
-    if not output_path.exists():
-        log.warning(f"[{i}/{total}] missing {doc_id}, run parse pass first")
-        with state_lock:
-            set_doc_error(manifest, doc_id, "missing parsed output, run parse pass first", entry)
-            write_status_manifest(manifest)
-        return "failed"
-
-    with open(output_path, encoding="utf-8") as f:
-        doc = json.load(f)
-
-    already_cleaned = doc.get("llm_cleaned", False)
-    if stale:
-        log.warning(f"[{i}/{total}] skip  {doc_id} (parse stale, rerun parse pass first)")
-        return "skipped"
-
-    force_this = _should_force_llm(rebuild, doc_id, status_entry)
-    if already_cleaned and not force_this:
-        log.info(f"[{i}/{total}] skip  {doc_id} (already cleaned)")
-        return "skipped"
-
-    judul = entry.get("judul", "")
-    log.info(f"[{i}/{total}] {doc_id}  {judul}")
-
-    structure = doc["structure"]
-    penjelasan_umum = doc.get("penjelasan_umum")
-    penjelasan_proxy = {"umum": penjelasan_umum} if penjelasan_umum else None
+    from scripts.parser.llm_parse import parse_doc as llm_parse_doc
 
     t0 = time.time()
-    try:
-        # Expensive API call runs WITHOUT holding the lock.
-        llm_failures, token_stats = apply_llm_cleanup(structure, penjelasan_proxy, verbose=True)
-    except Exception as e:
-        log.error(f"LLM cleanup failed for {doc_id}: {e.__class__.__name__}: {e}")
-        log.warning(f"{doc_id} kept with llm_cleaned=false, retry with --llm-only")
-        with state_lock:
-            set_doc_error(manifest, doc_id, f"LLM cleanup failed: {e.__class__.__name__}: {e}", entry)
-            write_status_manifest(manifest)
-        return "failed"
+    summary: dict = {"doc_id": doc_id}
 
-    elapsed = time.time() - t0
-    n_failures = len(llm_failures) if llm_failures else 0
+    if resplit_only:
+        # Skip LLM-parse; assume existing pasal JSON is source of truth.
+        pasal_path = None
+        for p in GRANULARITY_INDEX_MAP["pasal"].glob(f"*/{doc_id}.json"):
+            pasal_path = p
+            break
+        if not pasal_path:
+            summary["status"] = "error"
+            summary["error"] = "no existing pasal index to re-split from"
+            return summary
+        with open(pasal_path, encoding="utf-8") as f:
+            jenis_folder = json.load(f).get("jenis_folder") or pasal_path.parent.name
+        derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
+        summary.update({"status": "resplit_ok", "derived_counts": derived, "elapsed_s": round(time.time() - t0, 2)})
+        return summary
 
-    add_navigation_paths(structure)
+    audit = llm_parse_doc(doc_id, dry_run=dry_run)
+    summary["llm_parse_status"] = audit.get("status")
+    summary["pasal_count"] = audit.get("pasal_count")
+    summary["validation_errors"] = audit.get("validation_errors") or []
 
-    doc["structure"] = structure
-    if penjelasan_proxy:
-        doc["penjelasan_umum"] = penjelasan_proxy["umum"]
-    doc["llm_cleaned"] = True
-    doc["llm_cleanup_version"] = LLM_CLEANUP_VERSION
-    doc["pasal_updated_at"] = now_iso()
-    doc["llm_cleaned_at"] = now_iso()
-    doc["warnings"] = llm_failures if llm_failures else []
+    if audit.get("status") != "parsed" or dry_run:
+        summary["status"] = audit.get("status", "error")
+        if "error" in audit:
+            summary["error"] = audit["error"]
+        return summary
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=2)
-
-    if n_failures:
-        log.warning(f"LLM done ({elapsed:.1f}s)  {n_failures} batch(es) kept as raw OCR  ({doc_id})")
-    else:
-        log.info(f"LLM done ({elapsed:.1f}s)  all batches cleaned  ({doc_id})")
-
-    with state_lock:
-        if clog:
-            clog.update(doc_id, {
-                "category": entry.get("jenis_folder", doc_id.split("-")[0]).upper(),
-                "updated_at": now_iso(),
-                "llm_time_s": round(elapsed, 3),
-                "llm_input_tokens": token_stats.get("input_tokens", 0),
-                "llm_output_tokens": token_stats.get("output_tokens", 0),
-                "llm_total_tokens": token_stats.get("total_tokens", 0),
-                "llm_calls": token_stats.get("llm_calls", 0),
-                "llm_batch_failures": n_failures,
-            })
-        clear_doc_error(manifest, doc_id, entry)
-        sync_manifest_from_indexes(
-            manifest, docs, PARSER_VERSION, LLM_CLEANUP_VERSION, doc_ids=[doc_id],
-        )
-        write_status_manifest(manifest)
-    return "success"
+    pasal_path = Path(audit["index_path"])
+    jenis_folder = pasal_path.parent.name
+    derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
+    summary.update({
+        "status": "indexed",
+        "derived_counts": derived,
+        "elapsed_s": round(time.time() - t0, 2),
+    })
+    return summary
 
 
-def _llm_pass(data_index: Path, docs: dict, rebuild: str | None,
-              manifest: dict,
-              clog: "CostManifest | None" = None,
-              parallel: int = 1) -> tuple[int, int, int]:
-    """Run Gemini LLM cleanup on parsed docs with llm_cleaned=false.
-
-    When `parallel` > 1, processes that many docs concurrently via a thread
-    pool. Each doc still uses its own batch-level parallelism inside the
-    parser, so total in-flight API calls = parallel × VECTORLESS_LLM_MAX_WORKERS.
-
-    Returns (success, skipped, failed).
-    """
-    import os
-    import threading
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        log.error("GEMINI_API_KEY is not set")
-        sys.exit(1)
-
-    log.info(f"pass 2  LLM cleanup (Gemini 2.5 Flash), parallel={parallel}")
-    t_total = time.time()
-    state_lock = threading.Lock()
-
-    results = {"success": 0, "skipped": 0, "failed": 0}
-    doc_items = list(docs.items())
-    total = len(doc_items)
-
-    if parallel <= 1:
-        for i, (doc_id, entry) in enumerate(doc_items, 1):
-            status = _llm_cleanup_one_doc(i, total, doc_id, entry, data_index,
-                                          rebuild, manifest, docs, clog, state_lock)
-            results[status] += 1
-    else:
-        with ThreadPoolExecutor(max_workers=parallel) as executor:
-            futures = {
-                executor.submit(
-                    _llm_cleanup_one_doc, i, total, doc_id, entry, data_index,
-                    rebuild, manifest, docs, clog, state_lock,
-                ): doc_id
-                for i, (doc_id, entry) in enumerate(doc_items, 1)
-            }
-            for future in as_completed(futures):
-                doc_id = futures[future]
-                try:
-                    status = future.result()
-                    results[status] += 1
-                except Exception as e:
-                    log.error(f"worker for {doc_id} crashed: {e.__class__.__name__}: {e}")
-                    results["failed"] += 1
-
-    total_elapsed = time.time() - t_total
-    log.info(f"pass 2 done  {results['success']} cleaned, "
-             f"{results['skipped']} skipped, {results['failed']} failed  "
-             f"{total_elapsed:.1f}s")
-    return results["success"], results["skipped"], results["failed"]
-
-
-# CLI entry point.
-
-def main():
-    """Entry point. Parses CLI args and runs the indexing pipeline."""
+def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-7s  %(message)s",
         datefmt="%H:%M:%S",
     )
-    ap = argparse.ArgumentParser(
-        description="Build structural index from scraped legal PDFs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  Full pipeline (parse + LLM):
-    python -m vectorless.indexing.build --granularity pasal
-
-  Parse only (offline, no API cost):
-    python -m vectorless.indexing.build --granularity pasal --parse-only
-
-  LLM cleanup only (resume after sleep/network failure):
-    python -m vectorless.indexing.build --granularity pasal --llm-only
-
-  Rebuild specific docs:
-    python -m vectorless.indexing.build --granularity pasal --rebuild uu-14-2025,pp-3-2026
-
-  Rebuild all:
-    python -m vectorless.indexing.build --granularity pasal --rebuild all
-
-  Rebuild only uncleaned docs:
-    python -m vectorless.indexing.build --granularity pasal --rebuild uncleaned
-
-  Rebuild only stale docs after a parser-version bump:
-    python -m vectorless.indexing.build --granularity pasal --rebuild stale
-
-  Full pipeline across all granularities + verify:
-    python -m vectorless.indexing.build --granularity pasal --full-pipeline
-""")
-    ap.add_argument("--granularity", choices=["pasal", "ayat", "full_split"], required=True,
-                    help="Leaf node granularity: pasal (coarsest), ayat (mid), full_split (finest)")
-    ap.add_argument("--doc-id", type=str,
-                    help="Operate on a single document by doc_id (overrides --rebuild)")
-    ap.add_argument("--category", type=str,
-                    help="Filter docs by kategori/folder, e.g. UU,PP,PMK,PERMENAKER")
-    ap.add_argument("--parse-only", action="store_true",
-                    help="Run only Pass 1 (PDF parsing, no LLM). Good for iterating parser fixes.")
-    ap.add_argument("--llm-only", action="store_true",
-                    help="Run only Pass 2 (LLM cleanup on parsed docs). Resumes after sleep/network failure.")
-    ap.add_argument("--rebuild", type=str, default=None, metavar="WHAT",
-                    help=(
-                        "What to rebuild. Options: "
-                        "'all' = force-rebuild everything; "
-                        "'uncleaned' = redo docs with llm_cleaned=false; "
-                        "'stale' = rebuild docs whose parser/derived versions are stale; "
-                        "'doc1,doc2,...' = specific doc_ids. "
-                        "Default: only build missing files."
-                    ))
-    ap.add_argument("--from-pasal", action="store_true",
-                    help="Re-split from existing pasal index (no PDF parsing, no LLM). Only for ayat/full_split.")
-    ap.add_argument("--full-pipeline", action="store_true",
-                    help="Run complete pipeline: pasal parse+LLM → ayat resplit → full_split resplit → verify.")
-    # Backward compatibility aliases.
-    ap.add_argument("--parallel", type=int, default=1, metavar="N",
-                    help=(
-                        "Number of docs to process concurrently in LLM cleanup pass. "
-                        "Docs are independent, so parallelism scales nearly linearly "
-                        "until Gemini rate limits. Combined with batch-level parallelism "
-                        "inside each doc (VECTORLESS_LLM_MAX_WORKERS, default 4), the "
-                        "total concurrent API calls is N × 4. Default 1 (sequential)."
-                    ))
-    ap.add_argument("--no-llm", action="store_true",
-                    help="(legacy) Alias for --parse-only.")
-    ap.add_argument("--force", action="store_true",
-                    help="(legacy) Alias for --rebuild all.")
+    ap = argparse.ArgumentParser(description="LLM-first indexing pipeline")
+    ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[],
+                    help="Doc to index (repeatable)")
+    ap.add_argument("--doc-ids", dest="doc_ids_csv", default="",
+                    help="Comma-separated doc_ids")
+    ap.add_argument("--category",
+                    help="Index every doc in this jenis_folder (e.g. UU, OJK)")
+    ap.add_argument("--resplit-only", action="store_true",
+                    help="Skip LLM-parse; only re-derive ayat + full_split from existing pasal index")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Preview LLM-parse only; do not overwrite any index file")
     args = ap.parse_args()
 
-    # Normalize compatibility flags to current options.
-    if args.no_llm:
-        args.parse_only = True
-    if args.force and not args.rebuild:
-        args.rebuild = "all"
+    doc_ids = list(args.doc_ids)
+    if args.doc_ids_csv:
+        doc_ids.extend([x.strip() for x in args.doc_ids_csv.split(",") if x.strip()])
 
-    granularity = args.granularity
-    registry = load_registry()
-    manifest = load_status_manifest(PARSER_VERSION, LLM_CLEANUP_VERSION)
-    sync_manifest_from_indexes(manifest, registry, PARSER_VERSION, LLM_CLEANUP_VERSION)
-    write_status_manifest(manifest)
+    targets = _resolve_targets(doc_ids, args.category)
+    log.info(f"indexing {len(targets)} docs (resplit_only={args.resplit_only}, dry_run={args.dry_run})")
 
-    # Fast re-split mode for ayat/full_split from existing pasal outputs.
-    if args.from_pasal:
-        if granularity == "pasal":
-            log.error("--from-pasal only works with ayat or full_split")
-            sys.exit(1)
-        clog = CostManifest(granularity)
-        _resplit_from_pasal(granularity, args.doc_id, args.rebuild, manifest, registry,
-                            args.category, clog=clog)
+    ok = 0
+    t_total = time.time()
+    for i, did in enumerate(targets, 1):
+        log.info(f"[{i}/{len(targets)}] {did}")
+        try:
+            result = index_doc(did, dry_run=args.dry_run, resplit_only=args.resplit_only)
+        except Exception as exc:
+            log.exception(f"  failed: {exc}")
+            continue
+        status = result.get("status")
+        msg = f"  {status}"
+        if "pasal_count" in result and result["pasal_count"] is not None:
+            msg += f"  pasals={result['pasal_count']}"
+        if "derived_counts" in result:
+            dc = result["derived_counts"]
+            msg += f"  ayat={dc.get('ayat')} full_split={dc.get('full_split')}"
+        if result.get("validation_errors"):
+            msg += f"  val_errs={len(result['validation_errors'])}"
+        if result.get("error"):
+            msg += f"  error={result['error']}"
+        log.info(msg)
+        if status in ("indexed", "resplit_ok", "dry_run_ok"):
+            ok += 1
+
+    elapsed = time.time() - t_total
+    log.info(f"done  {ok}/{len(targets)} succeeded  {elapsed:.1f}s")
+
+    if args.dry_run:
         return
 
-    # Full pipeline mode across all granularities, then verification.
-    if args.full_pipeline:
-        if granularity != "pasal":
-            log.error("--full-pipeline must be started with --granularity pasal")
-            sys.exit(1)
-        _run_full_pipeline(args, registry, manifest)
-        return
-
-    data_index = GRANULARITY_INDEX_MAP[granularity]
-    data_index.mkdir(parents=True, exist_ok=True)
-
-    docs = _resolve_docs(registry, args.rebuild, args.doc_id, args.category)
-    log.info(f"granularity {granularity}  output {data_index}  docs {len(docs)}")
-    if args.rebuild:
-        log.info(f"rebuild {args.rebuild}")
-    if args.category:
-        log.info(f"category {args.category}")
-
-    clog = CostManifest(granularity)
-
-    # Determine active passes.
-    run_parse = not args.llm_only
-    run_llm   = not args.parse_only
-
-    if run_parse:
-        _parse_pass(data_index, docs, granularity, rebuild=args.rebuild, manifest=manifest, clog=clog)
-
-    if run_llm:
-        _llm_pass(data_index, docs, rebuild=args.rebuild, manifest=manifest,
-                  clog=clog, parallel=args.parallel)
-
-    # Rebuild catalog after pass execution.
-    log.info("building catalog")
-    catalog = build_catalog(data_index)
-    catalog_path = data_index / "catalog.json"
-    with open(catalog_path, "w", encoding="utf-8") as f:
-        json.dump(catalog, f, ensure_ascii=False, indent=2)
-    log.info(f"catalog  {len(catalog)} documents  {catalog_path}")
-    sync_manifest_from_indexes(
-        manifest,
-        registry,
-        PARSER_VERSION,
-        LLM_CLEANUP_VERSION,
-        doc_ids=list(docs.keys()),
-    )
-    write_status_manifest(manifest)
-
-
-def _run_full_pipeline(args, registry: dict, manifest: dict):
-    """Run pasal parse+LLM, then ayat/full_split resplit, then verify."""
-    from .verify import verify_index, print_report
-
-    docs = _resolve_docs(registry, args.rebuild, args.doc_id, args.category)
-    rebuild = args.rebuild
-
-    pasal_clog = CostManifest("pasal")
-
-    # Pasal phase runs parse and LLM cleanup.
-    pasal_index = GRANULARITY_INDEX_MAP["pasal"]
-    pasal_index.mkdir(parents=True, exist_ok=True)
-
-    _parse_pass(pasal_index, docs, "pasal", rebuild=rebuild, manifest=manifest, clog=pasal_clog)
-    _llm_pass(pasal_index, docs, rebuild=rebuild, manifest=manifest, clog=pasal_clog,
-              parallel=getattr(args, "parallel", 1))
-
-    catalog = build_catalog(pasal_index)
-    with open(pasal_index / "catalog.json", "w", encoding="utf-8") as f:
-        json.dump(catalog, f, ensure_ascii=False, indent=2)
-    log.info(f"catalog (pasal)  {len(catalog)} docs")
-
-    # Ayat and full_split phases resplit from pasal outputs.
-    for gran in ("ayat", "full_split"):
-        _resplit_from_pasal(gran, args.doc_id, rebuild, manifest, registry, args.category,
-                            clog=CostManifest(gran))
-
-    # Verify all granularities.
-    log.info("verify all granularities")
-    all_ok = True
-    for gran in ("pasal", "ayat", "full_split"):
-        idx = GRANULARITY_INDEX_MAP[gran]
-        results = verify_index(idx, args.doc_id)
-        if results:
-            print_report(results, idx)
-            apply_verify_results(manifest, gran, results, registry=registry)
-            if any(r["status"] != "OK" for r in results):
-                all_ok = False
-    sync_manifest_from_indexes(
-        manifest,
-        registry,
-        PARSER_VERSION,
-        LLM_CLEANUP_VERSION,
-        doc_ids=list(docs.keys()),
-    )
-    write_status_manifest(manifest)
-
-    log.info(f"pipeline complete  {'all checks passed' if all_ok else 'some issues found, check output above'}")
+    for gran, idx_dir in GRANULARITY_INDEX_MAP.items():
+        if not idx_dir.exists():
+            continue
+        catalog = build_catalog(idx_dir)
+        with open(idx_dir / "catalog.json", "w", encoding="utf-8") as f:
+            json.dump(catalog, f, ensure_ascii=False, indent=2)
+        log.info(f"catalog ({gran})  {len(catalog)} docs  {idx_dir / 'catalog.json'}")
 
 
 if __name__ == "__main__":
