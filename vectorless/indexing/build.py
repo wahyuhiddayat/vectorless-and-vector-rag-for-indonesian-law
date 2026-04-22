@@ -148,7 +148,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
 
     Returns a dict with status, pasal_count, and leaf counts per derived granularity.
     """
-    from scripts.parser.llm_parse import parse_doc as llm_parse_doc
+    from scripts.parser.llm_parse import parse_doc as llm_parse_doc, _append_audit
 
     t0 = time.time()
     summary: dict = {"doc_id": doc_id}
@@ -179,6 +179,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         return summary
 
     audit = llm_parse_doc(doc_id, dry_run=dry_run)
+    _append_audit(audit)
     summary["llm_parse_status"] = audit.get("status")
     summary["pasal_count"] = audit.get("pasal_count")
     summary["validation_errors"] = audit.get("validation_errors") or []

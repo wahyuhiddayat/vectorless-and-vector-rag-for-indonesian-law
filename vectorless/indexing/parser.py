@@ -818,7 +818,14 @@ def strip_ocr_headers(nodes: list[dict]):
 # The "ayat" granularity splits to Ayat only; "full_split" recurses to the deepest level present.
 
 # Patterns for detecting sub-Pasal structure and penjelasan section headings.
-_HURUF_RE = re.compile(r'(?:^|\n)([a-z])\.\s', re.MULTILINE)
+# Huruf: 1-2 letters (handles a..z and doubled aa..zz for lists longer than
+# 26 items), period optional to tolerate OCR loss. Case-insensitive because
+# OCR sometimes capitalizes isolated letters (e.g. "l." → "L "). Sequence
+# validation downstream rejects misfires.
+_HURUF_RE = re.compile(
+    r'(?:^|\n)[ \t]*([A-Za-z]{1,2})\.?(?=[ \t]+\S)',
+    re.MULTILINE,
+)
 # Sub-huruf: "a) b) c)" style, used inside angka bodies as a deeper level.
 _SUB_HURUF_RE = re.compile(r'(?:^|\n)\s*([a-z])\)\s', re.MULTILINE)
 
@@ -913,6 +920,26 @@ _FUZZY_ANGKA_ITEM_RE = re.compile(
 )
 
 
+def _huruf_to_index(label: str) -> int | None:
+    """Map a huruf label to its 1-based position: a=1..z=26, aa=27..zz=52."""
+    lab = label.lower()
+    if len(lab) == 1 and "a" <= lab <= "z":
+        return ord(lab) - ord("a") + 1
+    if len(lab) == 2 and lab[0] == lab[1] and "a" <= lab[0] <= "z":
+        return 26 + ord(lab[0]) - ord("a") + 1
+    return None
+
+
+def _index_to_huruf(i: int) -> str:
+    """Inverse of _huruf_to_index."""
+    if 1 <= i <= 26:
+        return chr(ord("a") + i - 1)
+    if 27 <= i <= 52:
+        c = chr(ord("a") + i - 27)
+        return c + c
+    return ""
+
+
 def _find_fuzzy_markers(
     text: str, kind: str, expected_start: str
 ) -> list[tuple[int, str, int]] | None:
@@ -987,8 +1014,12 @@ def _find_fuzzy_markers(
             if len(norm) > 3 or (norm.startswith("0") and norm != "0"):
                 continue
         else:
-            # Huruf: single lowercase letter, already strict.
-            norm = raw_label
+            # Huruf: 1-2 letters (a..z, aa..zz). Normalize to lowercase
+            # to tolerate OCR capitalization. Reject invalid shapes
+            # (e.g. "ab" mixed letters, not a valid huruf label).
+            norm = raw_label.lower()
+            if _huruf_to_index(norm) is None:
+                continue
         candidates.append((m.start(), norm, m.end()))
 
     if len(candidates) < 2:
@@ -1015,12 +1046,14 @@ def _find_fuzzy_markers(
             if nums[0] != int(expected_start):
                 return False
             return all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
-        if labels[0] != expected_start:
+        # Huruf: positions via _huruf_to_index (handles a..z, aa..zz).
+        idxs = [_huruf_to_index(l) for l in labels]
+        if any(i is None for i in idxs):
             return False
-        return all(
-            ord(labels[i + 1]) == ord(labels[i]) + 1
-            for i in range(len(labels) - 1)
-        )
+        start_idx = _huruf_to_index(expected_start)
+        if start_idx is None or idxs[0] != start_idx:
+            return False
+        return all(idxs[i + 1] == idxs[i] + 1 for i in range(len(idxs) - 1))
 
     if _validate(deduped):
         return deduped
@@ -1032,11 +1065,10 @@ def _find_fuzzy_markers(
     # position anchored at expected_start.
     if not is_numeric:
         labels = [lab for _, lab, _ in deduped]
-        if not labels or labels[0] != expected_start:
+        start_idx = _huruf_to_index(expected_start)
+        if not labels or start_idx is None or labels[0] != expected_start:
             return None
-        expected_seq = [
-            chr(ord(expected_start) + i) for i in range(len(labels))
-        ]
+        expected_seq = [_index_to_huruf(start_idx + i) for i in range(len(labels))]
         matches = sum(1 for a, b in zip(labels, expected_seq) if a == b)
         if matches / len(labels) < 0.7:
             return None

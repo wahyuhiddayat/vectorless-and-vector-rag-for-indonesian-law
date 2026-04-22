@@ -310,11 +310,37 @@ TITLE CONVENTIONS:
 
 === CONTENT RULES ===
 
-1. Body text VERBATIM from PDF. Fix ONLY:
-   - OCR typos: "Pasa1" -> "Pasal", "5684" -> "568A" when context implies.
-   - Dedup repeated headings caused by page breaks.
-   - Collapse redundant whitespace.
-   - Do NOT paraphrase, do NOT summarize, do NOT translate.
+1. Body text follows the PDF exactly in WORD ORDER, STRUCTURE, NUMBERS,
+   and MEANING. The only permitted rewriting is conservative OCR repair
+   where the intended Indonesian word is UNAMBIGUOUS from surrounding
+   context. When uncertain, keep the garbled text verbatim — never guess.
+
+   ALLOWED (OCR repair — produces searchable Indonesian words without
+   changing meaning):
+   - Garbled letters inside one word:
+       "perenczrna.an"      → "perencanaan"
+       "kebiiakan"          → "kebijakan"
+       "pemeriniah"         → "pemerintah"
+       "Meneapkan"          → "Menetapkan"
+       "Undang-tlndang"     → "Undang-Undang"
+   - Digit-for-letter in a word (only when obvious):
+       "Pasa1"              → "Pasal"
+       "PasaT"              → "Pasal"
+       "5684" → "568A"      (only when adjacent Pasal sequence confirms)
+   - Missing spaces between glued words (very common at column/page breaks):
+       "KecamatanWonggeduku"→ "Kecamatan Wonggeduku"
+       "diaturdalam"        → "diatur dalam"
+   - Collapse redundant whitespace; de-duplicate page-break headings.
+
+   FORBIDDEN (will invalidate the parse):
+   - Changing any digit or number, even if it looks wrong. "(3)" stays
+     "(3)"; "pasal 12" stays "pasal 12". Never renumber.
+   - Changing legal terminology: "wajib" stays "wajib" (never "harus"),
+     "memprioritaskan" stays "memprioritaskan", etc.
+   - Paraphrasing, reordering words, translating, or summarizing.
+   - Adding words, clauses, or explanations not present in the PDF.
+   - "Fixing" a word whose intended form is not OBVIOUS — leave it
+     verbatim. Better a few garbled words than a silent meaning change.
 
 2. Keep Pasal body as ONE flat "text" string. Preserve "(1) ...", "a. ..."
    and "1. ..." markers inline. A deterministic re-split pass handles
@@ -753,13 +779,16 @@ def _find_hybrid_nodes(structure: list[dict]) -> list[str]:
     """Return node_ids where text has inline ayat/huruf/angka markers AND
     the node also has children — indicates the LLM partially pre-split
     sub-structure, which breaks the deterministic re-split pass.
+
+    Requires >=2 marker hits to avoid flagging amendment Angka N nodes
+    whose text legitimately begins with "N. Ketentuan Pasal X diubah ...".
     """
     hybrids: list[str] = []
     for n in iter_nodes(structure):
         if not n.get("nodes"):
             continue
         text = n.get("text") or ""
-        if _INLINE_MARKER_RE.search(text):
+        if len(_INLINE_MARKER_RE.findall(text)) >= 2:
             hybrids.append(n.get("node_id") or n.get("title") or "?")
     return hybrids
 
