@@ -989,7 +989,10 @@ def _find_fuzzy_markers(
                 nums = [int(lab) for _, lab, _ in dd]
             except ValueError:
                 nums = None
-            if nums and nums[0] == int(expected_start) and all(
+            # Accept any consecutive sequence; amendment PDFs sometimes start
+            # ayats at a non-1 number (e.g. body literally shows "(4)...(5)...
+            # (6)...(7)" because earlier ayats were lost in PDF extraction).
+            if nums and all(
                 nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1)
             ):
                 return dd
@@ -1035,7 +1038,9 @@ def _find_fuzzy_markers(
     if len(deduped) < 2:
         return None
 
-    # Stage 3: validate sequence. Try strict pass first.
+    # Stage 3: validate sequence. Consecutive labels are required; starting
+    # number is advisory only (amendment PDFs can legitimately start at a
+    # non-1/non-a number when earlier entries are lost in extraction).
     def _validate(seq: list[tuple[int, str, int]]) -> bool:
         labels = [s[1] for s in seq]
         if is_numeric:
@@ -1043,15 +1048,9 @@ def _find_fuzzy_markers(
                 nums = [int(l) for l in labels]
             except ValueError:
                 return False
-            if nums[0] != int(expected_start):
-                return False
             return all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
-        # Huruf: positions via _huruf_to_index (handles a..z, aa..zz).
         idxs = [_huruf_to_index(l) for l in labels]
         if any(i is None for i in idxs):
-            return False
-        start_idx = _huruf_to_index(expected_start)
-        if start_idx is None or idxs[0] != start_idx:
             return False
         return all(idxs[i + 1] == idxs[i] + 1 for i in range(len(idxs) - 1))
 
@@ -1085,9 +1084,8 @@ def _find_fuzzy_markers(
         nums = [int(lab) for _, lab, _ in deduped]
     except ValueError:
         return None
-    # Sequence must at least start correctly for gap-fill to make sense.
-    if nums[0] != int(expected_start):
-        return None
+    # Gap-fill needs a plausible anchor but not necessarily start at 1;
+    # amendment pasals can legitimately begin at a non-1 ayat number.
     # Find first gap: where nums[i+1] != nums[i] + 1.
     for i in range(len(nums) - 1):
         if nums[i + 1] != nums[i] + 1:
