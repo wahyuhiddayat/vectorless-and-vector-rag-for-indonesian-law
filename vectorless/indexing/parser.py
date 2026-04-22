@@ -833,7 +833,17 @@ _SUB_HURUF_RE = re.compile(r'(?:^|\n)\s*([a-z])\)\s', re.MULTILINE)
 # indicate the marker is part of an inline cross-line reference rather than a
 # structural marker.  Example: "dimaksud pada ayat\n(1) harus" — the "(1)" here
 # is a reference, not the start of Ayat 1.
-_INLINE_REF_PREV_WORDS = frozenset(['ayat', 'pasal', 'huruf', 'angka', 'pada', 'di'])
+_INLINE_REF_PREV_WORDS = frozenset([
+    # Prepositional anchors for a cross-reference that can OCR-break to next line.
+    'pada', 'di', 'dalam',
+    # Structural nouns — references read "Pasal N ayat (M)" where the next
+    # token may break to the following line.
+    'ayat', 'pasal', 'huruf', 'angka',
+    # NOTE: conjunctions like "dan", "atau", "serta", "maupun" are NOT in this
+    # set because Indonesian legal drafting convention uses them as LIST
+    # conjunctions: "f. item; dan\ng. last item." — the "dan" ends a list
+    # item, and the next line IS a structural marker, not an inline ref.
+])
 
 
 def _is_inline_ref(text: str, match: re.Match) -> bool:
