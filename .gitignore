@@ -16,4 +16,4 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
-scripts\gt_validate_prompt.txt
+scripts/gt/validate_prompt.txt
