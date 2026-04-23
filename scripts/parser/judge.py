@@ -74,11 +74,28 @@ these categories:
    nodes. Compare those against arabic Pasal references in the PDF
    amendment instructions (e.g. "Ketentuan Pasal 7 diubah ...").
 
-2. STRUCTURAL — nodes whose body text contains inline structural markers
-   like "(1)", "(2)", "a.", "b.", "1.", "2." AND also have children,
-   OR nodes whose flat text clearly hides un-extracted sub-structure
-   (e.g. a Pasal leaf whose text has many "(N)" markers but no children
-   — that is FINE because a deterministic re-split pass handles it).
+2. STRUCTURAL — narrow scope. A separate deterministic Python check
+   (scripts/parser/check_granularity.py) handles "unsplit" detection
+   at the ayat/full_split levels using the exact splitter regex.
+   **Do NOT report "unsplit" issues here** — those are caught upstream.
+
+   The parser's design is INTENTIONAL: Pasal bodies stay FLAT as one
+   "text" string, keeping "(1)", "(2)", "a.", "b.", "1.", "2." markers
+   INLINE. You will see many Pasals with flat text and no children.
+   That is CORRECT — do not flag it.
+
+   Flag ONLY these issue types:
+     - "hybrid": text contains inline markers AND has children (broken).
+     - "misplaced": BAB/Bagian/Paragraf at wrong nesting depth (e.g. a
+       Bagian emitted as top-level instead of a child of its BAB).
+     - "duplicate": two or more container nodes share the same node_id.
+     - "text_bleed": Pasal N text contains trailing ayat/content from
+       Pasal N-1, or vice versa.
+     - "sibling_order": children appear in wrong order vs PDF (e.g.
+       Bagian Kesatu, Keempat, Kedua, Ketiga instead of Kesatu, Kedua,
+       Ketiga, Keempat).
+     - "title_incomplete": BAB/Bagian/Paragraf title truncated (missing
+       words that the PDF clearly shows).
 
 3. OCR — tokens in the parsed text that look garbled vs the PDF (e.g.
    "perenczrna.an" vs "perencanaan"). Only report clear corruption,

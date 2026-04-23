@@ -51,10 +51,11 @@ MAX_RETRIES = 3
 
 
 def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
-    """Call Gemini 2.5 Flash via google-genai with thinking disabled.
+    """Call the configured Gemini parser model.
 
-    Uses `from google import genai` (newer SDK) so we can actually set
-    thinking_budget=0 and keep the full token budget for actual text output.
+    For Gemini 2.5 series, thinking is disabled (budget=0) so the full
+    output-token budget goes to response text. Gemini 3.x series requires
+    thinking mode, so we use the SDK default (dynamic thinking budget).
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -64,6 +65,15 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
 
     client = newgenai.Client(api_key=api_key)
 
+    config_kwargs = dict(
+        temperature=0.0,
+        max_output_tokens=max_output_tokens,
+        response_mime_type="application/json",
+    )
+    # Gemini 3.x forbids budget=0. For 2.5 we disable thinking to save tokens.
+    if MODEL_NAME.startswith("gemini-2.5"):
+        config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
+
     usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
     t0 = time.time()
     for attempt in range(1, MAX_RETRIES + 1):
@@ -71,12 +81,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
             resp = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=max_output_tokens,
-                    thinking_config=gtypes.ThinkingConfig(thinking_budget=0),
-                    response_mime_type="application/json",
-                ),
+                config=gtypes.GenerateContentConfig(**config_kwargs),
             )
             usage["calls"] += 1
             meta = getattr(resp, "usage_metadata", None)
@@ -1073,14 +1078,14 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
         return t
 
     def _container_key(n: dict) -> str:
-        """Primary merger key for container nodes: node_id if present
-        (invariant across chunks), else normalized title. node_id is safest
-        because LLM may emit different title wording for the same section
-        across chunks (e.g. truncated trailing words).
+        """Primary merger key for container nodes: normalized title.
+        Title reflects PDF content and is invariant across chunks, while
+        node_id is LLM-generated per chunk and may differ for the same
+        section (e.g. "bab_3_bagian_3" in one chunk vs "bagian_3" in
+        another when BAB III wasn't visible in that chunk's scope).
+        Titles may vary slightly in dashes/whitespace which _norm_title
+        collapses.
         """
-        nid = (n.get("node_id") or "").strip()
-        if nid:
-            return nid
         return _norm_title(n.get("title") or "")
 
     current_path: list[str] = []  # display titles, for output
@@ -1196,7 +1201,11 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
 def _chunk_pages(
     pages: list[dict], pages_per_chunk: int, overlap: int
 ) -> list[tuple[int, int]]:
-    """Split page list into (start_page, end_page) ranges with overlap."""
+    """Split page list into (start_page, end_page) ranges with overlap.
+
+    Page-based; kept as a fallback when pasal-aware chunking finds no
+    structural boundaries.
+    """
     total = len(pages)
     if total <= pages_per_chunk:
         return [(1, total)]
@@ -1208,6 +1217,63 @@ def _chunk_pages(
         if end == total:
             break
         start = end - overlap + 1
+    return ranges
+
+
+def _chunk_by_pasal(
+    pages: list[dict],
+    total_pages: int,
+    pasals_per_chunk: int = 20,
+    overlap_pages: int = 1,
+) -> list[tuple[int, int]]:
+    """Split into page ranges aligned on Pasal boundaries, with optional
+    page overlap for boundary disambiguation.
+
+    Scans the PDF for Pasal-N headings, groups Pasals into buckets of up to
+    ``pasals_per_chunk``, and emits (start_page, end_page) ranges whose
+    *pasal-alignment* boundaries lie BETWEEN Pasals (never mid-Pasal).
+    Each range is then extended by ``overlap_pages`` on each side so
+    adjacent chunks share ~``2 * overlap_pages`` pages — this lets the
+    LLM see prior-Pasal context at the chunk head (avoids misattributing
+    page-top spillover content to the chunk's first heading). The merger
+    picks the longest / most complete copy of any Pasal emitted by both
+    chunks at the overlap.
+
+    Falls back to empty list when no Pasals are detected; caller should
+    use ``_chunk_pages`` in that case.
+    """
+    # Scan every pasal heading OCCURRENCE (not unique pages) — dense docs
+    # can pack 3-5 pasals per page, so counting pages would undercount.
+    # Track (page_num) for each heading detected.
+    heading_re = re.compile(r"^\s*[Pp]asa[l1]\s+\d+[A-Z]?\b")
+    pasal_occurrences: list[int] = []
+    for p in pages:
+        if p["page_num"] > total_pages:
+            break
+        for block in p.get("blocks", []):
+            for line in block.get("text", "").splitlines():
+                if heading_re.match(line):
+                    pasal_occurrences.append(p["page_num"])
+    if len(pasal_occurrences) < 2:
+        return []
+
+    # Group consecutive pasals into buckets of ``pasals_per_chunk`` each.
+    # Pasal-alignment boundary spans the page of the bucket's first pasal
+    # to one page before the next bucket's first pasal. Then extend by
+    # overlap_pages on each side so adjacent chunks share context.
+    ranges: list[tuple[int, int]] = []
+    for i in range(0, len(pasal_occurrences), pasals_per_chunk):
+        bucket = pasal_occurrences[i: i + pasals_per_chunk]
+        aligned_start = 1 if i == 0 else bucket[0]
+        if i + pasals_per_chunk < len(pasal_occurrences):
+            next_first = pasal_occurrences[i + pasals_per_chunk]
+            aligned_end = max(aligned_start, next_first - 1)
+        else:
+            aligned_end = total_pages
+        # Apply overlap window.
+        start = max(1, aligned_start - overlap_pages)
+        end = min(total_pages, aligned_end + overlap_pages)
+        ranges.append((start, end))
     return ranges
 
 
@@ -1282,9 +1348,17 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     else:
         # Chunk body pages only (skip penjelasan + lampiran).
         body_pages_list = [p for p in pages if p["page_num"] <= body_end]
-        ranges = _chunk_pages(body_pages_list, PAGES_PER_CHUNK, CHUNK_OVERLAP_PAGES)
+        # Prefer pasal-aware chunking: boundaries between Pasals (never
+        # mid-Pasal) eliminate text-bleeding at chunk edges. Fallback to
+        # page-based chunking only when no Pasal headings detected.
+        ranges = _chunk_by_pasal(body_pages_list, body_end, pasals_per_chunk=20)
+        strategy = "pasal-aware"
+        if not ranges:
+            ranges = _chunk_pages(body_pages_list, PAGES_PER_CHUNK, CHUNK_OVERLAP_PAGES)
+            strategy = "page-based"
         print(
-            f"  chunked mode: {total_pages} pages split into {len(ranges)} chunks, parallel={PARALLEL_WORKERS}",
+            f"  chunked mode ({strategy}): {total_pages} pages split into "
+            f"{len(ranges)} chunks, parallel={PARALLEL_WORKERS}",
             flush=True,
         )
         chunk_structures: list[list[dict] | None] = [None] * len(ranges)
