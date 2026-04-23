@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 DATA_DIR = REPO_ROOT / "data"
 
-GRANULARITIES = ("pasal", "ayat", "full_split")
+GRANULARITIES = ("pasal", "ayat", "rincian")
 
 
 def load_registry() -> dict:

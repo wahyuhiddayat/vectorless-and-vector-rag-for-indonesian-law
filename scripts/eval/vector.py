@@ -2,7 +2,7 @@
 Vector RAG evaluation harness.
 
 Evaluates vector retrieval systems (vector-dense, vector-hybrid) across
-granularities (pasal / ayat / full_split) and embedding models
+granularities (pasal / ayat / rincian) and embedding models
 (gemini-embedding-001 / multilingual-e5-large-instruct / indo-sentence-bert-base).
 
 Reuses all scoring logic from evaluate_vectorless.py for a fair, consistent comparison.
@@ -62,7 +62,7 @@ from vectorless import (  # noqa: E402
 )
 
 SYSTEMS = ["vector-dense", "vector-hybrid"]
-GRANULARITIES = ["pasal", "ayat", "full_split"]
+GRANULARITIES = ["pasal", "ayat", "rincian"]
 EMBEDDING_MODELS = [
     "bge-m3",                         # Hypothesis A: MIRACL SOTA, 8K context
     "all-indobert-base-v4",            # Hypothesis B: Indonesian-specific, 128-token

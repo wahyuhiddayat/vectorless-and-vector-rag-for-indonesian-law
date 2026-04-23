@@ -183,8 +183,18 @@ def load_catalog() -> list[dict]:
         return json.load(f)
 
 
+_MULTI_WORD_PREFIXES = {
+    "peraturan-bssn": "PERATURAN_BSSN",
+    "peraturan-ojk": "PERATURAN_OJK",
+}
+
+
 def _doc_category(doc_id: str) -> str:
-    """Derive category subfolder from doc_id: 'uu-1-2026' â†’ 'UU'."""
+    """Derive category subfolder from doc_id: 'uu-1-2026' -> 'UU', 'peraturan-bssn-1-2025' -> 'PERATURAN_BSSN'."""
+    low = doc_id.lower()
+    for prefix, folder in _MULTI_WORD_PREFIXES.items():
+        if low.startswith(prefix + "-"):
+            return folder
     return doc_id.split("-")[0].upper()
 
 

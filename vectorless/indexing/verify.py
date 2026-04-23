@@ -17,7 +17,7 @@ from .status import (
 GRANULARITY_INDEX_MAP = {
     "pasal": Path("data/index_pasal"),
     "ayat": Path("data/index_ayat"),
-    "full_split": Path("data/index_full_split"),
+    "rincian": Path("data/index_rincian"),
 }
 PARSER_VERSION = "2026-04-02"
 LLM_CLEANUP_VERSION = "2026-04-02"
@@ -245,7 +245,7 @@ def check_preamble(structure: list[dict]) -> list[str]:
             # First child check: missing angka 1.
             first_child = (mengingat.get("nodes") or [None])[0]
             if first_child:
-                # At full_split granularity, child titles reveal the numbering.
+                # At rincian granularity, child titles reveal the numbering.
                 title = first_child.get("title", "")
                 if re.match(r'Mengingat Angka [2-9]', title):
                     issues.append(f'Preamble: Mengingat starts at "{title}" — angka 1 missing (absorbed into Menimbang?)')
@@ -504,7 +504,7 @@ def verify_doc(doc: dict, granularity: str = "pasal") -> dict:
         status_issues.extend(title_issues)
 
     # Check 9: Angka count consistency — structure vs element_counts.
-    # Only applicable at pasal granularity: ayat/full_split deep_split_leaves creates extra
+    # Only applicable at pasal granularity: ayat/rincian deep_split_leaves creates extra
     # Angka sub-nodes from definition lists that don't appear in element_counts.
     angka_count_issues = check_angka_count(structure, element_counts) if granularity == "pasal" else []
     checks["angka_count_issues"] = len(angka_count_issues)
@@ -543,8 +543,8 @@ def verify_index(index_dir: Path, doc_id: str | None = None, category: str | Non
     dir_name = index_dir.name
     if "ayat" in dir_name:
         granularity = "ayat"
-    elif "full_split" in dir_name:
-        granularity = "full_split"
+    elif "rincian" in dir_name:
+        granularity = "rincian"
     else:
         granularity = "pasal"
 
@@ -572,13 +572,19 @@ def cross_granularity_check(doc_id: str) -> list[str]:
     """Compare leaf counts across granularities for one document.
 
     Finer granularities must have >= the leaf count of coarser ones
-    (pasal <= ayat <= full_split). Returns a list of violations.
+    (pasal <= ayat <= rincian). Returns a list of violations.
     """
     issues = []
     counts = {}
     # Load leaf count from each available granularity index.
     for gran, idx_dir in GRANULARITY_INDEX_MAP.items():
-        cat = doc_id.split("-")[0].upper()
+        low = doc_id.lower()
+        if low.startswith("peraturan-bssn-"):
+            cat = "PERATURAN_BSSN"
+        elif low.startswith("peraturan-ojk-"):
+            cat = "PERATURAN_OJK"
+        else:
+            cat = doc_id.split("-")[0].upper()
         path = idx_dir / cat / f"{doc_id}.json"
         if not path.exists():
             continue
@@ -589,9 +595,9 @@ def cross_granularity_check(doc_id: str) -> list[str]:
     if "pasal" in counts and "ayat" in counts:
         if counts["ayat"] < counts["pasal"]:
             issues.append(f"Ayat ({counts['ayat']}) < Pasal ({counts['pasal']}) leaves")
-    if "ayat" in counts and "full_split" in counts:
-        if counts["full_split"] < counts["ayat"]:
-            issues.append(f"Full_split ({counts['full_split']}) < Ayat ({counts['ayat']}) leaves")
+    if "ayat" in counts and "rincian" in counts:
+        if counts["rincian"] < counts["ayat"]:
+            issues.append(f"Full_split ({counts['rincian']}) < Ayat ({counts['ayat']}) leaves")
 
     return issues
 
@@ -655,7 +661,7 @@ def print_report(results: list[dict], index_dir: Path):
 def main():
     """CLI entry point for index verification."""
     ap = argparse.ArgumentParser(description="Verify structural integrity of indexed documents")
-    ap.add_argument("--granularity", choices=["pasal", "ayat", "full_split"],
+    ap.add_argument("--granularity", choices=["pasal", "ayat", "rincian"],
                     help="Granularity to verify")
     ap.add_argument("--all", action="store_true", help="Verify all granularities + cross-compare")
     ap.add_argument("--doc-id", type=str, help="Verify single document")
@@ -692,7 +698,7 @@ def main():
         if not args.json:
             print_report(results, index_dir)
 
-    # Cross-granularity: compare leaf counts across pasal/ayat/full_split.
+    # Cross-granularity: compare leaf counts across pasal/ayat/rincian.
     if args.all and not args.json:
         pasal_dir = GRANULARITY_INDEX_MAP["pasal"]
         if pasal_dir.exists():

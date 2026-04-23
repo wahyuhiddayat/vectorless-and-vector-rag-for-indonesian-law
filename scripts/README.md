@@ -10,7 +10,7 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 
 ## GT policy
 
-- GT is **leaf-anchored** at the finest available granularity (`full_split` index)
+- GT is **leaf-anchored** at the finest available granularity (`rincian` index)
 - the anchor must be the **most specific leaf node** available: huruf/angka if present, otherwise ayat, otherwise pasal
 - gold sets for coarser granularities (ayat, pasal) are **derived by rolling UP** via prefix lookup in `finalize_gt.py`
 - every granularity has **exactly 1 gold node** per question
@@ -41,13 +41,13 @@ Methodology notes:
 
 For the main GT set, prefer documents with:
 
-- `verify_status.full_split = OK`
+- `verify_status.rincian = OK`
 
 If you want a stricter subset later, use documents that are `OK` on all three:
 
 - `pasal = OK`
 - `ayat = OK`
-- `full_split = OK`
+- `rincian = OK`
 
 ---
 
@@ -62,7 +62,7 @@ python -m vectorless.indexing.status --refresh-verify --json > status.json
 Save eligible doc IDs to `gt_eligible.txt` (criterion: all three granularities verified OK):
 
 ```powershell
-(Get-Content status.json -Raw | ConvertFrom-Json).docs.PSObject.Properties.Value | Where-Object { $_.verify_status.pasal -eq "OK" -and $_.verify_status.ayat -eq "OK" -and $_.verify_status.full_split -eq "OK" } | Select-Object -ExpandProperty doc_id | Set-Content gt_eligible.txt
+(Get-Content status.json -Raw | ConvertFrom-Json).docs.PSObject.Properties.Value | Where-Object { $_.verify_status.pasal -eq "OK" -and $_.verify_status.ayat -eq "OK" -and $_.verify_status.rincian -eq "OK" } | Select-Object -ExpandProperty doc_id | Set-Content gt_eligible.txt
 ```
 
 `gt_eligible.txt` is your working list. Only generate GT for documents in this file.
@@ -84,7 +84,7 @@ Output:
 
 Notes:
 
-- Reads from `data/index_full_split` — the LLM sees the finest-grained leaf nodes (huruf, angka, or ayat/pasal when not split further).
+- Reads from `data/index_rincian` — the LLM sees the finest-grained leaf nodes (huruf, angka, or ayat/pasal when not split further).
 - If the document has no body leaf nodes (pure preamble), `gt_prompt.py` will print `[SKIP]` and exit.
 - Short documents automatically get fewer questions (`n = leaf_count`) — one question per leaf, no duplicates.
 - For large documents, do not use `--stdout`; let the files be written to `tmp/`.
@@ -151,7 +151,7 @@ Use `scripts/gt/validate_prompt.txt` as a template (the file is gitignored — c
 
 In Copilot Chat:
 
-1. **Attach** `data/index_full_split/[KATEGORI]/<doc_id>.json` so Copilot can verify node text and sibling structure.
+1. **Attach** `data/index_rincian/[KATEGORI]/<doc_id>.json` so Copilot can verify node text and sibling structure.
 2. Fill in `[KATEGORI]` and `[DOC_ID]` in the template header.
 3. Paste the raw JSON array from `data/ground_truth_raw/<doc_id>.json` into the `[PASTE ...]` placeholder.
 4. Paste the `[WARN]` lines from Step 3 below the JSON (as additional hints).
@@ -194,7 +194,7 @@ Output: `data/validated_testset.pkl`
 
 Semantics (roll-up design — every level has exactly 1 gold node):
 
-- `gold_full_split_node_ids`: exact anchor (finest granularity)
+- `gold_rincian_node_ids`: exact anchor (finest granularity)
 - `gold_ayat_node_ids`: derived parent in ayat index
 - `gold_pasal_node_ids`: derived parent in pasal index
 
@@ -232,7 +232,7 @@ Each item in `data/ground_truth_raw/<doc_id>.json` must look like:
   "query_style": "formal|colloquial",
   "difficulty": "easy|medium|hard",
   "reference_mode": "none|legal_ref|doc_only|both",
-  "gold_anchor_granularity": "full_split",
+  "gold_anchor_granularity": "rincian",
   "gold_anchor_node_id": "...",
   "gold_node_id": "...",
   "gold_doc_id": "...",
@@ -244,7 +244,7 @@ Each item in `data/ground_truth_raw/<doc_id>.json` must look like:
 Notes:
 
 - `gold_node_id` must match `gold_anchor_node_id`
-- `gold_anchor_granularity` must be `full_split`
+- `gold_anchor_granularity` must be `rincian`
 - `gold_anchor_node_id` must be the most specific leaf available (huruf/angka if present)
 - `answer_hint` should stay short and evidence-like; it is not a full canonical answer span
 - raw GT must be a JSON array
@@ -270,7 +270,7 @@ Remove-Item data\validated_testset.pkl
 
 ## Recommended habits
 
-- work from docs with `full_split = OK`
+- work from docs with `rincian = OK`
 - validate structurally before semantic review
 - always run semantic validation (Step 4) before merging — never merge directly from ChatGPT output
 - merge often, finalize only when the merged GT looks clean

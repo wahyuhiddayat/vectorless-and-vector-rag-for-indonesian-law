@@ -69,7 +69,7 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
 _SOURCE_TO_GRAN = {
     "index_pasal": "pasal",
     "index_ayat": "ayat",
-    "index_full_split": "full_split",
+    "index_rincian": "rincian",
 }
 
 
@@ -181,7 +181,13 @@ def build_index(
     all_chunks: list[dict] = []
     for doc_meta in catalog:
         doc_id = doc_meta["doc_id"]
-        category = doc_id.split("-")[0].upper()
+        low = doc_id.lower()
+        if low.startswith("peraturan-bssn-"):
+            category = "PERATURAN_BSSN"
+        elif low.startswith("peraturan-ojk-"):
+            category = "PERATURAN_OJK"
+        else:
+            category = doc_id.split("-")[0].upper()
         doc_path = source_dir / category / f"{doc_id}.json"
         if not doc_path.exists():
             print(f"  SKIP: {doc_id} — index file not found")

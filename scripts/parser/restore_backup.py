@@ -62,7 +62,7 @@ def main() -> None:
         print(f"restored: {backup.parent.name}/{backup.name}")
         restored += 1
     print(f"\nRestored {restored} docs from {args.source}")
-    print("Remember to re-run ayat + full_split re-split for restored docs.")
+    print("Remember to re-run ayat + rincian re-split for restored docs.")
 
 
 if __name__ == "__main__":

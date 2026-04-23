@@ -16,7 +16,7 @@ vectorless-and-vector-rag-for-indonesian-law/
     index_status.json   # Central manifest for indexing progress/status
     index_pasal/        # Pasal-level index + catalog.json
     index_ayat/         # Ayat-level index
-    index_full_split/   # Full-split index (finest granularity)
+    index_rincian/   # Rincian index (finest granularity)
     retrieval_logs/     # Experiment result logs
 ```
 
@@ -46,7 +46,7 @@ python scraper/bpk_topk_newest.py --k 3
 Parses scraped PDFs into hierarchical tree indices. Single command with `--granularity` flag:
 
 ```bash
-python -m vectorless.indexing.build --granularity <pasal|ayat|full_split>
+python -m vectorless.indexing.build --granularity <pasal|ayat|rincian>
 ```
 
 For the day-to-day operational guide, see [vectorless/indexing/README.md](vectorless/indexing/README.md).
@@ -55,20 +55,20 @@ For the day-to-day operational guide, see [vectorless/indexing/README.md](vector
 |-------------|-------------|--------|
 | `pasal` | Pasal (coarsest) | `data/index_pasal/` |
 | `ayat` | Ayat (mid) | `data/index_ayat/` |
-| `full_split` | Huruf/Angka (finest) | `data/index_full_split/` |
+| `rincian` | Huruf/Angka (finest) | `data/index_rincian/` |
 
 ### Flags
 
 | Flag | Default | What it does |
 |------|---------|--------------|
-| `--granularity` | *(required)* | Leaf node granularity: `pasal`, `ayat`, or `full_split` |
+| `--granularity` | *(required)* | Leaf node granularity: `pasal`, `ayat`, or `rincian` |
 | `--doc-id ID` | all docs | Operate on a single document, e.g. `--doc-id uu-20-2025` |
 | `--category CAT` | all categories | Filter docs by category/folder, e.g. `UU`, `PP`, `PMK`, `PERMENAKER` |
 | `--parse-only` | off | Pass 1 only: PDF parsing, no LLM. Use when iterating parser fixes |
 | `--llm-only` | off | Pass 2 only: LLM cleanup on already-parsed docs. Resumes after network failure |
 | `--rebuild WHAT` | skip existing | What to rebuild: `all`, `uncleaned`, `stale`, or comma-separated doc_ids |
-| `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`full_split` |
-| `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM â†’ ayat resplit â†’ full_split resplit â†’ verify |
+| `--from-pasal` | off | Re-split from existing pasal index (no PDF parsing, no LLM). Only for `ayat`/`rincian` |
+| `--full-pipeline` | off | Run complete pipeline: pasal parse+LLM â†’ ayat resplit â†’ rincian resplit â†’ verify |
 | `--no-llm` | â€” | *(legacy)* Alias for `--parse-only` |
 | `--force` | â€” | *(legacy)* Alias for `--rebuild all` |
 
@@ -91,7 +91,7 @@ python -m vectorless.indexing.build --granularity pasal --doc-id uu-20-2025 --pa
 # Run per category
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild stale
-python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity rincian --category PMK --from-pasal --rebuild stale
 python -m vectorless.indexing.status --category PMK --refresh-verify
 
 # Re-index specific docs after a parser fix
@@ -103,9 +103,9 @@ python -m vectorless.indexing.build --granularity pasal --rebuild all
 # Re-index only stale docs after a parser-version bump
 python -m vectorless.indexing.build --granularity pasal --rebuild stale
 
-# Fast: re-split ayat/full_split from existing pasal index (~0.2s, no LLM)
+# Fast: re-split ayat/rincian from existing pasal index (~0.2s, no LLM)
 python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild stale
-python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity rincian --from-pasal --rebuild stale
 
 # Inspect central indexing status
 python -m vectorless.indexing.status
@@ -130,7 +130,7 @@ python -m vectorless.indexing.build --granularity pasal --rebuild stale
 
 # 4) Then refresh derived granularities from pasal only
 python -m vectorless.indexing.build --granularity ayat --from-pasal --rebuild stale
-python -m vectorless.indexing.build --granularity full_split --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity rincian --from-pasal --rebuild stale
 ```
 
 LLM cleanup now defaults to conservative settings for reliability:
@@ -203,8 +203,8 @@ python -m vectorless.retrieval.bm25.flat "query"
 # Ayat-level index
 DATA_INDEX=data/index_ayat python -m vectorless.retrieval.bm25.flat "query"
 
-# Full-split index
-DATA_INDEX=data/index_full_split python -m vectorless.retrieval.hybrid.search "query"
+# Rincian index
+DATA_INDEX=data/index_rincian python -m vectorless.retrieval.hybrid.search "query"
 ```
 
 For Python API usage, set the env var **before** importing:
@@ -333,7 +333,7 @@ for name, fn in strategies.items():
 
 ## 6. Ground Truth Workflow
 
-Ground truth annotation uses **full_split-index leaves as the semantic anchor**
+Ground truth annotation uses **rincian-index leaves as the semantic anchor**
 (the finest available granularity: huruf, angka, or ayat/pasal if no finer split
 exists). Gold sets for coarser granularities (ayat, pasal) are derived by
 **rolling UP** to parent nodes via prefix lookup.
@@ -358,7 +358,7 @@ By default, `gt_prompt.py` now writes either:
 Long GT prompts are no longer built by truncating node text.
 
 ```bash
-# List available documents from data/index_full_split
+# List available documents from data/index_rincian
 python scripts/gt_prompt.py --list
 
 # Generate prompt for ChatGPT/Claude
@@ -375,7 +375,7 @@ python scripts/gt_collect.py --check-only
 # Merge validated items
 python scripts/gt_collect.py
 
-# Build multi-granularity evaluation testset (roll-up: full_split -> ayat -> pasal)
+# Build multi-granularity evaluation testset (roll-up: rincian -> ayat -> pasal)
 python scripts/finalize_gt.py
 
 # Inspect the final pickle
@@ -384,13 +384,13 @@ python scripts/load_testset.py --stats
 # Evaluate current vectorless systems on the validated GT
 python scripts/evaluate_vectorless.py
 python scripts/evaluate_vectorless.py --doc-id permenaker-1-2026 --query-limit 5 --verbose
-python scripts/evaluate_vectorless.py --systems bm25-flat,hybrid --granularities ayat
+python scripts/evaluate_vectorless.py --systems bm25,hybrid --granularities ayat
 ```
 
 Semantics of `validated_testset.pkl` (roll-up design):
 
 - `reference_mode` - one of `none`, `legal_ref`, `doc_only`, `both`
-- `gold_full_split_node_ids` - exact anchor (1 node, finest granularity)
+- `gold_rincian_node_ids` - exact anchor (1 node, finest granularity)
 - `gold_ayat_node_ids` - derived parent in ayat index (1 node)
 - `gold_pasal_node_ids` - derived parent in pasal index (1 node)
 
@@ -414,7 +414,7 @@ Optional env vars:
 
 | Variable | Default | What it does |
 |----------|---------|--------------|
-| `DATA_INDEX` | `data/index_pasal` | Which granularity index retrieval modules read from. Set to `data/index_ayat` or `data/index_full_split` to switch. |
+| `DATA_INDEX` | `data/index_pasal` | Which granularity index retrieval modules read from. Set to `data/index_ayat` or `data/index_rincian` to switch. |
 
 Evaluation artifacts are written to `data/eval_runs/<timestamp>_<label>/` and include:
 

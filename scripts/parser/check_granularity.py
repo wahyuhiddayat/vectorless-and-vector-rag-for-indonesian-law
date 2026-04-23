@@ -1,6 +1,6 @@
 """Granularity validation via deterministic sequence detection.
 
-For each leaf in ayat and full_split indexes, use the same fuzzy-marker
+For each leaf in ayat and rincian indexes, use the same fuzzy-marker
 sequence detector that the re-split pipeline uses. If the detector finds
 a valid consecutive sequence (e.g. ayat (1)(2)(3) or huruf a.b.c.) in a
 leaf's text, that leaf should have split but didn't — re-split bug or
@@ -30,16 +30,16 @@ REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 INDEX_DIR = {
     "pasal": REPO_ROOT / "data" / "index_pasal",
     "ayat": REPO_ROOT / "data" / "index_ayat",
-    "full_split": REPO_ROOT / "data" / "index_full_split",
+    "rincian": REPO_ROOT / "data" / "index_rincian",
 }
 REPORT_PATH = REPO_ROOT / "data" / "granularity_report.json"
 
 # Which sub-marker kinds each granularity should NOT leave unsplit:
 #   ayat: no inline (N) markers should remain
-#   full_split: no ayat/huruf/angka markers should remain anywhere
+#   rincian: no ayat/huruf/angka markers should remain anywhere
 SUSPECT_KINDS = {
     "ayat": [("ayat", "1")],
-    "full_split": [("ayat", "1"), ("huruf", "a"), ("angka", "1")],
+    "rincian": [("ayat", "1"), ("huruf", "a"), ("angka", "1")],
 }
 
 
@@ -82,7 +82,7 @@ def check_doc(doc_id: str) -> dict:
     report: dict = {"doc_id": doc_id}
     total_suspects = 0
 
-    for gran in ("pasal", "ayat", "full_split"):
+    for gran in ("pasal", "ayat", "rincian"):
         path = _find_doc_path(doc_id, gran)
         if not path:
             report[gran] = {"error": "index not found"}
@@ -103,14 +103,14 @@ def check_doc(doc_id: str) -> dict:
             total_suspects += len(suspects)
         report[gran] = entry
 
-    # Lossless sanity: pasal ≤ ayat ≤ full_split in leaf count; total chars
+    # Lossless sanity: pasal ≤ ayat ≤ rincian in leaf count; total chars
     # roughly comparable (re-split preserves text up to OCR-header stripping).
-    counts = {g: report.get(g, {}).get("leaf_count") for g in ("pasal", "ayat", "full_split")}
+    counts = {g: report.get(g, {}).get("leaf_count") for g in ("pasal", "ayat", "rincian")}
     invariants_ok = (
         counts["pasal"] is not None
         and counts["ayat"] is not None
-        and counts["full_split"] is not None
-        and counts["pasal"] <= counts["ayat"] <= counts["full_split"]
+        and counts["rincian"] is not None
+        and counts["pasal"] <= counts["ayat"] <= counts["rincian"]
     )
     report["invariants_ok"] = invariants_ok
     report["suspect_count"] = total_suspects
@@ -156,11 +156,11 @@ def main() -> None:
         reports.append(r)
         counts = " / ".join(
             str(r.get(g, {}).get("leaf_count", "?"))
-            for g in ("pasal", "ayat", "full_split")
+            for g in ("pasal", "ayat", "rincian")
         )
         print(f"  {r['verdict']:8s} {did:15s} leaves={counts:12s} suspects={r['suspect_count']}")
         if args.verbose and r["suspect_count"]:
-            for gran in ("ayat", "full_split"):
+            for gran in ("ayat", "rincian"):
                 for s in (r.get(gran) or {}).get("suspects", []):
                     labels = ",".join(str(x) for x in s["labels"])
                     print(f"    [{gran}] {s['title']}: {s['kind']}=[{labels}]")

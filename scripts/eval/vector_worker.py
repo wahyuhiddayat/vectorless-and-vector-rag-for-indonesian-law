@@ -57,7 +57,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--granularity", required=True,
-        choices=["pasal", "ayat", "full_split"],
+        choices=["pasal", "ayat", "rincian"],
     )
     ap.add_argument(
         "--embedding-model", required=True,

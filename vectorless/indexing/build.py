@@ -3,7 +3,7 @@
 For each target doc:
   1. LLM-parse → data/index_pasal/<CAT>/<doc_id>.json
   2. Re-split ayat → data/index_ayat/<CAT>/<doc_id>.json
-  3. Re-split full_split → data/index_full_split/<CAT>/<doc_id>.json
+  3. Re-split rincian → data/index_rincian/<CAT>/<doc_id>.json
 
 Usage:
     python -m vectorless.indexing.build --category UU
@@ -41,7 +41,7 @@ INDEXING_LOGS_DIR = Path("data/indexing_logs")
 GRANULARITY_INDEX_MAP = {
     "pasal": Path("data/index_pasal"),
     "ayat": Path("data/index_ayat"),
-    "full_split": Path("data/index_full_split"),
+    "rincian": Path("data/index_rincian"),
 }
 
 CATALOG_FIELDS = (
@@ -63,7 +63,7 @@ def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None) 
 
 
 def resplit_one(pasal_doc: dict, granularity: str) -> dict:
-    """Derive ayat or full_split doc from a pasal-granularity doc."""
+    """Derive ayat or rincian doc from a pasal-granularity doc."""
     split_fn = ayat_split_leaves if granularity == "ayat" else deep_split_leaves
     doc = copy.deepcopy(pasal_doc)
     doc["structure"] = split_fn(doc["structure"])
@@ -128,12 +128,12 @@ def _update_cost_log(granularity: str, doc_id: str, entry: dict) -> None:
 
 
 def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[str, int]:
-    """Re-split pasal doc to ayat + full_split. Returns leaf counts per granularity."""
+    """Re-split pasal doc to ayat + rincian. Returns leaf counts per granularity."""
     with open(pasal_path, encoding="utf-8") as f:
         pasal_doc = json.load(f)
 
     counts: dict[str, int] = {}
-    for gran in ("ayat", "full_split"):
+    for gran in ("ayat", "rincian"):
         out_path = GRANULARITY_INDEX_MAP[gran] / jenis_folder / f"{doc_id}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         resplit_doc = resplit_one(pasal_doc, gran)
@@ -144,7 +144,7 @@ def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[s
 
 
 def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
-    """Index one doc end-to-end: LLM-parse + re-split ayat + re-split full_split.
+    """Index one doc end-to-end: LLM-parse + re-split ayat + re-split rincian.
 
     Returns a dict with status, pasal_count, and leaf counts per derived granularity.
     """
@@ -169,7 +169,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
         resplit_elapsed = round(time.time() - t_resplit, 3)
         summary.update({"status": "resplit_ok", "derived_counts": derived, "elapsed_s": round(time.time() - t0, 2)})
-        for gran in ("ayat", "full_split"):
+        for gran in ("ayat", "rincian"):
             _update_cost_log(gran, doc_id, {
                 "category": jenis_folder.upper(),
                 "updated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -213,7 +213,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         "pdf_chars": audit.get("pdf_chars"),
         "body_pages": audit.get("body_pages"),
     })
-    for gran in ("ayat", "full_split"):
+    for gran in ("ayat", "rincian"):
         _update_cost_log(gran, doc_id, {
             "category": jenis_folder.upper(),
             "updated_at": now_iso,
@@ -243,7 +243,7 @@ def main() -> None:
     ap.add_argument("--category",
                     help="Index every doc in this jenis_folder (e.g. UU, OJK)")
     ap.add_argument("--resplit-only", action="store_true",
-                    help="Skip LLM-parse; only re-derive ayat + full_split from existing pasal index")
+                    help="Skip LLM-parse; only re-derive ayat + rincian from existing pasal index")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview LLM-parse only; do not overwrite any index file")
     args = ap.parse_args()
@@ -270,7 +270,7 @@ def main() -> None:
             msg += f"  pasals={result['pasal_count']}"
         if "derived_counts" in result:
             dc = result["derived_counts"]
-            msg += f"  ayat={dc.get('ayat')} full_split={dc.get('full_split')}"
+            msg += f"  ayat={dc.get('ayat')} rincian={dc.get('rincian')}"
         if result.get("validation_errors"):
             msg += f"  val_errs={len(result['validation_errors'])}"
         if result.get("error"):

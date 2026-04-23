@@ -15,7 +15,7 @@ File format: pickle dict with structure:
       "gold_doc_id": str,
       "gold_pasal_node_ids": set[str],
       "gold_ayat_node_ids": set[str],
-      "gold_full_split_node_ids": set[str],
+      "gold_rincian_node_ids": set[str],
       "navigation_path": str,
       "answer_hint": str (optional)
     },
@@ -124,7 +124,7 @@ def show_preview(data: dict, num_items: int = 3):
             print(f"  Answer hint  : {item['answer_hint'][:80]}")
         print(f"  Gold sets    : pasal={len(item.get('gold_pasal_node_ids', set()))}, "
               f"ayat={len(item.get('gold_ayat_node_ids', set()))}, "
-              f"full_split={len(item.get('gold_full_split_node_ids', set()))}")
+              f"rincian={len(item.get('gold_rincian_node_ids', set()))}")
         print()
 
 
@@ -146,7 +146,7 @@ def show_full(data: dict):
             print(f"  Answer hint  : {item['answer_hint']}")
         print(f"  Gold pasal   : {sorted(item.get('gold_pasal_node_ids', set()))}")
         print(f"  Gold ayat    : {sorted(item.get('gold_ayat_node_ids', set()))}")
-        print(f"  Gold full    : {sorted(item.get('gold_full_split_node_ids', set()))}")
+        print(f"  Gold full    : {sorted(item.get('gold_rincian_node_ids', set()))}")
         print()
 
 

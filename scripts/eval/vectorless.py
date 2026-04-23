@@ -2,7 +2,7 @@
 Vectorless evaluation harness.
 
 Evaluates current vectorless retrieval systems against data/validated_testset.pkl
-across pasal / ayat / full_split and writes reproducible run artifacts.
+across pasal / ayat / rincian and writes reproducible run artifacts.
 
 Usage:
     python scripts/eval/vectorless.py
@@ -31,12 +31,12 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
-SYSTEMS = ["bm25-flat", "hybrid", "hybrid-flat", "llm-stepwise", "llm-full"]
-GRANULARITIES = ["pasal", "ayat", "full_split"]
+SYSTEMS = ["bm25", "hybrid", "hybrid-flat", "llm", "llm-full"]
+GRANULARITIES = ["pasal", "ayat", "rincian"]
 DEFAULT_CUTOFFS = [1, 3, 5, 10]
 # Seconds to sleep between queries for systems that make Gemini calls during retrieval
 LLM_INTER_QUERY_DELAY_S = 3
-LLM_SYSTEMS = {"hybrid", "hybrid-flat", "llm-stepwise", "llm-full"}
+LLM_SYSTEMS = {"hybrid", "hybrid-flat", "llm", "llm-full"}
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
     "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
@@ -48,7 +48,7 @@ STOPWORDS = {
 GOLD_KEY_BY_GRANULARITY = {
     "pasal": "gold_pasal_node_ids",
     "ayat": "gold_ayat_node_ids",
-    "full_split": "gold_full_split_node_ids",
+    "rincian": "gold_rincian_node_ids",
 }
 SLICE_FIELDS = ["reference_mode", "query_style", "difficulty", "gold_doc_id"]
 PROCESS_TIMEOUT_S = 900
@@ -196,11 +196,16 @@ def load_testset(path: Path) -> dict[str, dict]:
         return pickle.load(f)
 
 
-def select_queries(testset: dict[str, dict], doc_id: str | None, query_limit: int | None) -> list[tuple[str, dict]]:
+def select_queries(testset: dict[str, dict], doc_id: str | None, query_limit: int | None, random_seed: int | None = None) -> list[tuple[str, dict]]:
     items = sorted(testset.items(), key=lambda kv: kv[0])
     if doc_id:
         items = [(qid, item) for qid, item in items if item.get("gold_doc_id") == doc_id]
-    if query_limit is not None:
+    if random_seed is not None and query_limit is not None:
+        import random
+        rng = random.Random(random_seed)
+        items = rng.sample(items, min(query_limit, len(items)))
+        items.sort(key=lambda kv: kv[0])
+    elif query_limit is not None:
         items = items[:query_limit]
     return items
 
@@ -468,6 +473,7 @@ def main() -> int:
     ap.add_argument("--granularities", default=",".join(GRANULARITIES), help="Comma-separated granularities")
     ap.add_argument("--top-k", type=int, default=10, help="Maximum cutoff K for retrieval metrics")
     ap.add_argument("--query-limit", type=int, default=None, help="Only evaluate the first N queries after filtering")
+    ap.add_argument("--random-seed", type=int, default=None, help="With --query-limit, random-sample N queries using this seed (deterministic)")
     ap.add_argument("--doc-id", type=str, default=None, help="Restrict evaluation to one gold_doc_id")
     ap.add_argument("--label", type=str, default=None, help="Optional label appended to the run directory name")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR), help="Base directory for eval runs")
@@ -500,7 +506,7 @@ def main() -> int:
     cutoffs = sorted(set(cutoffs))
 
     testset = load_testset(TESTSET_FILE)
-    selected_queries = select_queries(testset, args.doc_id, args.query_limit)
+    selected_queries = select_queries(testset, args.doc_id, args.query_limit, args.random_seed)
     if not selected_queries:
         raise SystemExit("No queries matched the requested filters.")
 

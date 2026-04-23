@@ -5,7 +5,7 @@ Generates one or more copy-paste prompts for an annotator LLM to create
 self-contained, leaf-anchored ground truth question-answer pairs for
 Indonesian legal retrieval evaluation.
 
-Anchors at the finest granularity (full_split index) so that evaluation
+Anchors at the finest granularity (rincian index) so that evaluation
 at coarser levels (ayat, pasal) can be derived by rolling UP to parents.
 
 Long documents are split into multiple prompt files automatically so the
@@ -30,7 +30,7 @@ from pathlib import Path
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-DATA_INDEX = Path("data/index_full_split")
+DATA_INDEX = Path("data/index_rincian")
 TMP_DIR = Path("tmp")
 DEFAULT_PROMPT_CHAR_BUDGET = 45000
 PROMPT_BUDGET_GROWTH = 1.25
@@ -219,7 +219,7 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan:
     "query_style": "formal|colloquial",
     "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
-    "gold_anchor_granularity": "full_split",
+    "gold_anchor_granularity": "rincian",
     "gold_anchor_node_id": "node_id leaf PALING SPESIFIK yang menjawab",
     "gold_node_id": "sama dengan gold_anchor_node_id",
     "gold_doc_id": "{doc_id}",
@@ -320,7 +320,7 @@ def filter_preamble(leaves: list[dict]) -> list[dict]:
 
 def compute_adaptive_n(leaf_count: int) -> int:
     """
-    Compute the adaptive question count based on number of full_split-index leaf nodes.
+    Compute the adaptive question count based on number of rincian-index leaf nodes.
 
     Returns 0 only if leaf_count == 0 (pure preamble / no body content) — skip signal.
 
@@ -602,7 +602,7 @@ def main() -> None:
 
     print(f"\nDokumen    : {doc['judul'][:80]}")
     print(f"doc_id     : {doc['doc_id']}")
-    print(f"Leaf nodes : {len(leaf_nodes)} full_split-index leaf nodes")
+    print(f"Leaf nodes : {len(leaf_nodes)} rincian-index leaf nodes")
     print(f"Target N   : {n_used} pertanyaan (adaptive: {adaptive_n})", end="")
     if args.questions is not None:
         print(f"  [override: --questions {args.questions}]", end="")

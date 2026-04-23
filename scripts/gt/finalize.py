@@ -4,15 +4,15 @@ Ground Truth Finalizer.
 Converts data/ground_truth.json (leaf-anchored annotations produced by
 gt_collect.py) into data/validated_testset.pkl, which stores reference_mode
 plus gold node ID sets for all three index granularities: pasal, ayat, and
-full_split.
+rincian.
 
 DESIGN: Anchor at finest granularity, roll UP.
 
-Each GT question anchors at the most specific leaf in the full_split index
+Each GT question anchors at the most specific leaf in the rincian index
 (e.g., a specific huruf or angka). Gold sets for coarser granularities are
 derived by finding the parent node via prefix lookup:
 
-  full_split: gold = {anchor}                          (exact, 1 node)
+  rincian: gold = {anchor}                          (exact, 1 node)
   ayat:       gold = {derive_parent(anchor, ayat)}     (parent, 1 node)
   pasal:      gold = {derive_parent(anchor, pasal)}    (parent, 1 node)
 
@@ -24,8 +24,8 @@ EVALUATION USAGE (in your retrieval eval script):
       hit = retrieved_node_id in item["gold_pasal_node_ids"]
   elif granularity == "ayat":
       hit = retrieved_node_id in item["gold_ayat_node_ids"]
-  elif granularity == "full_split":
-      hit = retrieved_node_id in item["gold_full_split_node_ids"]
+  elif granularity == "rincian":
+      hit = retrieved_node_id in item["gold_rincian_node_ids"]
 
 Usage:
     python scripts/gt/finalize.py
@@ -47,7 +47,7 @@ GT_FILE = Path("data/ground_truth.json")
 TESTSET_FILE = Path("data/validated_testset.pkl")
 INDEX_PASAL = Path("data/index_pasal")
 INDEX_AYAT = Path("data/index_ayat")
-INDEX_FULL_SPLIT = Path("data/index_full_split")
+INDEX_FULL_SPLIT = Path("data/index_rincian")
 VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
 LEGAL_REFERENCE_RE = re.compile(r"\b(pasal|ayat|huruf|angka)\b", re.IGNORECASE)
 DOC_REFERENCE_RE = re.compile(
@@ -117,7 +117,7 @@ def get_anchor_node_id(item: dict) -> str:
 
 def get_anchor_granularity(item: dict) -> str:
     """Return the anchor granularity from a merged GT item."""
-    return item.get("gold_anchor_granularity", "full_split")
+    return item.get("gold_anchor_granularity", "rincian")
 
 
 def infer_reference_mode(query: str) -> str:
@@ -142,8 +142,8 @@ def derive_parent_node_id(anchor: str, doc_id: str, target_index: Path) -> str:
     one matches a leaf in the target index.
 
     Also handles the "_p" intermediate Pasal nodes introduced by Fix L2
-    (deep_split_leaves). These nodes appear in full_split but not in ayat/pasal
-    indexes, e.g. "0027_p_a2" in full_split maps to "0027_a2" in ayat.
+    (deep_split_leaves). These nodes appear in rincian but not in ayat/pasal
+    indexes, e.g. "0027_p_a2" in rincian maps to "0027_a2" in ayat.
 
     Examples (target_index=INDEX_AYAT):
       "0004_a2_h3" -> try "0004_a2_h3" (miss) -> "0004_a2" (hit)
@@ -190,7 +190,7 @@ def finalize(check_only: bool = False) -> dict:
         sys.exit(1)
 
     print(f"\nLoaded {len(gt)} items from {GT_FILE}")
-    print("Deriving gold sets: full_split (exact) -> ayat (parent) -> pasal (parent) ...")
+    print("Deriving gold sets: rincian (exact) -> ayat (parent) -> pasal (parent) ...")
 
     testset: dict[str, dict] = {}
     errors: list[str] = []
@@ -201,9 +201,9 @@ def finalize(check_only: bool = False) -> dict:
         anchor_node_id = get_anchor_node_id(item)
         reference_mode = item.get("reference_mode") or infer_reference_mode(item.get("query", ""))
 
-        if anchor_granularity != "full_split":
+        if anchor_granularity != "rincian":
             errors.append(
-                f"{qid}: gold_anchor_granularity must be 'full_split', got '{anchor_granularity}'"
+                f"{qid}: gold_anchor_granularity must be 'rincian', got '{anchor_granularity}'"
             )
             continue
 
@@ -222,7 +222,7 @@ def finalize(check_only: bool = False) -> dict:
         if anchor_node_id not in full_leaf_ids:
             errors.append(
                 f"{qid}: anchor node '{anchor_node_id}' is not a leaf in {INDEX_FULL_SPLIT}; "
-                "the GT may use old ayat-anchored annotations — regenerate from full_split index"
+                "the GT may use old ayat-anchored annotations — regenerate from rincian index"
             )
             continue
 
@@ -249,13 +249,13 @@ def finalize(check_only: bool = False) -> dict:
             "difficulty": item.get("difficulty", ""),
             "reference_mode": reference_mode,
             "gold_doc_id": doc_id,
-            "gold_anchor_granularity": "full_split",
+            "gold_anchor_granularity": "rincian",
             "gold_anchor_node_id": anchor_node_id,
             # Backward-compatible singular field used by load_testset.py
             "gold_node_id": anchor_node_id,
             "gold_pasal_node_ids": gold_pasal,
             "gold_ayat_node_ids": gold_ayat,
-            "gold_full_split_node_ids": gold_full,
+            "gold_rincian_node_ids": gold_full,
             "navigation_path": item.get("navigation_path", ""),
             "answer_hint": item.get("answer_hint", ""),
         }
@@ -270,7 +270,7 @@ def finalize(check_only: bool = False) -> dict:
     n = len(testset)
 
     print("\nGold set sizes (per query):")
-    print("  full_split : 1 node  (exact anchor — finest granularity)")
+    print("  rincian : 1 node  (exact anchor — finest granularity)")
     print("  ayat       : 1 node  (derived parent in ayat index)")
     print("  pasal      : 1 node  (derived parent in pasal index)")
 
@@ -352,7 +352,7 @@ def print_stats() -> None:
             print(f"    {diff:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
     print("\n  Gold set sizes (per query):")
-    print("    full_split : 1.0  (exact anchor — finest granularity)")
+    print("    rincian : 1.0  (exact anchor — finest granularity)")
     print("    ayat       : 1.0  (derived parent in ayat index)")
     print("    pasal      : 1.0  (derived parent in pasal index)")
 

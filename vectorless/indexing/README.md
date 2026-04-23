@@ -12,9 +12,9 @@ cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vec
 
 - `pasal`: main parsed index and LLM-cleanup base
 - `ayat`: derived from `pasal`
-- `full_split`: finest derived index from `pasal`
+- `rincian`: finest derived index from `pasal`
 
-Only `pasal` talks to the parser and Gemini cleanup. `ayat` and `full_split` should normally be regenerated from `pasal`.
+Only `pasal` talks to the parser and Gemini cleanup. `ayat` and `rincian` should normally be regenerated from `pasal`.
 
 ## Status first
 
@@ -31,7 +31,7 @@ Important fields:
 - `LLM cleaned current`: pasal files already cleaned with the current cleanup version
 - `Uncleaned / cleanup-stale`: docs that still need `--llm-only --rebuild uncleaned`
 - `Stale parse`: docs that need pasal rebuild after a parser-version bump
-- `Stale derived`: docs whose `ayat` or `full_split` are not synced to the latest pasal
+- `Stale derived`: docs whose `ayat` or `rincian` are not synced to the latest pasal
 - `GT candidates`: docs structurally safe enough for ground-truth work
 - `Clean retrieval candidates`: docs fully synced and cleaned for retrieval experiments
 
@@ -45,7 +45,7 @@ Use this when the PDFs are new and have not been indexed yet.
 python -m vectorless.indexing.build --granularity pasal --category PMK --parse-only
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild all
-python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity rincian --category PMK --from-pasal --rebuild all
 python -m vectorless.indexing.status --category PMK --refresh-verify
 ```
 
@@ -56,7 +56,7 @@ Use this when pasal files already exist but cleanup failed halfway.
 ```powershell
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild all
-python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity rincian --category PMK --from-pasal --rebuild all
 python -m vectorless.indexing.status --category PMK --refresh-verify
 ```
 
@@ -68,7 +68,7 @@ Use this when `PARSER_VERSION` is bumped or a parser bug was fixed.
 python -m vectorless.indexing.build --granularity pasal --category PMK --rebuild stale
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild stale
-python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild stale
+python -m vectorless.indexing.build --granularity rincian --category PMK --from-pasal --rebuild stale
 python -m vectorless.indexing.status --category PMK --refresh-verify
 ```
 
@@ -80,7 +80,7 @@ Use this for `WARN` docs or a single parser experiment.
 python -m vectorless.indexing.build --granularity pasal --doc-id pmk-6-2026 --rebuild all
 python -m vectorless.indexing.build --granularity pasal --doc-id pmk-6-2026 --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --doc-id pmk-6-2026 --from-pasal --rebuild all
-python -m vectorless.indexing.build --granularity full_split --doc-id pmk-6-2026 --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity rincian --doc-id pmk-6-2026 --from-pasal --rebuild all
 python -m vectorless.indexing.status --doc-id pmk-6-2026 --refresh-verify
 ```
 
@@ -92,7 +92,7 @@ Replace `PMK` with `PERMENAKER`, `PERMENDAG`, `PERMENKES`, `UU`, `PERPU`, `PP`, 
 python -m vectorless.indexing.status --category PMK --refresh-verify
 python -m vectorless.indexing.build --granularity pasal --category PMK --llm-only --rebuild uncleaned
 python -m vectorless.indexing.build --granularity ayat --category PMK --from-pasal --rebuild all
-python -m vectorless.indexing.build --granularity full_split --category PMK --from-pasal --rebuild all
+python -m vectorless.indexing.build --granularity rincian --category PMK --from-pasal --rebuild all
 python -m vectorless.indexing.status --category PMK --refresh-verify
 ```
 

@@ -76,7 +76,7 @@ these categories:
 
 2. STRUCTURAL — narrow scope. A separate deterministic Python check
    (scripts/parser/check_granularity.py) handles "unsplit" detection
-   at the ayat/full_split levels using the exact splitter regex.
+   at the ayat/rincian levels using the exact splitter regex.
    **Do NOT report "unsplit" issues here** — those are caught upstream.
 
    The parser's design is INTENTIONAL: Pasal bodies stay FLAT as one

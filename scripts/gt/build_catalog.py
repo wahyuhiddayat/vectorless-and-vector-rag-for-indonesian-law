@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GRANULARITY_DIRS = [
     REPO_ROOT / "data" / "index_pasal",
     REPO_ROOT / "data" / "index_ayat",
-    REPO_ROOT / "data" / "index_full_split",
+    REPO_ROOT / "data" / "index_rincian",
 ]
 
 DEFAULT_GT_PATH = REPO_ROOT / "data" / "ground_truth.json"

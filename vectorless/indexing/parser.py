@@ -7,7 +7,7 @@ Four sections:
   3. LEAF-TEXT UTILITIES — OCR residual cleanup, heading dedup, spillover
      trim. Applied after re-split to keep leaf text tidy.
   4. SUB-PASAL LEAF SPLITTING — deterministic pasal → ayat → huruf → angka
-     splitter (no LLM). Called from build.py to derive ayat and full_split
+     splitter (no LLM). Called from build.py to derive ayat and rincian
      granularities from the LLM-produced pasal tree.
 
 Structure is produced by scripts/parser/llm_parse.py (LLM-first). This
@@ -806,7 +806,7 @@ def strip_ocr_headers(nodes: list[dict]):
 # ============================================================
 # 4. SUB-PASAL LEAF SPLITTING (pasal → ayat → huruf → angka)
 # ------------------------------------------------------------
-# Called by build.py --from-pasal to derive ayat + full_split
+# Called by build.py --from-pasal to derive ayat + rincian
 # granularities from pasal-level bodies (source of truth is LLM
 # output, whether regex-produced or llm_parse-produced).
 # OCR-tolerant via _find_fuzzy_markers. DO NOT simplify without
@@ -815,7 +815,7 @@ def strip_ocr_headers(nodes: list[dict]):
 # ============================================================
 # Splits Pasal leaf nodes into finer sub-nodes based on the requested granularity.
 # The split hierarchy is: Pasal, then Ayat (1)/(2)/..., then Huruf a./b./..., then Angka 1./2./...
-# The "ayat" granularity splits to Ayat only; "full_split" recurses to the deepest level present.
+# The "ayat" granularity splits to Ayat only; "rincian" recurses to the deepest level present.
 
 # Patterns for detecting sub-Pasal structure and penjelasan section headings.
 # Huruf: 1-2 letters (handles a..z and doubled aa..zz for lists longer than

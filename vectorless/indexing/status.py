@@ -10,7 +10,7 @@ STATUS_PATH = Path("data/index_status.json")
 GRANULARITY_INDEX_MAP = {
     "pasal": Path("data/index_pasal"),
     "ayat": Path("data/index_ayat"),
-    "full_split": Path("data/index_full_split"),
+    "rincian": Path("data/index_rincian"),
 }
 
 SCHEMA_VERSION = 1
@@ -96,7 +96,7 @@ def ensure_doc_entry(manifest: dict, doc_id: str, registry_entry: dict | None = 
         "jenis_folder": None,
         "pasal_exists": False,
         "ayat_exists": False,
-        "full_split_exists": False,
+        "rincian_exists": False,
         "llm_cleaned": False,
         "parser_version": None,
         "llm_cleanup_version": None,
@@ -124,7 +124,13 @@ def ensure_doc_entry(manifest: dict, doc_id: str, registry_entry: dict | None = 
 
 
 def _index_path(granularity: str, doc_id: str) -> Path:
-    category = doc_id.split("-")[0].upper()
+    low = doc_id.lower()
+    if low.startswith("peraturan-bssn-"):
+        category = "PERATURAN_BSSN"
+    elif low.startswith("peraturan-ojk-"):
+        category = "PERATURAN_OJK"
+    else:
+        category = doc_id.split("-")[0].upper()
     return GRANULARITY_INDEX_MAP[granularity] / category / f"{doc_id}.json"
 
 
@@ -199,7 +205,7 @@ def sync_doc_from_indexes(
     entry["stale_parse"] = entry["parser_version"] != current_parser_version
 
     stale_derived = False
-    for granularity in ("ayat", "full_split"):
+    for granularity in ("ayat", "rincian"):
         derived_doc = docs_by_granularity[granularity]
         if derived_doc is None:
             stale_derived = True
@@ -283,7 +289,7 @@ def _summarize_status(manifest: dict, doc_ids: list[str] | None = None) -> tuple
         "total_docs": len(selected),
         "pasal_exists": sum(1 for d in selected if d.get("pasal_exists")),
         "ayat_exists": sum(1 for d in selected if d.get("ayat_exists")),
-        "full_split_exists": sum(1 for d in selected if d.get("full_split_exists")),
+        "rincian_exists": sum(1 for d in selected if d.get("rincian_exists")),
         "llm_cleaned": sum(
             1 for d in selected
             if d.get("pasal_exists") and not is_cleanup_stale(d, manifest.get("current_llm_cleanup_version"))
@@ -379,7 +385,7 @@ def main():
     if args.category:
         print(f"Category filter: {args.category}")
     print(f"Total docs: {summary['total_docs']}")
-    print(f"Pasal: {summary['pasal_exists']}  |  Ayat: {summary['ayat_exists']}  |  Full split: {summary['full_split_exists']}")
+    print(f"Pasal: {summary['pasal_exists']}  |  Ayat: {summary['ayat_exists']}  |  Full split: {summary['rincian_exists']}")
     print(f"LLM cleaned current: {summary['llm_cleaned']}")
     print(f"Uncleaned / cleanup-stale: {summary['uncleaned_or_cleanup_stale']}")
     print(f"Stale parse: {summary['stale_parse']}  |  Stale derived: {summary['stale_derived']}")
