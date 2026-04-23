@@ -823,7 +823,7 @@ def strip_ocr_headers(nodes: list[dict]):
 # OCR sometimes capitalizes isolated letters (e.g. "l." → "L "). Sequence
 # validation downstream rejects misfires.
 _HURUF_RE = re.compile(
-    r'(?:^|\n)[ \t]*([A-Za-z]{1,2})\.?(?=[ \t]+\S)',
+    r'(?:^|\n)[ \t]*([A-Za-z]{1,2})\.?(?=\s+\S)',
     re.MULTILINE,
 )
 # Sub-huruf: "a) b) c)" style, used inside angka bodies as a deeper level.
@@ -910,7 +910,7 @@ _STRICT_AYAT_RE = re.compile(r'(?:^|\n)[ \t]*\((\d+)\)(?=\s|$)', re.MULTILINE)
 # Sequence validation downstream rejects random digit lines that do not
 # form a consecutive run starting at 1.
 _STRICT_ANGKA_ITEM_RE = re.compile(
-    r'(?:^|\n)[ \t]*(\d+)[.)]?(?=[ \t]+\S)',
+    r'(?:^|\n)[ \t]*(\d+)[.)]?(?=\s+\S)',
     re.MULTILINE,
 )
 
