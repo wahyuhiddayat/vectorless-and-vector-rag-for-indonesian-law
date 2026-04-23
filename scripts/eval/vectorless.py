@@ -539,16 +539,19 @@ def main() -> int:
     per_query_records: list[dict] = []
     error_records: list[dict] = []
 
-    total_runs = len(systems) * len(granularities) * len(selected_queries)
-    run_index = 0
+    n_q = len(selected_queries)
+    total_combos = len(systems) * len(granularities)
+    combo_idx = 0
 
     for system in systems:
         for granularity in granularities:
-            for qid, item in selected_queries:
-                run_index += 1
-                if args.verbose:
-                    print(f"[{run_index}/{total_runs}] {system} | {granularity} | {qid}")
+            combo_idx += 1
+            hits10: list[float] = []
+            print(f"\n[{combo_idx}/{total_combos}] system={system}  granularity={granularity}  n={n_q}")
+            print(f"  {'qid':<8}  {'result':<4}  {'hit@1':>5}  {'hit@10':>6}  {'R@10':>5}  {'time':>6}  note")
 
+            for q_idx, (qid, item) in enumerate(selected_queries, 1):
+                t0 = time.time()
                 payload, worker_stdout, worker_stderr = run_worker(
                     system,
                     granularity,
@@ -556,6 +559,7 @@ def main() -> int:
                     args.top_k,
                     args.worker_timeout_s,
                 )
+                elapsed = time.time() - t0
                 normalized = normalize_worker_payload(payload)
                 record = build_per_query_record(
                     qid=qid,
@@ -568,6 +572,29 @@ def main() -> int:
                     worker_stderr=worker_stderr,
                 )
                 per_query_records.append(record)
+
+                hit1 = record.get("hit@1", 0.0)
+                hit10 = record.get("hit@10", 0.0)
+                hits10.append(hit10)
+                running_r10 = sum(hits10) / len(hits10)
+
+                if record.get("error"):
+                    result_label = "ERR"
+                    note = record["error"][:60]
+                elif hit1:
+                    result_label = "HIT"
+                    note = ""
+                elif hit10:
+                    result_label = "TOP"
+                    note = f"rank {record.get('first_relevant_rank', '?')}"
+                else:
+                    result_label = "MISS"
+                    note = f"got {record.get('retrieved_node_ids', [])[:2]}"
+
+                print(
+                    f"  {qid:<8}  {result_label:<4}  {hit1:>5.0f}  {hit10:>6.0f}"
+                    f"  {running_r10:>5.2f}  {elapsed:>5.1f}s  {note}"
+                )
 
                 if system in LLM_SYSTEMS:
                     time.sleep(LLM_INTER_QUERY_DELAY_S)

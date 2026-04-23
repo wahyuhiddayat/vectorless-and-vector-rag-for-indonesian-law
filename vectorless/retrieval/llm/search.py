@@ -134,10 +134,23 @@ def _get_top_level_nodes(structure: list[dict]) -> list[dict]:
 
 
 def _get_children_summary(node: dict) -> list[dict]:
-    """Get children summaries (node_id + title) of a node."""
+    """Get children summaries with full lineage context for accurate navigation.
+
+    Each entry includes navigation_path (full ancestor chain) so the LLM can
+    distinguish e.g. 'BAB II - KEDUDUKAN > Pasal 2' from 'BAB VII > Pasal 33'.
+    Leaf nodes additionally get a text_preview to allow content verification.
+    """
     if "nodes" not in node:
         return []
-    return [{"node_id": c["node_id"], "title": c["title"]} for c in node["nodes"]]
+    result = []
+    for c in node["nodes"]:
+        entry: dict = {"node_id": c["node_id"], "title": c["title"]}
+        if c.get("navigation_path"):
+            entry["navigation_path"] = c["navigation_path"]
+        if not c.get("nodes") and c.get("text"):
+            entry["text_preview"] = c["text"][:150].rstrip()
+        result.append(entry)
+    return result
 
 
 def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
