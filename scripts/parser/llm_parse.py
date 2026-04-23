@@ -101,7 +101,9 @@ AUDIT_LOG = REPO_ROOT / "data" / "llm_parse_log.json"
 
 MAX_WHOLE_DOC_PASALS = 35  # Above this, always chunk (output token budget).
 MAX_WHOLE_DOC_INPUT_CHARS = 120_000  # ~30K tokens; also gate single-call mode.
-PAGES_PER_CHUNK = 15
+PAGES_PER_CHUNK = 10  # smaller chunks produce shorter JSON outputs, reducing
+                       # the chance of Gemini emitting malformed JSON on dense
+                       # pasal pages (PERDA bodies pack many pasals per page).
 CHUNK_OVERLAP_PAGES = 4  # wider overlap so a pasal body spanning the chunk
                         # boundary is visible in full from at least one chunk.
                         # Adjacent chunks re-emit and the merger picks longest.

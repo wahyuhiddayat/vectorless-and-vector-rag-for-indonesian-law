@@ -34,7 +34,7 @@ INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 REPORT_PATH = REPO_ROOT / "data" / "judge_report.json"
 REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 JUDGE_MODEL = "claude-sonnet-4-5-20250929"  # upgrade when newer Sonnet available
-CALL_TIMEOUT_S = 600
+CALL_TIMEOUT_S = 1200
 
 
 JUDGE_PROMPT_TEMPLATE = """You audit the quality of an Indonesian legal document parse.
