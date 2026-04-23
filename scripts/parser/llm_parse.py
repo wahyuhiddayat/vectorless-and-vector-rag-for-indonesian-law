@@ -402,6 +402,22 @@ TITLE CONVENTIONS:
    preceding it in PDF reading order. Use x/y coords to disambiguate
    multi-column layouts.
 
+   CRITICAL — list continuation across page boundaries. A Pasal body
+   often contains a list "a., b., c., ...h." that spans 2+ pages. The
+   list continues UNTIL either the next Pasal heading, a BAB/Bagian/
+   Paragraf heading, or the list explicitly ends. A page break alone
+   does NOT end a Pasal body or its list — if page N+1 opens with
+   "d. Ekuitas;\n e. ..." it is the CONTINUATION of Pasal 2's list,
+   not a new node. Capture all items a through the last before the
+   next heading.
+
+   Example of the WRONG behavior to avoid:
+     Page 4 ends: "c. kecukupan investasi;"
+     Page 5 starts: "d. Ekuitas; e. Dana Jaminan; ...; h. ketentuan lain."
+     followed by: "Bagian Kedua / Pasal 3 ..."
+   → CORRECT output: Pasal 2 text = "...a. ...; b. ...; c. ...; d. ...; e. ...; f. ...; g. ...; h. ketentuan lain."
+   → WRONG: Pasal 2 text = "...c. kecukupan investasi;" (missing d-h, truncated at page break).
+
 8. No empty "nodes" arrays. Omit "nodes" if a node has no children.
    Omit "text" if a node has children but no intro; keep "text" as intro
    when both present.
@@ -1047,35 +1063,57 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
             return 2
         return None
 
-    current_path: list[str] = []  # persists across chunks
+    def _norm_title(t: str) -> str:
+        """Canonicalize container title so near-identical variants collapse to
+        one key across chunks. Handles dash/whitespace differences.
+        """
+        t = t.strip()
+        t = re.sub(r"\s*[-–—]\s*", " ", t)
+        t = re.sub(r"\s+", " ", t).lower()
+        return t
+
+    def _container_key(n: dict) -> str:
+        """Primary merger key for container nodes: node_id if present
+        (invariant across chunks), else normalized title. node_id is safest
+        because LLM may emit different title wording for the same section
+        across chunks (e.g. truncated trailing words).
+        """
+        nid = (n.get("node_id") or "").strip()
+        if nid:
+            return nid
+        return _norm_title(n.get("title") or "")
+
+    current_path: list[str] = []  # display titles, for output
+    current_keys: list[str] = []  # normalized keys, for dedup
 
     def _walk(nodes: list[dict]):
-        nonlocal current_path
+        nonlocal current_path, current_keys
         for n in nodes:
             t = (n.get("title") or "").strip()
             if _PASAL_TITLE_RE.match(t):
-                # Pasal leaf. Track best copy + current container path.
-                path_tuple = tuple(current_path)
+                # Pasal leaf. Track best copy + current container key path.
+                key_tuple = tuple(current_keys)
                 existing = pasal_best.get(t)
                 if existing is None:
                     pasal_best[t] = n
-                    pasal_to_path[t] = path_tuple
+                    pasal_to_path[t] = key_tuple
                 else:
                     if len(json.dumps(n, ensure_ascii=False)) > len(
                         json.dumps(existing, ensure_ascii=False)
                     ):
                         pasal_best[t] = n
-                        if len(path_tuple) > len(pasal_to_path.get(t, ())):
-                            pasal_to_path[t] = path_tuple
+                        if len(key_tuple) > len(pasal_to_path.get(t, ())):
+                            pasal_to_path[t] = key_tuple
                 continue
             depth = _container_depth(t)
             if depth is not None:
                 # Truncate path to this depth, then push this container.
                 current_path = current_path[:depth] + [t]
-                key = tuple(current_path)
-                if key not in container_stub:
-                    container_stub[key] = {k: v for k, v in n.items() if k != "nodes"}
-                    container_order.append(key)
+                current_keys = current_keys[:depth] + [_container_key(n)]
+                key_tuple = tuple(current_keys)
+                if key_tuple not in container_stub:
+                    container_stub[key_tuple] = {k: v for k, v in n.items() if k != "nodes"}
+                    container_order.append(key_tuple)
                 _walk(n.get("nodes", []) or [])
             else:
                 _walk(n.get("nodes", []) or [])
