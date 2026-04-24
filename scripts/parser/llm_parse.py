@@ -1,21 +1,4 @@
-"""LLM-first full parse for Indonesian legal documents.
-
-Standalone end-to-end: metadata from registry + PDF preamble, structure
-from Gemini. No regex-parser stub required upfront. Builds each index
-JSON from scratch; re-runs safely overwrite with a one-time backup.
-
-Design principles:
-    - LLM is authoritative on structure AND content.
-    - Readable node_ids: pasal_3_ayat_2_huruf_a.
-    - Validation is diagnostic only (logged, not a gate) since regex-based
-      validators false-positive on valid LLM output.
-    - Backup once before overwrite. Full audit log in llm_parse_log.json.
-
-Usage:
-    python scripts/parser/llm_parse.py --doc-id uu-3-2025
-    python scripts/parser/llm_parse.py --doc-ids uu-3-2025,uu-14-2025 --dry-run
-    python scripts/parser/llm_parse.py --category UU
-"""
+"""Build pasal-level index JSON with Gemini as the structure parser."""
 from __future__ import annotations
 
 import argparse
@@ -50,12 +33,7 @@ MAX_RETRIES = 3
 
 
 def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
-    """Call the configured Gemini parser model.
-
-    For Gemini 2.5 series, thinking is disabled (budget=0) so the full
-    output-token budget goes to response text. Gemini 3.x series requires
-    thinking mode, so we use the SDK default (dynamic thinking budget).
-    """
+    """Call the configured Gemini parser model."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
@@ -69,7 +47,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
         max_output_tokens=max_output_tokens,
         response_mime_type="application/json",
     )
-    # Gemini 3.x forbids budget=0. For 2.5 we disable thinking to save tokens.
+    # Gemini 3.x forbids a zero thinking budget; 2.5 does not.
     if MODEL_NAME.startswith("gemini-2.5"):
         config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
 
@@ -1252,10 +1230,6 @@ def _chunk_by_pasal(
     if len(pasal_occurrences) < 2:
         return []
 
-    # Group consecutive pasals into buckets of ``pasals_per_chunk`` each.
-    # Pasal-alignment boundary spans the page of the bucket's first pasal
-    # to one page before the next bucket's first pasal. Then extend by
-    # overlap_pages on each side so adjacent chunks share context.
     ranges: list[tuple[int, int]] = []
     for i in range(0, len(pasal_occurrences), pasals_per_chunk):
         bucket = pasal_occurrences[i: i + pasals_per_chunk]
@@ -1265,7 +1239,6 @@ def _chunk_by_pasal(
             aligned_end = max(aligned_start, next_first - 1)
         else:
             aligned_end = total_pages
-        # Apply overlap window.
         start = max(1, aligned_start - overlap_pages)
         end = min(total_pages, aligned_end + overlap_pages)
         ranges.append((start, end))
@@ -1273,14 +1246,13 @@ def _chunk_by_pasal(
 
 
 def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
-    """Full LLM-first parse of a single doc. Returns audit dict."""
+    """Parse one document and return its audit record."""
     audit: dict = {
         "doc_id": doc_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
     }
 
-    # Build metadata from registry + PDF preamble (no regex structure).
     try:
         meta = build_metadata(doc_id)
     except Exception as exc:
@@ -1296,7 +1268,6 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     audit["total_pages"] = total_pages
     audit["body_pages"] = body_end
 
-    # Load PDF blocks for LLM prompt (block coords needed; metadata loads plain pages).
     try:
         pages = load_pdf_pages(doc_id)
     except Exception as exc:
@@ -1304,7 +1275,6 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
         audit["error"] = f"pdf load: {exc}"
         return audit
 
-    # Pasal regex count scoped to body only (avoid "Pasal N Cukup jelas" in penjelasan).
     pdf_pasal_numbers = _pasal_numbers_in_page_range(pages, 1, body_end)
     audit["pdf_pasal_regex_count"] = len(pdf_pasal_numbers)
 
@@ -1341,11 +1311,7 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
             return audit
         structure = obj["structure"]
     else:
-        # Chunk body pages only (skip penjelasan + lampiran).
         body_pages_list = [p for p in pages if p["page_num"] <= body_end]
-        # Prefer pasal-aware chunking: boundaries between Pasals (never
-        # mid-Pasal) eliminate text-bleeding at chunk edges. Fallback to
-        # page-based chunking only when no Pasal headings detected.
         ranges = _chunk_by_pasal(body_pages_list, body_end, pasals_per_chunk=20)
         strategy = "pasal-aware"
         if not ranges:
@@ -1423,7 +1389,6 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     _, errors = validate_parse({"structure": structure}, pdf_pasal_numbers, is_perubahan=is_perubahan)
     audit["validation_errors"] = errors
 
-    # Assemble final doc from clean metadata + LLM structure + provenance.
     final_doc = dict(meta)
     final_doc["structure"] = structure
     final_doc["parser_method"] = "llm_parse"
@@ -1441,11 +1406,9 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
         audit["preview_path"] = str(preview)
         return audit
 
-    # Output path derived from jenis_folder; no existing stub required.
     index_path = INDEX_PASAL / meta["jenis_folder"] / f"{doc_id}.json"
     index_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Backup existing index once before overwrite.
     if index_path.exists():
         backup_cat = BACKUP_DIR / meta["jenis_folder"]
         backup_cat.mkdir(parents=True, exist_ok=True)
@@ -1467,14 +1430,8 @@ def _accumulate_usage(dst: dict, src: dict) -> None:
         dst[k] = (dst.get(k, 0) or 0) + (src.get(k, 0) or 0)
 
 
-# --- CLI ----------------------------------------------------------------
-
-
 def _load_targets(specific: list[str] | None, category: str | None) -> list[str]:
-    """Return doc_ids to parse.
-
-    Priority: explicit list > category filter > error.
-    """
+    """Return the document IDs requested on the CLI."""
     if specific:
         return specific
     if not category:

@@ -39,7 +39,6 @@ def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: boo
 
     left = []
     right = []
-    # Classify each block as left or right column by its horizontal center.
     for b in blocks:
         center_x = (b["x0"] + b["x1"]) / 2
         if center_x < midpoint:
@@ -47,10 +46,8 @@ def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: boo
         else:
             right.append(b)
 
-    # Full-width blocks (>60% of page width) are headers or titles, not column content.
     wide_blocks = [b for b in blocks if (b["x1"] - b["x0"]) > page_width * 0.6]
 
-    # Treat as two-column only when both halves are populated and wide blocks are rare.
     if len(left) >= 3 and len(right) >= 3 and len(wide_blocks) < len(blocks) * 0.3:
         left_sorted = sorted(left, key=lambda b: (b["y0"], b["x0"]))
         right_sorted = sorted(right, key=lambda b: (b["y0"], b["x0"]))
@@ -71,14 +68,13 @@ def _extract_page_text(page) -> str:
     page_height = page_dict.get("height", 842)
     raw_blocks = page_dict.get("blocks", [])
 
-    # Detect tables and build structured replacement text blocks.
     table_blocks: list[dict] = []
     table_rects: list[fitz.Rect] = []
     try:
         for tbl in page.find_tables():
             tbl_rect = fitz.Rect(tbl.bbox)
             table_rects.append(tbl_rect)
-            rows = tbl.extract()  # list[list[str | None]]
+            rows = tbl.extract()
             lines = []
             for row in rows:
                 cells = [(cell or "").replace("\n", " ").strip() for cell in row]
@@ -91,13 +87,13 @@ def _extract_page_text(page) -> str:
                     "text": tbl_text + "\n",
                 })
     except Exception:
-        pass  # graceful fallback: no table detection, proceed as plain text
+        pass
 
     text_blocks = []
     # Collect text blocks with their bounding boxes, skipping image blocks
     # and any blocks whose region is already covered by a detected table.
     for b in raw_blocks:
-        if b.get("type") != 0:  # 0 = text, 1 = image
+        if b.get("type") != 0:
             continue
         if table_rects:
             b_rect = fitz.Rect(b["bbox"])
@@ -126,13 +122,7 @@ def _extract_page_text(page) -> str:
 
 
 def extract_pages(pdf_path: str) -> list[dict]:
-    """Extract raw text from every page of a PDF using PyMuPDF.
-
-    If a cached reordered-pages JSON exists at
-    `data/reordered_pages/<doc_id>.json`, use it instead.
-
-    Returns a list of dicts with keys: page_num (1-indexed), raw_text.
-    """
+    """Extract raw text from every PDF page, using cached reordered pages when available."""
     from pathlib import Path as _Path
     # Derive doc_id from pdf filename — find matching registry entry.
     pdf_name = _Path(pdf_path).name
@@ -166,12 +156,7 @@ def extract_pages(pdf_path: str) -> list[dict]:
 
 
 def clean_page_text(text: str) -> str:
-    """Remove recurring OCR noise from Indonesian legal PDF page text.
-
-    Handles: PRESIDEN REPUBLIK INDONESIA header variants (multi-line and single-line),
-    font-encoding garbage strings, page number markers, SK No footers, glued Pasal/BAB
-    headings, whitespace normalization, and digit OCR artifacts.
-    """
+    """Remove recurring OCR noise from Indonesian legal PDF page text."""
     # Multi-line PRESIDEN REPUBLIK INDONESIA header (OCR variants + optional SALINAN prefix).
     text = re.sub(
         r'(?:SALINAN\s*)?(?:Menimbang\s*)?'
