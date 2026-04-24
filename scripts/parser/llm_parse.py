@@ -47,7 +47,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
         max_output_tokens=max_output_tokens,
         response_mime_type="application/json",
     )
-    # Gemini 3.x forbids a zero thinking budget; 2.5 does not.
+    # Gemini 3.x rejects thinking_budget=0; 2.5 accepts it.
     if MODEL_NAME.startswith("gemini-2.5"):
         config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
 
@@ -432,37 +432,21 @@ def _sanitize_node_id(s: str) -> str:
 
 
 def _canonical_title_from_node_id(node_id: str, original_title: str) -> str:
-    """Reconstruct canonical title from node_id (LLM-consistent source).
+    """Rebuild canonical pasal-family title from node_id.
 
-    LLM tends to produce cleaner node_ids than titles because IDs are
-    structural and less susceptible to verbatim copy of OCR artifacts.
-    Use the TAIL of the node_id path as the source of truth for title.
-
-    Handles path shapes:
-        pasal_3                       → "Pasal 3"
-        pasal_3_ayat_2                → "Pasal 3 Ayat (2)"
-        pasal_3_ayat_2_huruf_a        → "Pasal 3 Ayat (2) Huruf a"
-        pasal_3_ayat_2_huruf_a_angka_1 → "Pasal 3 Ayat (2) Huruf a Angka 1"
-        pasal_I                       → "Pasal I"
-        pasal_I_angka_2               → "Pasal I Angka 2"
-        pasal_I_angka_2_pasal_3A      → "Pasal 3A"   (deepest pasal wins)
-        pasal_I_angka_33_pasal_15I    → "Pasal 15I"  (OCR recovered: l5I→15I in id)
-        bab_1                         → keep original
-        bagian_kesatu                 → keep original
+    node_id is LLM-consistent and structural; the title may carry verbatim OCR
+    artifacts. For nested amendment ids (pasal_I_angka_N_pasal_3A), the deepest
+    `pasal` segment wins — so the title reflects the nested Pasal, not the
+    Roman container. BAB/Bagian/Paragraf titles pass through unchanged.
     """
-    # Only reconstruct pasal-family titles; keep BAB/Bagian/Paragraf as-is.
     parts = node_id.split("_")
-    # Find last `pasal` segment in node_id.
     last_pasal_idx = -1
     for i, seg in enumerate(parts):
         if seg == "pasal" and i + 1 < len(parts):
             last_pasal_idx = i
     if last_pasal_idx == -1:
-        return original_title  # Not a pasal-family node; keep as-is.
-    # Slice from last pasal onwards.
+        return original_title
     tail = parts[last_pasal_idx:]
-    # Build canonical title from tail.
-    # tail looks like: ["pasal", "3"] or ["pasal", "3", "ayat", "2", "huruf", "a", "angka", "1"]
     out = []
     i = 0
     while i < len(tail):
@@ -470,13 +454,9 @@ def _canonical_title_from_node_id(node_id: str, original_title: str) -> str:
         if seg == "pasal":
             if i + 1 < len(tail):
                 num = tail[i + 1]
-                # Uppercase single letter suffix: pasal_3A → keep capital.
-                # Roman pasal: pasal_I → keep I.
-                # Arabic with letter suffix: pasal_15I → "15I".
                 if re.match(r"^[IVX]+$", num):
                     out.append(f"Pasal {num}")
                 elif re.match(r"^\d+[A-Z]?$", num, re.IGNORECASE):
-                    # Normalize: digits keep, suffix uppercase.
                     m = re.match(r"^(\d+)([A-Za-z]?)$", num)
                     if m:
                         n, suf = m.group(1), m.group(2).upper()
@@ -504,24 +484,11 @@ def _canonical_title_from_node_id(node_id: str, original_title: str) -> str:
                 continue
         i += 1
     canonical = " ".join(out)
-    # Special case: for nested amendment (pasal_I_angka_N_pasal_X),
-    # the last_pasal_idx above already picks the deepest pasal. Good.
-    # For "pasal_I" (amendment root), tail=[pasal, I] → "Pasal I". Good.
-    # For "pasal_I_angka_N" without nested pasal: last_pasal_idx=0,
-    # tail = full path → "Pasal I Angka N". Good.
     return canonical if canonical else original_title
 
 
 def normalize_pasal_titles_in_tree(structure: list[dict]) -> int:
-    """Reconstruct canonical title for every node from node_id.
-
-    node_id is LLM-consistent (structural), title may have OCR artifacts
-    (verbatim from PDF). Use node_id as source of truth. Only reconstructs
-    pasal-family titles; BAB/Bagian/Paragraf keep their original title
-    (which has the proper display name).
-
-    Returns count of titles modified.
-    """
+    """Rebuild pasal-family titles from node_id; return count modified."""
     count = 0
     for node in structure:
         title = node.get("title", "")
@@ -539,11 +506,7 @@ def normalize_pasal_titles_in_tree(structure: list[dict]) -> int:
 def assign_readable_node_ids(
     structure: list[dict], ancestor_id: str = ""
 ) -> None:
-    """Ensure every node has a readable node_id.
-
-    Trusts the LLM's node_id when it matches the convention. Re-derives from
-    title + ancestor when missing or malformed.
-    """
+    """Keep conforming node_ids; re-derive from title + ancestor when missing/malformed."""
     for node in structure:
         title = (node.get("title") or "").strip()
         nid = (node.get("node_id") or "").strip()
@@ -557,7 +520,6 @@ def assign_readable_node_ids(
 def _derive_node_id_from_title(title: str, ancestor_id: str) -> str:
     """Fallback derivation when LLM output is missing/malformed node_id."""
     t = title.lower()
-    # Amendment: Pasal I, Pasal II, ...
     m = re.match(r"^pasal\s+([ivx]+)(?:\s+angka\s+(\d+))?(?:\s+pasal\s+(\d+[a-z]?))?", t)
     if m:
         parts = [f"pasal_{m.group(1).upper()}"]
@@ -566,21 +528,17 @@ def _derive_node_id_from_title(title: str, ancestor_id: str) -> str:
         if m.group(3):
             parts.append(f"pasal_{m.group(3).upper()}")
         return "_".join(parts)
-    # BAB I - ...
     m = re.match(r"^bab\s+([ivxlc]+)", t)
     if m:
         from vectorless.indexing.parser import roman_to_int
         n = roman_to_int(m.group(1).upper())
         return f"bab_{n if n else m.group(1)}"
-    # Bagian Kesatu / Kedua ...
     m = re.match(r"^bagian\s+(\w+)", t)
     if m:
         return f"{ancestor_id}_bagian_{m.group(1).lower()}" if ancestor_id else f"bagian_{m.group(1).lower()}"
-    # Paragraf N
     m = re.match(r"^paragraf\s+(\d+)", t)
     if m:
         return f"{ancestor_id}_paragraf_{m.group(1)}" if ancestor_id else f"paragraf_{m.group(1)}"
-    # Pasal N Ayat (M) Huruf L Angka Q
     m = re.match(
         r"^pasal\s+(\d+[a-z]?)(?:\s+ayat\s+\((\d+)\))?(?:\s+huruf\s+([a-z]+))?(?:\s+angka\s+(\d+))?",
         t,
@@ -594,7 +552,6 @@ def _derive_node_id_from_title(title: str, ancestor_id: str) -> str:
         if m.group(4):
             parts.append(f"angka_{m.group(4)}")
         return "_".join(parts)
-    # fallback: slug of title
     return _sanitize_node_id(title)[:60].lower() or "node"
 
 
@@ -621,12 +578,7 @@ _PENJ_ANGKA_HEADER_RE = re.compile(r"(?:^|\n)\s*Angka\s+(\d+)\b", re.IGNORECASE)
 def _split_penj_by_marker(
     parent_penj: str, regex: re.Pattern
 ) -> tuple[str, dict[str, str]]:
-    """Split parent penjelasan text at marker headers.
-
-    Returns (lead_text, {label: slice_text}). `lead_text` is the portion
-    before the first marker (stays on parent). `label` is the match group 1
-    (ayat number, huruf letter, or angka number), lowercased.
-    """
+    """Split penjelasan at headers; return (lead_text, {label: slice})."""
     matches = list(regex.finditer(parent_penj))
     if not matches:
         return parent_penj, {}
@@ -640,16 +592,8 @@ def _split_penj_by_marker(
 
 
 def _child_key(title: str) -> tuple[str, str] | None:
-    """Extract (kind, label) from child title for penjelasan lookup.
-
-    Examples:
-        "Pasal 8 Ayat (1)"              → ("ayat", "1")
-        "Pasal 3A Ayat (2) Huruf a"     → ("huruf", "a")
-        "Pasal 3 Huruf b"               → ("huruf", "b")
-        "Pasal 3 Ayat (2) Huruf a Angka 1" → ("angka", "1")
-    """
+    """Return (kind, label) for the DEEPEST sub-element in a child title."""
     t = title.strip()
-    # Match the RIGHTMOST sub-element in the title (deepest level).
     for kind, rex in (
         ("angka", r"Angka\s+(\d+)\s*$"),
         ("huruf", r"Huruf\s+([a-z])\s*$"),
@@ -662,21 +606,14 @@ def _child_key(title: str) -> tuple[str, str] | None:
 
 
 def distribute_penjelasan_to_tree(structure: list[dict]) -> None:
-    """Recursively split each Pasal's penjelasan into per-child slices.
+    """Split each parent's penjelasan at child (Ayat/Huruf/Angka) headers.
 
-    Walks the tree. For every container node with a `penjelasan` field AND
-    children, detects the child type (Ayat/Huruf/Angka) from titles and
-    splits the parent's penjelasan text at matching headers. Each child
-    inherits its matching slice. Recurses into each child.
-
-    If no markers found in parent penjelasan OR child labels don't match,
-    children inherit full parent penjelasan (graceful fallback).
+    Fallback when no markers match: children inherit the full parent penjelasan.
     """
     for node in structure:
         children = node.get("nodes") or []
         if children and node.get("penjelasan"):
             parent_penj = node["penjelasan"]
-            # Detect child kind from first child with recognizable title.
             kind = None
             for c in children:
                 k = _child_key(c.get("title", ""))
@@ -691,15 +628,13 @@ def distribute_penjelasan_to_tree(structure: list[dict]) -> None:
                 lead, slices = _split_penj_by_marker(parent_penj, _PENJ_ANGKA_HEADER_RE)
             else:
                 lead, slices = parent_penj, {}
-            # Leading text stays on parent (could be "Cukup jelas." intro).
+            # Lead text (often "Cukup jelas." intro) stays on the parent.
             node["penjelasan"] = lead if lead else parent_penj
-            # Assign per-child slice when label matches; else no penjelasan on child
-            # (child inherits navigation_path context — no blind copy).
+            # Child gets its slice only when labels match — do not blind-copy parent.
             for c in children:
                 key = _child_key(c.get("title", ""))
                 if key and key[1] in slices and slices[key[1]]:
                     c["penjelasan"] = slices[key[1]]
-        # Recurse into children regardless.
         if children:
             distribute_penjelasan_to_tree(children)
 
@@ -707,16 +642,7 @@ def distribute_penjelasan_to_tree(structure: list[dict]) -> None:
 def attach_penjelasan(
     structure: list[dict], penj_pasal_map: dict[str, str]
 ) -> int:
-    """Attach per-Pasal penjelasan text to Pasal nodes in the tree.
-
-    Walks the tree, finds every Pasal N node, and sets node["penjelasan"]
-    to the matching explanation text from penj_pasal_map. The downstream
-    re-split step (ayat_split_leaves / deep_split_leaves) picks up this
-    field and distributes the per-ayat/huruf explanations automatically
-    via _distribute_penjelasan.
-
-    Returns count of Pasal nodes matched.
-    """
+    """Attach per-Pasal penjelasan to Pasal nodes; return count matched."""
     matched = 0
     for node in iter_nodes(structure):
         title = (node.get("title") or "").strip()
@@ -796,11 +722,10 @@ def _find_hybrid_nodes(structure: list[dict]) -> list[str]:
 def validate_parse(
     output: dict, pdf_pasal_numbers: set[str], is_perubahan: bool = False
 ) -> tuple[bool, list[str]]:
-    """Sanity-check LLM parse output. Return (ok, errors).
+    """Sanity-check LLM parse output; return (ok, errors).
 
-    Amendment docs: LLM output is typically "Pasal I" / "Pasal II" roman-roots
-    containing the flat amendment body — arabic Pasal count validation does
-    not apply. We only verify non-empty structure + at least one Pasal Roman.
+    Amendment docs skip arabic pasal-count checks (output is Pasal Roman roots);
+    only non-empty structure + at least one Pasal Roman is required.
     """
     errors: list[str] = []
     if not isinstance(output, dict) or "structure" not in output:
@@ -861,8 +786,8 @@ def validate_parse(
             f"pasals missing from LLM output: {sorted(missing)[:20]}"
         )
     extra = out_set - pdf_pasal_numbers
-    # Only flag as error when extras are MANY (>15% of total). LLM sees full
-    # PDF context and may recover pasals our simple regex missed (layout issues).
+    # Tolerate a few extras: LLM sees full PDF context and can recover pasals
+    # the simple regex missed on tricky layouts. Flag only when >15% are extras.
     if extra and len(extra) > max(3, len(out_numbers) * 0.15):
         errors.append(
             f"too many pasals not in PDF regex (possible hallucination): "
@@ -931,11 +856,7 @@ _PASAL_HEADING_RE = re.compile(
 
 
 def _is_plausible_pasal_num(num: str) -> bool:
-    """Filter OCR noise: suffix letters after digits should be A-H (convention).
-
-    Legal drafting uses Pasal 3A, 5B, 12C, etc. up to ~3 letters. Letters like
-    O/I/L after digits are usually OCR confusion (0 read as O, 1 as I/L).
-    """
+    """Reject OCR noise: valid Pasal suffixes are A-H; O/I/L are usually misread 0/1."""
     m = re.match(r"^(\d+)([A-Z]*)$", num)
     if not m:
         return False
@@ -998,11 +919,11 @@ def _is_container(node: dict) -> bool:
 
 
 def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
-    """Merge chunk outputs into one tree, deduping by Pasal number.
+    """Merge chunk outputs into one tree, deduping Pasals under their container path.
 
-    Preserves BAB > Bagian > Paragraf container hierarchy. For each Pasal,
-    track its full container path from the first chunk that saw it, then
-    rebuild the tree grouping pasals under shared container paths.
+    BAB > Bagian > Paragraf containers are matched across chunks by normalized
+    title (node_id is not stable across chunks when a BAB header falls outside
+    the chunk's page range).
     """
     if not chunks:
         return []
@@ -1024,27 +945,17 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
         return None
 
     def _norm_title(t: str) -> str:
-        """Canonicalize container title so near-identical variants collapse to
-        one key across chunks. Handles dash/whitespace differences.
-        """
+        """Collapse dash/whitespace variants so near-identical titles share one key."""
         t = t.strip()
         t = re.sub(r"\s*[-–—]\s*", " ", t)
         t = re.sub(r"\s+", " ", t).lower()
         return t
 
     def _container_key(n: dict) -> str:
-        """Primary merger key for container nodes: normalized title.
-        Title reflects PDF content and is invariant across chunks, while
-        node_id is LLM-generated per chunk and may differ for the same
-        section (e.g. "bab_3_bagian_3" in one chunk vs "bagian_3" in
-        another when BAB III wasn't visible in that chunk's scope).
-        Titles may vary slightly in dashes/whitespace which _norm_title
-        collapses.
-        """
         return _norm_title(n.get("title") or "")
 
-    current_path: list[str] = []  # display titles, for output
-    current_keys: list[str] = []  # normalized keys, for dedup
+    current_path: list[str] = []  # display titles
+    current_keys: list[str] = []  # normalized dedup keys
 
     def _walk(nodes: list[dict]):
         nonlocal current_path, current_keys
@@ -1098,8 +1009,7 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
     node_index: dict[tuple, dict] = {}
 
     def _ensure_path(path: tuple) -> dict:
-        """Return the container node at the end of the given path, creating
-        ancestors as needed."""
+        """Return the deepest container on `path`, creating missing ancestors."""
         for depth in range(1, len(path) + 1):
             sub = path[:depth]
             if sub in node_index:
@@ -1146,11 +1056,7 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
 def _chunk_pages(
     pages: list[dict], pages_per_chunk: int, overlap: int
 ) -> list[tuple[int, int]]:
-    """Split page list into (start_page, end_page) ranges with overlap.
-
-    Page-based; kept as a fallback when pasal-aware chunking finds no
-    structural boundaries.
-    """
+    """Page-based chunking — fallback when pasal-aware chunking finds no boundaries."""
     total = len(pages)
     if total <= pages_per_chunk:
         return [(1, total)]
@@ -1171,25 +1077,18 @@ def _chunk_by_pasal(
     pasals_per_chunk: int = 20,
     overlap_pages: int = 1,
 ) -> list[tuple[int, int]]:
-    """Split into page ranges aligned on Pasal boundaries, with optional
-    page overlap for boundary disambiguation.
+    """Chunk into page ranges aligned on Pasal boundaries with overlap.
 
-    Scans the PDF for Pasal-N headings, groups Pasals into buckets of up to
-    ``pasals_per_chunk``, and emits (start_page, end_page) ranges whose
-    *pasal-alignment* boundaries lie BETWEEN Pasals (never mid-Pasal).
-    Each range is then extended by ``overlap_pages`` on each side so
-    adjacent chunks share ~``2 * overlap_pages`` pages — this lets the
-    LLM see prior-Pasal context at the chunk head (avoids misattributing
-    page-top spillover content to the chunk's first heading). The merger
-    picks the longest / most complete copy of any Pasal emitted by both
-    chunks at the overlap.
+    Boundaries land BETWEEN Pasals, never mid-Pasal. Each range is extended by
+    `overlap_pages` on each side so adjacent chunks share context — the LLM
+    sees prior-Pasal context at the chunk head (avoids misattributing page-top
+    spillover to the first heading), and the merger keeps the longest copy.
 
-    Falls back to empty list when no Pasals are detected; caller should
-    use ``_chunk_pages`` in that case.
+    Returns [] when no Pasals are detected — caller should fall back to
+    `_chunk_pages`.
     """
-    # Scan every pasal heading OCCURRENCE (not unique pages) — dense docs
-    # can pack 3-5 pasals per page, so counting pages would undercount.
-    # Track (page_num) for each heading detected.
+    # Count heading OCCURRENCES, not unique pages: dense docs pack 3-5 pasals
+    # per page, so page-counting would undercount.
     heading_re = re.compile(r"^\s*[Pp]asa[l1]\s+\d+[A-Z]?\b")
     pasal_occurrences: list[int] = []
     for p in pages:
@@ -1250,15 +1149,13 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     pdf_pasal_numbers = _pasal_numbers_in_page_range(pages, 1, body_end)
     audit["pdf_pasal_regex_count"] = len(pdf_pasal_numbers)
 
-    # Decide: single call or chunked.
-    # Chunk when either (a) PDF char volume large OR (b) estimated pasals
-    # would exceed output token budget (~65K → ~35 pasals worth of nested text).
+    # Chunk when char volume is large OR pasal count risks busting the ~65K
+    # output-token budget (~35 pasals of nested text).
     pdf_text_full = format_pdf_pages(pages, 1, body_end)
     char_count = len(pdf_text_full)
     audit["pdf_chars"] = char_count
-    # Amendment docs: LLM outputs 1-2 Pasal Roman nodes regardless of how
-    # many Pasal N references the body contains. Pasal-count based chunking
-    # is meaningless; only char volume matters.
+    # Amendment docs emit only 1-2 Pasal Roman roots regardless of inner Pasal N
+    # count, so pasal-count chunking is meaningless — only char volume matters.
     if is_perubahan:
         use_chunked = char_count > MAX_WHOLE_DOC_INPUT_CHARS
     else:
@@ -1338,26 +1235,20 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
 
     audit["usage"] = agg_usage
 
-    # Post-process.
-    # Normalize OCR'd digit-letters in Pasal titles before building
-    # navigation_path so paths reflect canonical form ("Pasal 15I", not
-    # "Pasal l5I"). BM25 tokenization depends on clean title/text tokens.
+    # Normalize pasal titles BEFORE building navigation_path — paths must
+    # reflect canonical form ("Pasal 15I", not OCR "Pasal l5I"). BM25
+    # tokenization depends on clean title/text tokens.
     normalize_pasal_titles_in_tree(structure)
     assign_readable_node_ids(structure)
     build_navigation_paths(structure)
     backfill_page_indices(structure, pages, total_pages)
 
-    # Penjelasan intentionally NOT attached to tree nodes.
-    # Rationale: GT target is body text (pasal/ayat/huruf/angka); penjelasan
-    # is supplementary and its regex-based attribution had layout-specific
-    # bugs (mis-attributing across pasals). Raw penjelasan map stays at
-    # doc-level (penjelasan_pasal_demi_pasal, penjelasan_umum) for optional
-    # display; not indexed, not retrieval target.
+    # Penjelasan is intentionally NOT attached: GT targets body text, and the
+    # regex-based attribution had layout-specific bugs mis-attributing across
+    # pasals. Raw map stays at doc-level for optional display only.
 
-    # Diagnostic validation — logged for review, NOT a quality gate.
-    # Reason: the validator is regex-based, which gives false positives on
-    # valid LLM output (e.g. intentional Pasal-number gaps, container nodes).
-    # Trust LLM output; manual sampling or LLM-as-judge handles actual QA.
+    # Validation is diagnostic, NOT a gate — the regex validator false-positives
+    # on valid LLM output (intentional Pasal gaps, container nodes).
     _, errors = validate_parse({"structure": structure}, pdf_pasal_numbers, is_perubahan=is_perubahan)
     audit["validation_errors"] = errors
 

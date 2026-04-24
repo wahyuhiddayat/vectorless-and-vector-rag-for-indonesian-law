@@ -10,13 +10,9 @@ log = logging.getLogger(__name__)
 def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: bool = False) -> list[dict]:
     """Reorder text blocks for correct reading order on multi-column pages.
 
-    Pages with fewer than 4 blocks are returned sorted top-to-bottom,
-    left-to-right. Otherwise the function attempts column detection: if both
-    halves are sufficiently populated and full-width blocks are rare (<30%),
-    the page is treated as two-column and emitted as left column first then
-    right column. Applies to both portrait and landscape pages — some
-    Indonesian legal PDFs use narrow two-column layouts even in portrait
-    orientation (e.g. government regulations with side-by-side articles).
+    Applies to portrait pages too: some Indonesian legal PDFs use narrow
+    two-column layouts regardless of orientation, so orientation alone is
+    not a reliable signal.
     """
     if len(blocks) < 4:
         return sorted(blocks, key=lambda b: (b["y0"], b["x0"]))
@@ -43,12 +39,7 @@ def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: boo
 
 
 def _extract_page_text(page) -> str:
-    """Extract text from a single PyMuPDF page, preserving column reading order.
-
-    Tables are extracted as pipe-delimited rows instead of jumbled sequential
-    text blocks. Requires PyMuPDF >= 1.23 for find_tables(); falls back to
-    plain text extraction on older versions or pages with no detectable tables.
-    """
+    """Extract text from one page, preserving column reading order."""
     page_dict = page.get_text("dict")
     page_width = page_dict.get("width", 595)  # A4 default
     page_height = page_dict.get("height", 842)
@@ -76,17 +67,14 @@ def _extract_page_text(page) -> str:
         pass
 
     text_blocks = []
-    # Collect text blocks with their bounding boxes, skipping image blocks
-    # and any blocks whose region is already covered by a detected table.
     for b in raw_blocks:
         if b.get("type") != 0:
             continue
         if table_rects:
             b_rect = fitz.Rect(b["bbox"])
             if any(tbl_rect.intersects(b_rect) for tbl_rect in table_rects):
-                continue  # this block belongs to a table — skip raw text
+                continue  # already captured as a table row
         block_text = ""
-        # Join all spans in each line, then append a newline after the line.
         for line in b.get("lines", []):
             line_text = "".join(span["text"] for span in line.get("spans", []))
             block_text += line_text + "\n"
@@ -110,7 +98,6 @@ def _extract_page_text(page) -> str:
 def extract_pages(pdf_path: str) -> list[dict]:
     """Extract raw text from every PDF page, using cached reordered pages when available."""
     from pathlib import Path as _Path
-    # Derive doc_id from pdf filename — find matching registry entry.
     pdf_name = _Path(pdf_path).name
     cache_dir = _Path("data/reordered_pages")
     if cache_dir.exists():
@@ -131,7 +118,6 @@ def extract_pages(pdf_path: str) -> list[dict]:
 
     pages = []
     with fitz.open(pdf_path) as doc:
-        # Extract text from each page in document order.
         for i, page in enumerate(doc):
             text = _extract_page_text(page)
             pages.append({
@@ -189,7 +175,7 @@ def fix_ocr_artifacts(text: str) -> str:
     lines = text.split('\n')
     fixed_lines = []
 
-    # Apply fixes line by line to avoid accidental cross-line substitutions.
+    # Line-by-line to avoid cross-line substitutions.
     for line in lines:
         # Ayat numbers inside parens: "(2l)" → "(21)", "(l)" → "(1)".
         line = re.sub(
@@ -230,7 +216,6 @@ def _normalize_ocr_digits(s: str) -> str:
     """
     s_nospace = s.replace(' ', '')
     normalized = ''
-    # Replace each OCR-corrupted letter with its correct digit.
     for ch in s_nospace:
         if ch == 'O':
             normalized += '0'
@@ -248,7 +233,7 @@ def _normalize_ocr_digits(s: str) -> str:
 
 def find_penjelasan_page(pages: list[dict]) -> int | None:
     """Return the page number where PENJELASAN starts, or None if not found."""
-    # Use raw text — PENJELASAN headers are usually clean OCR.
+    # Raw text — PENJELASAN headers are usually clean OCR.
     for page in pages:
         text = page["raw_text"]
         if re.search(r'PENJ\S*SAN\s*\n\s*ATAS', text):
@@ -275,10 +260,10 @@ def detect_perubahan(pages: list[dict]) -> bool:
     if not pages:
         return False
 
-    # Scan the first 3 pages to handle garbled page order from OCR.
+    # First 3 pages — OCR can shuffle page order.
     for page in pages[:3]:
         text = page["raw_text"]
-        # \s* after TENTANG handles OCR that merges "TENTANGPERUBAHAN" without a space.
+        # \s* tolerates OCR-glued "TENTANGPERUBAHAN".
         title_m = re.search(r'TENTANG\s*(.+?)DENGAN\s+RAHMAT', text,
                             re.DOTALL | re.IGNORECASE)
         if not title_m:
@@ -286,11 +271,10 @@ def detect_perubahan(pages: list[dict]) -> bool:
 
         title_text = title_m.group(1)
 
-        # Explicit keyword in title.
         if re.search(r'PERUBAHAN|YESUAIAN', title_text, re.IGNORECASE):
             return True
 
-        # "ATAS UNDANG-UNDANG" / "ATAS PERATURAN" catches cases where OCR dropped "PERUBAHAN".
+        # "ATAS UNDANG-UNDANG" / "ATAS PERATURAN" — OCR dropped "PERUBAHAN".
         if re.search(r'ATAS\s+UNDANG|ATAS\s+PERATURAN', title_text, re.IGNORECASE):
             return True
 
@@ -298,19 +282,8 @@ def detect_perubahan(pages: list[dict]) -> bool:
 
 
 def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) -> dict:
-    """Parse the PENJELASAN section and return structured explanation text.
-
-    Args:
-        pages: Page dicts with page_num, raw_text, and clean_text fields.
-        penjelasan_page: Page number where PENJELASAN begins.
-        total_pages: Last page to include (exclusive of closing material).
-
-    Returns:
-        {"umum": str, "pasal": {pasal_number: explanation_text}}.
-        If no PASAL DEMI PASAL heading is found, "pasal" is an empty dict.
-    """
+    """Parse the PENJELASAN section into {"umum": str, "pasal": {num: text}}."""
     parts = []
-    # Collect cleaned text from PENJELASAN pages only.
     for page in pages:
         if page["page_num"] < penjelasan_page:
             continue
@@ -319,9 +292,7 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) 
         parts.append(page["clean_text"])
     full_text = "\n\n".join(parts)
 
-    # Split into UMUM and PASAL DEMI PASAL sections.
-    # "II." prefix is optional — some shorter UUs omit it or OCR drops it.
-    # \s* between PASAL and DEMI handles OCR that merges them: "PASALDEMI".
+    # "II." optional (some UUs drop it); \s* tolerates OCR-glued "PASALDEMI".
     split_m = re.split(r'(?:II\.?\s*|[iI][lI1]\.?\s*)?PASAL\s*DEMI\s+PASAL', full_text, maxsplit=1, flags=re.IGNORECASE)
 
     if len(split_m) == 2:
@@ -329,18 +300,16 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) 
     else:
         return {"umum": _clean_penjelasan_text(full_text), "pasal": {}}
 
-    # Strip the PENJELASAN header and "I. UMUM" label from the umum block.
     umum_text = re.sub(
         r'^.*?I\.\s*UMUM\s*', '', umum_raw, count=1,
         flags=re.DOTALL | re.IGNORECASE
     ).strip()
     umum_text = _clean_penjelasan_text(umum_text)
 
-    # Fix OCR column-stacking artifacts before splitting at Pasal headings.
     pasal_section = _fix_penjelasan_columns(pasal_section)
 
-    # Normalize OCR digit misreads in Pasal numbers: "Pasal l0" → "Pasal 10".
-    # In PENJELASAN context, uppercase L is also treated as OCR'd 1 (no valid suffix L).
+    # Normalize OCR digits in Pasal numbers ("Pasal l0" → "Pasal 10").
+    # In PENJELASAN context, uppercase L is also OCR'd 1 (no valid suffix L).
     def _normalize_penjelasan_pasal(m):
         num = m.group(2).replace('L', '1')
         return m.group(1) + _normalize_ocr_digits(num)
@@ -351,20 +320,18 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) 
         pasal_section, flags=re.MULTILINE
     )
 
-    # Split at each "Pasal X" heading (Arabic or Roman numerals).
-    # Result: [text_before_first_pasal, "1", explanation1, "2", explanation2, ...]
+    # Split yields [pre_first_pasal, "1", explanation1, "2", explanation2, ...].
     pasal_splits = re.split(
         r'^Pasa[l1]\s+(\d+[A-Z]?|[IVXLC]+)\s*$',
         pasal_section, flags=re.MULTILINE
     )
 
     pasal_dict = {}
-    i = 1  # skip index 0 (text before the first Pasal heading)
-    # Walk pairs of (pasal_number, explanation_text) from the split result.
+    i = 1  # skip text before the first Pasal heading
     while i + 1 < len(pasal_splits):
         pasal_num = pasal_splits[i].strip()
         explanation = _clean_penjelasan_text(pasal_splits[i + 1].strip())
-        # Pasals with no text are implicitly "Cukup jelas." in Indonesian law.
+        # Empty Pasals implicitly mean "Cukup jelas." in Indonesian law.
         if not explanation:
             explanation = "Cukup jelas."
         pasal_dict[pasal_num] = explanation
@@ -374,27 +341,23 @@ def parse_penjelasan(pages: list[dict], penjelasan_page: int, total_pages: int) 
 
 
 def _consume_stacked_pasal(lines: list[str], start_idx: int) -> tuple[list[str] | None, int]:
-    """Consume a run of stacked bare "Pasal" lines followed by their numbers and text.
+    """Rebuild vertically-stacked bare "Pasal" lines into proper Pasal-N groups.
 
-    PyMuPDF sometimes reads compact Penjelasan columns vertically, producing:
-      "Pasal\\nPasal\\n51\\ncukup jelas.\\n52\\ncukup jelas."
-    This function detects such a run starting at start_idx, counts how many bare
-    "Pasal" lines appear, collects the matching numbers and interleaved text, and
-    returns rebuilt lines like ["Pasal 51", "cukup jelas.", "Pasal 52", "cukup jelas."].
+    PyMuPDF reads compact Penjelasan columns vertically, producing e.g.
+    "Pasal\\nPasal\\n51\\ncukup jelas.\\n52\\ncukup jelas." — N bare "Pasal"
+    headers, then N numbers interleaved with their text.
 
-    Returns (rebuilt_lines, next_index) on success, or (None, start_idx+1) if the
-    pattern does not match.
+    Returns (rebuilt_lines, next_index) on success, or (None, start_idx+1) if
+    the pattern does not match.
     """
     pasal_count = 0
     j = start_idx
-    # Count consecutive bare "Pasal" lines.
     while j < len(lines) and re.match(r'^Pasa[l1]\s*$', lines[j].strip()):
         pasal_count += 1
         j += 1
 
     collected: list[tuple[str, int]] = []
     k = j
-    # Collect up to pasal_count number lines that follow the bare "Pasal" run.
     while k < len(lines) and len(collected) < pasal_count:
         num_line = lines[k].strip()
         num_m = re.match(r'^(\d+[A-Z]?)\s*$', num_line)
@@ -410,7 +373,6 @@ def _consume_stacked_pasal(lines: list[str], start_idx: int) -> tuple[list[str] 
         return None, start_idx + 1
 
     rebuilt: list[str] = []
-    # Interleave each Pasal number with the explanation lines that follow it.
     for idx, (num, start_k) in enumerate(collected):
         rebuilt.append(f"Pasal {num}")
         end_k = collected[idx + 1][1] if idx + 1 < len(collected) else k
@@ -429,7 +391,7 @@ def _consume_bare_number_sequence(lines: list[str], start_idx: int) -> tuple[lis
     """
     j = start_idx
     bare_entries: list[tuple[str, int]] = []
-    # Collect consecutive bare-number lines, tolerating "Cukup jelas." and blank lines between them.
+    # Tolerate "Cukup jelas." and blank lines interleaved between the numbers.
     while j < len(lines):
         num_m = re.match(r'^(\d+)\s*$', lines[j].strip())
         if num_m:
@@ -446,7 +408,6 @@ def _consume_bare_number_sequence(lines: list[str], start_idx: int) -> tuple[lis
         return None, start_idx + 1
 
     rebuilt: list[str] = []
-    # Rebuild each entry as "Pasal N" followed by its explanation lines.
     for idx, (num, start_j) in enumerate(bare_entries):
         rebuilt.append(f"Pasal {num}")
         end_j = bare_entries[idx + 1][1] if idx + 1 < len(bare_entries) else j
@@ -528,24 +489,21 @@ def _clean_penjelasan_text(text: str) -> str:
 
 def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
     """Attach per-Pasal penjelasan text to matching Pasal leaf nodes in the tree."""
-    # Walk every leaf node and match its Pasal number against pasal_dict.
     for node in iter_leaves(nodes):
         if "text" not in node:
             continue
-        # Extract Pasal number from title: "Pasal 5" → "5", "Pasal 119I" → "119I".
         m = re.match(r'Pasal\s+(.+)', node.get("title", ""))
         if m:
             pasal_key = m.group(1).strip()
             if pasal_key in pasal_dict:
                 node["penjelasan"] = pasal_dict[pasal_key]
             else:
-                # Fall back to numeric-only match to handle suffix mismatches.
+                # Numeric-only fallback when the suffix differs (e.g. "119I" vs "119").
                 num_m = re.match(r'(\d+)', pasal_key)
                 if num_m and num_m.group(1) in pasal_dict:
                     node["penjelasan"] = pasal_dict[num_m.group(1)]
                 else:
                     node["penjelasan"] = None
-        # Non-Pasal leaf nodes (Pembukaan, etc.) are left without penjelasan.
 
 def iter_leaves(nodes: list[dict]):
     """Yield every leaf node in the tree (nodes that have no children)."""
@@ -576,7 +534,6 @@ def _clean_preamble_noise(raw_text: str) -> str:
         re.compile(r'^\s*(?!BAHWA|Mengingat|Menetapkan|MEMUTUSKAN)[A-Z]{3,8}\s*\n', re.MULTILINE),
     ]
     cleaned_text = raw_text
-    # Apply each pattern in order; every match collapses to a single newline.
     for pat in noise_patterns:
         cleaned_text = pat.sub('\n', cleaned_text)
     return re.sub(r'\n{3,}', '\n\n', cleaned_text).strip()
@@ -688,12 +645,7 @@ def _dedupe_repeated_heading(text: str, title: str | None) -> str:
 
 
 def _strip_leading_title(text: str, title: str | None) -> str:
-    """Remove the node's own title if it appears as the very first line of text.
-
-    OCR output often starts with the heading text (e.g. "Pasal 1\\n...") even
-    though the heading is already captured in the node's title field.  This
-    function removes that redundant first-line heading when present.
-    """
+    """Remove the node's own title if it leads the text — already in node.title."""
     if not title:
         return text
     words = title.strip().split()
@@ -893,16 +845,11 @@ def _index_to_huruf(i: int) -> str:
 def _find_fuzzy_markers(
     text: str, kind: str, expected_start: str
 ) -> list[tuple[int, str, int]] | None:
-    """OCR-tolerant marker detection.
+    """OCR-tolerant marker detection for "ayat" / "angka" / "huruf".
 
-    Scans text for loose candidates matching the marker kind
-    ("ayat", "angka", "huruf"), normalizes each via _normalize_ocr_digits
-    (for digit kinds), filters inline cross-references, validates the
-    sequence is consecutive starting at expected_start, and falls back
-    to one-slot gap-fill if validation initially fails.
-
-    Returns list of (match_start, normalized_label, match_end) tuples,
-    or None if no valid sequence found.
+    Returns (start, normalized_label, end) tuples forming a consecutive sequence,
+    or None. Strict patterns are tried first; on failure, fuzzy candidates are
+    normalized, inline cross-refs are filtered, and one-slot gaps are gap-filled.
     """
     if kind == "ayat":
         pattern = _FUZZY_AYAT_RE
@@ -1302,21 +1249,15 @@ def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start:
 
 
 def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
-    """Recursively split text into the smallest structural sub-nodes present.
-
-    Tries Ayat first, then Huruf, then Angka. Each level recurses into the next.
-    Returns a list of child node dicts if a split was found, or None.
-    """
+    """Split recursively into Ayat > Angka/Huruf, picking the outermost level present."""
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
     text = fix_ocr_artifacts(text)
 
-    # Try Ayat: (1), (2), (3), ...
     ayat_markers = _find_fuzzy_markers(text, "ayat", "1")
     if ayat_markers:
         intro, segments = _split_text_by_markers(text, ayat_markers)
         sub_nodes = []
-        # Build one Ayat sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
             if not segment.strip():
                 continue  # Skip ayat with no content (PDF extraction gap)
@@ -1358,13 +1299,11 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
     if angka_markers:
         intro, segments = _split_text_by_markers(text, angka_markers)
         sub_nodes = []
-        # Build one Angka sub-node per segment, recursing into Huruf if present.
         for i, (label, segment) in enumerate(segments, 1):
             if not segment.strip():
                 continue  # Skip angka with no content (PDF extraction gap)
             sub_id = f"{parent_id}_angka_{label}"
             sub_title = f"{parent_title} Angka {label}"
-            # Recurse into Huruf sub-structure (e.g. definitions with a./b./c. lists).
             children = _try_huruf_split(
                 segment, sub_id, sub_title, parent_start, parent_end,
             )
@@ -1385,12 +1324,10 @@ def _try_deep_split(text: str, parent_id: str, parent_title: str, parent_start: 
             n.pop("_split_label", None)
         return sub_nodes
 
-    # Try Huruf: a., b., c., ...
     huruf_markers = _find_fuzzy_markers(text, "huruf", "a")
     if huruf_markers:
         intro, segments = _split_text_by_markers(text, huruf_markers)
         sub_nodes = []
-        # Build one Huruf sub-node per segment, recursing into each for deeper structure.
         for i, (label, segment) in enumerate(segments, 1):
             if not segment.strip():
                 continue  # Skip huruf with no content (PDF extraction gap)
