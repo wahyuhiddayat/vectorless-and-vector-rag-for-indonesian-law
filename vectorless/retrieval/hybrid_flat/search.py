@@ -28,10 +28,6 @@ from ..common import (
 )
 
 
-# ============================================================
-# BM25 GLOBAL CANDIDATES
-# ============================================================
-
 def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
                          verbose: bool = True) -> list[dict]:
     """BM25 search across ALL leaf nodes, returning candidates with KWIC snippets.
@@ -76,10 +72,6 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
 
     return candidates
 
-
-# ============================================================
-# LLM RERANK (multi-doc aware)
-# ============================================================
 
 def llm_rerank(query: str, candidates: list[dict]) -> dict:
     """LLM reranks BM25 candidates from multiple documents using KWIC snippets.
@@ -127,10 +119,6 @@ Aturan:
     return llm_call(prompt)
 
 
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
-
 def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     """Full hybrid-flat pipeline: BM25 global → LLM rerank → answer.
 
@@ -149,7 +137,6 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         print(f"Strategy: hybrid-flat (bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
-    # Step 1: BM25 global search
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -164,18 +151,15 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         return {"query": query, "strategy": "hybrid-flat",
                 "error": "No BM25 candidates found"}
 
-    # Step 2: LLM rerank
     snap = snapshot_token_counters()
     t_step = time.time()
 
     rerank_result = llm_rerank(query, candidates)
     selected_ids = rerank_result.get("selected_ids", [])
 
-    # Guard: only keep IDs that exist in candidates
     valid_ids = {c["node_id"] for c in candidates}
     selected_ids = [nid for nid in selected_ids if nid in valid_ids]
 
-    # Fallback: if LLM returns empty/invalid, use top BM25 result
     if not selected_ids:
         selected_ids = [candidates[0]["node_id"]]
 
@@ -186,18 +170,15 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         if rerank_result.get("thinking"):
             print(f"  Reasoning: {rerank_result['thinking'][:200]}")
 
-    # Filter candidates to selected ones (preserve BM25 order for selected)
     selected_map = {c["node_id"]: c for c in candidates}
     selected_results = [selected_map[nid] for nid in selected_ids if nid in selected_map]
 
-    # Step 3: Generate answer (multi-doc)
     snap = snapshot_token_counters()
     t_step = time.time()
 
     answer_result = generate_answer_multi_doc(query, selected_results, verbose=verbose)
     step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
-    # Build sources
     sources = []
     for r in selected_results:
         sources.append({
@@ -242,10 +223,6 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
 
     return result
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 def main():
     ap = argparse.ArgumentParser(

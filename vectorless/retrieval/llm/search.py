@@ -26,10 +26,6 @@ from ..common import (
 )
 
 
-# ============================================================
-# DOC SEARCH (pure LLM)
-# ============================================================
-
 def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
     """Select relevant doc_ids from catalog using LLM.
 
@@ -61,7 +57,6 @@ Aturan:
 
     result = llm_call(prompt)
 
-    # Guard against LLM hallucinating doc_ids not in the catalog.
     valid_ids = {d["doc_id"] for d in catalog}
     result["doc_ids"] = [doc_id for doc_id in result.get("doc_ids", []) if doc_id in valid_ids]
 
@@ -71,10 +66,6 @@ Aturan:
 
     return result
 
-
-# ============================================================
-# TREE SEARCH — FULL (one-shot)
-# ============================================================
 
 def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
     """Build a compact text representation of tree structure (titles + node_ids only)."""
@@ -124,10 +115,6 @@ Aturan:
     return result
 
 
-# ============================================================
-# TREE SEARCH — STEPWISE (level-by-level)
-# ============================================================
-
 def _get_top_level_nodes(structure: list[dict]) -> list[dict]:
     """Get top-level nodes (BABs + Pembukaan) from structure."""
     return [{"node_id": n["node_id"], "title": n["title"]} for n in structure]
@@ -163,9 +150,8 @@ def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
     steps = []
     structure = doc["structure"]
     doc_title = doc["judul"]
-    max_rounds = 8  # safety cap
+    max_rounds = 8
 
-    # Round 1: Select top-level node (BAB / Pembukaan / Pasal I, etc.)
     top_nodes = _get_top_level_nodes(structure)
     top_text = json.dumps(top_nodes, ensure_ascii=False, indent=2)
 
@@ -200,12 +186,10 @@ Kembalikan HANYA JSON.
         print(f"\n[Tree Search - Round 1] Selected: {r1.get('selected_ids', [])}")
         print(f"  Reasoning: {r1.get('thinking', '')[:200]}")
 
-    # Iterative drill-down: keep going until all selected nodes are leaves
     current_ids = r1.get("selected_ids", [])
     round_num = 2
 
     while round_num <= max_rounds:
-        # Separate leaves from nodes that need further drilling
         final_ids = []
         need_drill = []
         for nid in current_ids:
@@ -216,16 +200,13 @@ Kembalikan HANYA JSON.
                 final_ids.append(nid)
 
         if not need_drill:
-            # All selected nodes are leaves — done
             return {"steps": steps, "node_ids": final_ids}
 
-        # Collect children of nodes that need drilling
         drill_candidates = []
         for node in need_drill:
             drill_candidates.extend(_get_children_summary(node))
 
         if not drill_candidates:
-            # No children found — use current selections
             final_ids.extend([n["node_id"] for n in need_drill])
             return {"steps": steps, "node_ids": final_ids}
 
@@ -268,7 +249,6 @@ Aturan:
 
         new_ids = result.get("selected_ids", [])
         if not new_ids:
-            # LLM returned nothing — fall back to what we had from leaves
             final_ids.extend([n["node_id"] for n in need_drill])
             return {"steps": steps, "node_ids": final_ids}
 
@@ -276,13 +256,8 @@ Aturan:
         current_ids = final_ids + new_ids
         round_num += 1
 
-    # Reached max rounds — return whatever we have
     return {"steps": steps, "node_ids": current_ids}
 
-
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
 
 def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> dict:
     """Full LLM retrieval pipeline: doc search → tree search → answer."""
@@ -296,7 +271,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         print(f"Strategy: llm-{strategy}")
         print(f"{'='*60}")
 
-    # Step 1: Doc search
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -308,7 +282,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
     if not doc_ids:
         return {"query": query, "strategy": f"llm-{strategy}", "error": "No relevant documents found"}
 
-    # Step 2: Tree search
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -327,7 +300,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    # Step 3: Extract text and generate answer
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -341,7 +313,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
     step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
-    # Build sources
     sources = []
     for node in nodes:
         sources.append({
@@ -375,10 +346,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
 
     return result
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 def main():
     ap = argparse.ArgumentParser(description="Pure LLM retrieval for Indonesian legal QA")

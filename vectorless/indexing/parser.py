@@ -21,10 +21,6 @@ import fitz
 
 log = logging.getLogger(__name__)
 
-# ============================================================
-# 1. TEXT EXTRACTION & CLEANING
-# ============================================================
-
 def _detect_two_columns(blocks: list[dict], page_width: float, is_landscape: bool = False) -> list[dict]:
     """Reorder text blocks for correct reading order on multi-column pages.
 
@@ -278,10 +274,6 @@ def _normalize_ocr_digits(s: str) -> str:
         return normalized
     return s
 
-
-# ============================================================
-# 2. PENJELASAN DETECTION & PARSING
-# ============================================================
 
 def find_penjelasan_page(pages: list[dict]) -> int | None:
     """Return the page number where PENJELASAN starts, or None if not found."""
@@ -584,18 +576,8 @@ def attach_penjelasan(nodes: list[dict], pasal_dict: dict[str, str]):
                     node["penjelasan"] = None
         # Non-Pasal leaf nodes (Pembukaan, etc.) are left without penjelasan.
 
-# ============================================================
-# 3. LEAF-TEXT UTILITIES (OCR normalization, tree iteration)
-# ------------------------------------------------------------
-# Shared helpers used by section 4 (re-split) and by downstream
-# consumers (build.py, retrieval). Safe to modify only if you
-# understand the OCR artifacts they handle.
-# ============================================================
-
-
 def iter_leaves(nodes: list[dict]):
     """Yield every leaf node in the tree (nodes that have no children)."""
-    # Recurse into non-empty node lists; yield nodes with no children as leaves.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             yield from iter_leaves(node["nodes"])

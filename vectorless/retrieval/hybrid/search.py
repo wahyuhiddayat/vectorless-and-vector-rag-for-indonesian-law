@@ -31,10 +31,6 @@ from ..common import (
 )
 
 
-# ============================================================
-# DOC SEARCH — HYBRID (BM25 union LLM)
-# ============================================================
-
 def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[dict]:
     """BM25 scoring on catalog metadata. Returns ranked docs with scores."""
     corpus = []
@@ -97,18 +93,15 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
     LLM catches semantic matches (e.g., "penyadapan" → hukum acara pidana).
     Union ensures neither blind spot causes a miss.
     """
-    # Run both
     bm25_results = _bm25_doc_search(query, catalog)
     llm_result = _llm_doc_search(query, catalog)
 
     bm25_ids = [r["doc_id"] for r in bm25_results]
     llm_ids = llm_result.get("doc_ids", [])
 
-    # Guard against LLM hallucinating doc_ids not in the catalog.
     valid_ids = {d["doc_id"] for d in catalog}
     llm_ids = [doc_id for doc_id in llm_ids if doc_id in valid_ids]
 
-    # Union: LLM picks first (semantic priority), then BM25 additions
     seen = set()
     merged_ids = []
     for doc_id in llm_ids + bm25_ids:
@@ -116,7 +109,6 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
             seen.add(doc_id)
             merged_ids.append(doc_id)
 
-    # Build score lookup for BM25
     bm25_scores = {r["doc_id"]: r["bm25_score"] for r in bm25_results}
 
     if verbose:
@@ -133,10 +125,6 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
         "llm_result": llm_result,
     }
 
-
-# ============================================================
-# NODE SEARCH — BM25 CANDIDATES + LLM RERANK
-# ============================================================
 
 def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
     """Recursively collect all leaf nodes (nodes with text, no children) from tree."""
@@ -194,7 +182,6 @@ def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
     Unlike pure LLM tree search (which only sees titles), the LLM here sees
     actual text snippets from each candidate Pasal, enabling informed selection.
     """
-    # Build candidate list with snippets for LLM
     candidates_for_prompt = []
     for c in candidates:
         candidates_for_prompt.append({
@@ -240,7 +227,6 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
     BM25 ensures keyword-relevant Pasal are found (not missed by blind navigation).
     LLM reranking ensures semantic relevance (understands context beyond keywords).
     """
-    # Step 1: BM25 candidates
     candidates = _bm25_node_candidates(query, doc, top_k=bm25_top_k)
 
     if not candidates:
@@ -252,11 +238,9 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
             print(f"  {c['node_id']} {c['title']} (BM25: {c['bm25_score']:.4f})")
             print(f"    path: {c['navigation_path']}")
 
-    # Step 2: LLM rerank
     rerank_result = _llm_rerank(query, candidates, doc.get("judul", ""))
     selected_ids = rerank_result.get("selected_ids", [])
 
-    # Fallback: if LLM returns empty or invalid, use top BM25 results
     valid_candidate_ids = {c["node_id"] for c in candidates}
     selected_ids = [nid for nid in selected_ids if nid in valid_candidate_ids]
     if not selected_ids:
@@ -273,10 +257,6 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
         "llm_rerank": rerank_result,
     }
 
-
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
 
 def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     """Full hybrid retrieval pipeline: hybrid doc search → BM25+LLM node search → answer.
@@ -296,7 +276,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         print(f"Strategy: hybrid (bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
-    # Step 1: Hybrid doc search
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -308,7 +287,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     if not doc_ids:
         return {"query": query, "strategy": "hybrid", "error": "No relevant documents found"}
 
-    # Step 2: Hybrid node search (on first relevant doc)
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -323,7 +301,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    # Step 3: Extract text and generate answer
     snap = snapshot_token_counters()
     t_step = time.time()
 
@@ -337,7 +314,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
     step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
 
-    # Build sources with BM25 scores
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
     sources = []
     for node in nodes:
@@ -373,10 +349,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     return result
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 def main():
     ap = argparse.ArgumentParser(description="Hybrid BM25+LLM retrieval for Indonesian legal QA")
