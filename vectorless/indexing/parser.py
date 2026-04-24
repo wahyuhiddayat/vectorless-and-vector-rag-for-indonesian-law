@@ -1,18 +1,4 @@
-"""PDF text utilities for Indonesian legal documents.
-
-Four sections:
-  1. TEXT EXTRACTION — PyMuPDF reader with multi-column reordering and
-     OCR digit/header cleanup. Entry points: extract_pages, clean_page_text.
-  2. PENJELASAN PARSING — detect + parse the explanatory section.
-  3. LEAF-TEXT UTILITIES — OCR residual cleanup, heading dedup, spillover
-     trim. Applied after re-split to keep leaf text tidy.
-  4. SUB-PASAL LEAF SPLITTING — deterministic pasal → ayat → huruf → angka
-     splitter (no LLM). Called from build.py to derive ayat and rincian
-     granularities from the LLM-produced pasal tree.
-
-Structure is produced by scripts/parser/llm_parse.py (LLM-first). This
-module only handles text extraction and deterministic re-split.
-"""
+"""PDF text extraction and deterministic re-splitting for Indonesian legal documents."""
 import json
 import logging
 import re
@@ -761,7 +747,6 @@ def _normalize_leaf_text(text: str, title: str | None = None) -> str:
 
 def strip_ocr_headers(nodes: list[dict]):
     """Remove residual page headers, footers, and pengesahan text from all leaf nodes in-place."""
-    # Recurse into container nodes; apply patterns only to leaf text.
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             strip_ocr_headers(node["nodes"])
@@ -770,19 +755,7 @@ def strip_ocr_headers(nodes: list[dict]):
         if "penjelasan" in node:
             node["penjelasan"] = _normalize_leaf_text(node["penjelasan"], node.get("title"))
 
-# ============================================================
-# 4. SUB-PASAL LEAF SPLITTING (pasal → ayat → huruf → angka)
-# ------------------------------------------------------------
-# Called by build.py --from-pasal to derive ayat + rincian
-# granularities from pasal-level bodies (source of truth is LLM
-# output, whether regex-produced or llm_parse-produced).
-# OCR-tolerant via _find_fuzzy_markers. DO NOT simplify without
-# preserving the fuzzy matcher's fallback chain (majority-match
-# letter remap, one-slot gap-fill, OCR digit normalization).
-# ============================================================
-# Splits Pasal leaf nodes into finer sub-nodes based on the requested granularity.
-# The split hierarchy is: Pasal, then Ayat (1)/(2)/..., then Huruf a./b./..., then Angka 1./2./...
-# The "ayat" granularity splits to Ayat only; "rincian" recurses to the deepest level present.
+# OCR-tolerant helpers for splitting Pasal leaves into Ayat, Huruf, and Angka nodes.
 
 # Patterns for detecting sub-Pasal structure and penjelasan section headings.
 # Huruf: 1-2 letters (handles a..z and doubled aa..zz for lists longer than
@@ -1189,8 +1162,6 @@ def _split_text_by_markers(
     segments = []
     for i, label in enumerate(labels):
         next_start = starts[i + 1] if i + 1 < len(starts) else len(text)
-        # 3-tuple: slice after marker span. 2-tuple: slice from marker start
-        # (caller must strip prefix).
         seg_start = ends[i] if has_end else starts[i]
         segment = text[seg_start:next_start].strip()
         segments.append((label, segment))
@@ -1204,13 +1175,7 @@ def _strip_leading_junk(text: str) -> str:
 
 
 def _stash_intro_for_parent(sub_nodes: list[dict], intro: str) -> None:
-    """Stash parent intro text on the first sub-node for the caller to retrieve.
-
-    The caller in `_split_leaves_with` moves `_intro_for_parent` off the first
-    sub-node and places it as `text` on the parent container. This keeps
-    intro text at the structurally-correct level (container) instead of
-    contaminating the first child's body.
-    """
+    """Store intro text on the first child until the caller restores it to the parent."""
     if not intro or not sub_nodes:
         return
     intro = intro.strip()
@@ -1219,10 +1184,7 @@ def _stash_intro_for_parent(sub_nodes: list[dict], intro: str) -> None:
 
 
 def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int, penjelasan: str | None,) -> list[dict] | None:
-    """Split text into Ayat sub-nodes without recursing into Huruf or Angka.
-
-    Returns a list of Ayat child dicts if Ayat markers are found, or None.
-    """
+    """Split one leaf into Ayat children without descending further."""
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
     text = fix_ocr_artifacts(text)
@@ -1233,7 +1195,6 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
 
     intro, segments = _split_text_by_markers(text, ayat_markers)
     sub_nodes = []
-    # Build one Ayat sub-node for each matched segment.
     for i, (label, segment) in enumerate(segments, 1):
         if not segment.strip():
             continue  # Skip ayat with no content (PDF extraction gap)
@@ -1257,9 +1218,6 @@ def _try_ayat_split(text: str, parent_id: str, parent_title: str, parent_start: 
 def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
     """Apply a split function to every leaf node, preserving the container structure."""
     result = []
-    # Recurse into container nodes; apply split_func only to leaves that have
-    # text. Container text is intro text — kept on container (no synthetic
-    # "Pembukaan" child — LLM-first output is already structured).
     for node in nodes:
         if "nodes" in node and node["nodes"]:
             node["nodes"] = _split_leaves_with(node["nodes"], split_func)
@@ -1267,10 +1225,6 @@ def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
         elif "text" in node and node.get("text"):
             sub_nodes = split_func(node)
             if sub_nodes:
-                # Keep penjelasan on the container. Per-child distribution
-                # is handled by distribute_penjelasan_to_tree in llm_parse.
-                # Recover intro text stashed by split function BEFORE adding
-                # nodes, so JSON serializes as {title, ..., text, nodes}.
                 branch = {k: v for k, v in node.items() if k != "text"}
                 if sub_nodes and "_intro_for_parent" in sub_nodes[0]:
                     branch["text"] = sub_nodes[0].pop("_intro_for_parent")
@@ -1280,17 +1234,12 @@ def _split_leaves_with(nodes: list[dict], split_func) -> list[dict]:
                 result.append(node)
         else:
             result.append(node)
-    # Migrate deeper intros up through any container levels the split functions
-    # produced (nested deep_split → huruf_split chains stash intro on the
-    # deepest leaf; we walk up and surface each to its immediate parent).
     _migrate_stashed_intros(result)
     return result
 
 
 def _migrate_stashed_intros(nodes: list[dict]) -> None:
-    """Walk tree; for every container whose first child has _intro_for_parent,
-    move that text onto the container and clear the stash. Also re-orders
-    keys so `text` appears before `nodes` in JSON serialization."""
+    """Lift stashed intro text from the first child back onto its container."""
     for node in nodes:
         if node.get("nodes"):
             _migrate_stashed_intros(node["nodes"])
@@ -1298,18 +1247,13 @@ def _migrate_stashed_intros(nodes: list[dict]) -> None:
             if first and "_intro_for_parent" in first:
                 text_val = first.pop("_intro_for_parent")
                 if not node.get("text"):
-                    # Re-insert keys to put text before nodes.
                     nodes_val = node.pop("nodes")
                     node["text"] = text_val
                     node["nodes"] = nodes_val
 
 
 def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
-    """Split every leaf node in the tree into Ayat sub-nodes.
-
-    Only splits at the Ayat level; Huruf and Angka sub-structure is not examined.
-    Leaves with no Ayat markers are kept unchanged.
-    """
+    """Split each leaf into Ayat nodes when Ayat markers are present."""
     def _split(node: dict):
         return _try_ayat_split(
             text=node["text"],
@@ -1324,18 +1268,11 @@ def ayat_split_leaves(nodes: list[dict]) -> list[dict]:
 
 
 def _try_huruf_split(text: str, parent_id: str, parent_title: str, parent_start: int, parent_end: int) -> list[dict] | None:
-    """Try splitting text into Huruf sub-nodes (a., b., c., ...) without recursing further.
-
-    Used by Angka items that may contain sub-lists like definitions with a./b./c./d.
-    Falls back to paren-style "a) b) c)" when period style not found.
-    """
+    """Split one leaf into Huruf children without descending further."""
     text = _strip_leading_junk(text)
     text = _normalize_flat_structural_text(text)
     text = fix_ocr_artifacts(text)
 
-    # Prefer period-style (standard huruf); fall back to paren-style when absent.
-    # Paren-style "a) b) c)" still uses legacy strict matcher — no OCR variation
-    # known for parens-style markers in practice.
     huruf_markers = _find_fuzzy_markers(text, "huruf", "a")
     if not huruf_markers:
         legacy = _find_and_validate_markers(text, _SUB_HURUF_RE, "a")
@@ -1495,28 +1432,15 @@ _AMENDMENT_INSTR_PREFIX_RE = re.compile(
 
 
 def deep_split_leaves(nodes: list[dict]) -> list[dict]:
-    """Recursively split every leaf node in the tree to its deepest sub-structure.
-
-    Tries Ayat, then Angka, then Huruf at each level. Leaves with no detectable
-    sub-structure are kept unchanged.
-
-    For amendment Angka nodes whose title references a specific Pasal (e.g.
-    "Angka 1 — Ketentuan Pasal 3 diubah..."), an intermediate Pasal node is
-    inserted so the hierarchy reads: Angka N > Pasal X > [Ayat/Angka/Huruf].
-    """
+    """Split each leaf to the deepest Ayat, Angka, or Huruf structure found."""
     def _split(node: dict):
         title = node["title"]
         text = node["text"]
 
-        # If this Angka's title names a specific Pasal, wrap the split result in
-        # an intermediate Pasal node instead of flattening children directly under
-        # the Angka. This preserves the Pasal I > Angka N > Pasal X > ... hierarchy
-        # for amendment documents.
         m = _ANGKA_TITLE_PASAL_RE.match(title)
         if m:
-            pasal_ref = m.group(1)  # e.g. "Pasal 1"
+            pasal_ref = m.group(1)
             cleaned_text = _AMENDMENT_INSTR_PREFIX_RE.sub('', text, count=1)
-            # Extract the pasal number for a readable node_id suffix.
             ref_m = re.match(r"Pasal\s+(\d+[A-Z]?)", pasal_ref)
             ref_num = ref_m.group(1) if ref_m else "x"
             pasal_id = f"{node['node_id']}_pasal_{ref_num}"
@@ -1536,7 +1460,6 @@ def deep_split_leaves(nodes: list[dict]) -> list[dict]:
                     "end_index": node["end_index"],
                     "nodes": children,
                 }]
-            # No sub-structure found — fall through to plain deep split below.
             title, text = pasal_ref, cleaned_text
 
         return _try_deep_split(
