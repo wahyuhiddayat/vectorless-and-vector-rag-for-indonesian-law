@@ -11,10 +11,6 @@ This addresses weaknesses of both pure approaches:
   - Pure LLM fails on blind navigation (generic titles like "Pasal 3")
   - Hybrid: BM25 finds keyword-relevant content, LLM adds semantic understanding
 
-Usage:
-    python -m vectorless.retrieval.hybrid.search "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.hybrid.search "Apa definisi penyadapan?" --bm25_top_k 10
-    python -m vectorless.retrieval.hybrid.search "Apa definisi penyadapan?" --bm25_top_k 15
 """
 
 import argparse
@@ -32,7 +28,7 @@ from ..common import (
 
 
 def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[dict]:
-    """BM25 scoring on catalog metadata. Returns ranked docs with scores."""
+    """Rank catalog entries with BM25 over the metadata fields."""
     corpus = []
     for doc in catalog:
         combined = " ".join([
@@ -59,7 +55,7 @@ def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[di
 
 
 def _llm_doc_search(query: str, catalog: list[dict]) -> list[dict]:
-    """LLM semantic selection from catalog. Returns selected docs."""
+    """Ask the LLM to pick relevant documents from the catalog."""
     docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
 
     prompt = f"""\
@@ -87,12 +83,7 @@ Aturan:
 
 
 def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
-    """Hybrid doc search: union of BM25 keyword matches and LLM semantic picks.
-
-    BM25 catches exact keyword matches in metadata.
-    LLM catches semantic matches (e.g., "penyadapan" → hukum acara pidana).
-    Union ensures neither blind spot causes a miss.
-    """
+    """Merge BM25 catalog hits with the LLM's document picks."""
     bm25_results = _bm25_doc_search(query, catalog)
     llm_result = _llm_doc_search(query, catalog)
 
@@ -127,7 +118,7 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
 
 
 def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
-    """Recursively collect all leaf nodes (nodes with text, no children) from tree."""
+    """Collect leaf nodes that carry text."""
     leaves = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
@@ -144,7 +135,7 @@ def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
 
 
 def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
-    """BM25 retrieval on leaf node texts. Returns top-K candidates with scores."""
+    """Return the top leaf candidates scored by BM25."""
     leaves = _collect_leaf_nodes(doc["structure"])
     if not leaves:
         return []
@@ -177,11 +168,7 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
 
 
 def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
-    """LLM reranks BM25 candidates based on text snippets.
-
-    Unlike pure LLM tree search (which only sees titles), the LLM here sees
-    actual text snippets from each candidate Pasal, enabling informed selection.
-    """
+    """Have the LLM rerank BM25 candidates using their snippets."""
     candidates_for_prompt = []
     for c in candidates:
         candidates_for_prompt.append({
@@ -222,11 +209,7 @@ Aturan:
 
 def node_search(query: str, doc: dict, bm25_top_k: int = 10,
                 verbose: bool = True) -> dict:
-    """Hybrid node search: BM25 retrieves candidates, LLM reranks with snippets.
-
-    BM25 ensures keyword-relevant Pasal are found (not missed by blind navigation).
-    LLM reranking ensures semantic relevance (understands context beyond keywords).
-    """
+    """Run BM25 candidate search and LLM reranking within one document."""
     candidates = _bm25_node_candidates(query, doc, top_k=bm25_top_k)
 
     if not candidates:
@@ -259,13 +242,7 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
 
 
 def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
-    """Full hybrid retrieval pipeline: hybrid doc search → BM25+LLM node search → answer.
-
-    Args:
-        query: Legal question in Indonesian
-        bm25_top_k: Max BM25 candidates for LLM reranking
-        verbose: Print progress
-    """
+    """Run the catalog-first hybrid retrieval pipeline for one query."""
     reset_token_counters()
     t_start = time.time()
     step_metrics = {}

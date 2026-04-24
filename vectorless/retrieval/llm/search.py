@@ -1,5 +1,4 @@
-"""
-Pure LLM retrieval strategy for Indonesian legal QA.
+"""LLM-only retrieval strategies for the vectorless legal index.
 
 All retrieval decisions (doc selection, tree navigation) are made by LLM prompting.
 No algorithmic scoring — the LLM is the sole searcher.
@@ -8,10 +7,6 @@ Two tree search modes:
   - "full"     — show entire tree skeleton, LLM picks nodes in one shot
   - "stepwise" — navigate level-by-level (BAB → Bagian → Pasal) with reasoning
 
-Usage:
-    python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.llm.search "Apa syarat penyadapan?" --strategy full
-    python -m vectorless.retrieval.llm.search "query" --strategy stepwise
 """
 
 import argparse
@@ -27,10 +22,7 @@ from ..common import (
 
 
 def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
-    """Select relevant doc_ids from catalog using LLM.
-
-    Sends full catalog metadata to LLM — it's small (~3KB for 10 docs).
-    """
+    """Ask the LLM to pick relevant documents from the catalog."""
     docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
 
     prompt = f"""\
@@ -68,7 +60,7 @@ Aturan:
 
 
 def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
-    """Build a compact text representation of tree structure (titles + node_ids only)."""
+    """Render the tree as titles and node IDs only."""
     lines = []
     for node in nodes:
         indent = "  " * depth
@@ -79,7 +71,7 @@ def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
 
 
 def tree_search_full(query: str, doc: dict, verbose: bool = True) -> dict:
-    """Strategy A: Send full tree skeleton, LLM picks nodes in one shot."""
+    """Pick leaf nodes from the full tree in one LLM call."""
     skeleton = _build_tree_skeleton(doc["structure"])
 
     prompt = f"""\
@@ -116,17 +108,12 @@ Aturan:
 
 
 def _get_top_level_nodes(structure: list[dict]) -> list[dict]:
-    """Get top-level nodes (BABs + Pembukaan) from structure."""
+    """Return the nodes shown in the first navigation round."""
     return [{"node_id": n["node_id"], "title": n["title"]} for n in structure]
 
 
 def _get_children_summary(node: dict) -> list[dict]:
-    """Get children summaries with full lineage context for accurate navigation.
-
-    Each entry includes navigation_path (full ancestor chain) so the LLM can
-    distinguish e.g. 'BAB II - KEDUDUKAN > Pasal 2' from 'BAB VII > Pasal 33'.
-    Leaf nodes additionally get a text_preview to allow content verification.
-    """
+    """Summarize one node's children for the next navigation step."""
     if "nodes" not in node:
         return []
     result = []
@@ -141,12 +128,7 @@ def _get_children_summary(node: dict) -> list[dict]:
 
 
 def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
-    """Navigate tree level by level with reasoning at each step.
-
-    Round 1: Show top-level nodes → pick BAB(s)
-    Round 2+: Keep drilling into children until we reach leaf nodes.
-    Stops when selected nodes have no more children (= leaf).
-    """
+    """Walk the tree level by level until the LLM reaches leaf nodes."""
     steps = []
     structure = doc["structure"]
     doc_title = doc["judul"]
@@ -252,7 +234,6 @@ Aturan:
             final_ids.extend([n["node_id"] for n in need_drill])
             return {"steps": steps, "node_ids": final_ids}
 
-        # Merge: leaves from this round + new selections to drill further
         current_ids = final_ids + new_ids
         round_num += 1
 
@@ -260,7 +241,7 @@ Aturan:
 
 
 def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> dict:
-    """Full LLM retrieval pipeline: doc search → tree search → answer."""
+    """Run the LLM-only retrieval pipeline for one query."""
     reset_token_counters()
     t_start = time.time()
     step_metrics = {}

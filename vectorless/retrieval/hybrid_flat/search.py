@@ -9,9 +9,6 @@ Unlike the catalog-based "hybrid" strategy that searches only 1 doc,
 this variant searches the full leaf node corpus directly — eliminating
 the doc selection bottleneck where a wrong doc pick causes total miss.
 
-Usage:
-    python -m vectorless.retrieval.hybrid_flat.search "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.hybrid_flat.search "query" --bm25_top_k 20
 """
 
 import argparse
@@ -30,11 +27,7 @@ from ..common import (
 
 def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
                          verbose: bool = True) -> list[dict]:
-    """BM25 search across ALL leaf nodes, returning candidates with KWIC snippets.
-
-    Same corpus-building as bm25/flat.py but returns enriched candidates
-    (with snippets) for LLM reranking instead of final results.
-    """
+    """Return BM25-ranked leaf candidates with KWIC snippets."""
     corpus = []
     for leaf in leaves:
         enriched = leaf["doc_title"] + " " + leaf["navigation_path"] + " " + leaf["text"]
@@ -74,11 +67,7 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
 
 
 def llm_rerank(query: str, candidates: list[dict]) -> dict:
-    """LLM reranks BM25 candidates from multiple documents using KWIC snippets.
-
-    Unlike hybrid's _llm_rerank which works within a single doc, this version
-    shows doc_title per candidate so the LLM can reason across documents.
-    """
+    """Have the LLM rerank cross-document BM25 candidates."""
     candidates_for_prompt = []
     for c in candidates:
         candidates_for_prompt.append({
@@ -120,13 +109,7 @@ Aturan:
 
 
 def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
-    """Full hybrid-flat pipeline: BM25 global → LLM rerank → answer.
-
-    Args:
-        query: Legal question in Indonesian
-        bm25_top_k: Max BM25 candidates for LLM reranking (default: 20)
-        verbose: Print progress
-    """
+    """Run the global BM25 plus LLM-rerank pipeline for one query."""
     reset_token_counters()
     t_start = time.time()
     step_metrics = {}

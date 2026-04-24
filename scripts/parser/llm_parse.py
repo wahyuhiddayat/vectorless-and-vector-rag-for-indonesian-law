@@ -404,10 +404,6 @@ TITLE CONVENTIONS:
    code fences. No trailing explanation. One top-level key: "structure".
 """
 
-
-# --- structure helpers ---------------------------------------------------
-
-
 _PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
 
 
@@ -739,14 +735,12 @@ def backfill_page_indices(
 ) -> None:
     """Derive start_index / end_index for every node by matching title or text
     against PDF page raw_text. Missing defaults: 1..doc_total_pages."""
-    # Build page lookup: page_num -> raw_text
     page_text = {p["page_num"]: p.get("raw_text", "") for p in pages}
 
     def _find_title_page(title: str) -> int | None:
         if not title:
             return None
         needle = title.strip()
-        # Try exact-ish match first (ignore case, collapse whitespace).
         needle_norm = re.sub(r"\s+", " ", needle)
         for n in sorted(page_text):
             t = re.sub(r"\s+", " ", page_text[n])
@@ -760,7 +754,6 @@ def backfill_page_indices(
         node["start_index"] = start
         children = node.get("nodes", []) or []
         if children:
-            # Propagate to children; set parent end to last child's end.
             for i, child in enumerate(children):
                 next_sib = children[i + 1] if i + 1 < len(children) else None
                 next_start = _find_title_page(next_sib.get("title", "")) if next_sib else None
@@ -775,10 +768,6 @@ def backfill_page_indices(
         next_start = _find_title_page(next_top.get("title", "")) if next_top else None
         default_end = (next_start - 1) if next_start else doc_total_pages
         _assign(top, default_start=1, default_end=default_end)
-
-
-# --- validation ----------------------------------------------------------
-
 
 _INLINE_MARKER_RE = re.compile(
     r"(?:^|\n)\s*(?:\(\d+\)|[a-z]\.|\d+\.)\s",
@@ -827,7 +816,6 @@ def validate_parse(
             f"breaks re-split): {hybrids[:20]}"
         )
 
-    # Amendment doc: validate presence of Pasal Roman root(s) only.
     if is_perubahan:
         romans = [
             n for n in iter_nodes(structure)
@@ -837,7 +825,6 @@ def validate_parse(
             errors.append(
                 "amendment doc has no Pasal Roman root (expected 'Pasal I' at least)"
             )
-        # Non-empty body text on each Pasal Roman root.
         for rn in romans:
             txt = (rn.get("text") or "").strip()
             has_children = bool(rn.get("nodes"))
@@ -847,7 +834,6 @@ def validate_parse(
                 )
         return len(errors) == 0, errors
 
-    # Standard doc: arabic pasal number coverage.
     out_numbers = collect_pasal_numbers(structure)
     out_count = len(out_numbers)
 
@@ -1021,16 +1007,12 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
     if not chunks:
         return []
 
-    # Ordered registry of container paths we've seen. Each path is a tuple of
-    # titles (e.g. ("BAB III - ...", "Bagian Kesatu - ..."))
     container_stub: dict[tuple, dict] = {}
     container_order: list[tuple] = []
 
     pasal_best: dict[str, dict] = {}
     pasal_to_path: dict[str, tuple] = {}
 
-    # Hierarchy depth: BAB=0, Bagian=1, Paragraf=2. Carry across chunks so
-    # mid-BAB chunks still inherit parent scope.
     def _container_depth(title: str) -> int | None:
         t = title.strip()
         if t.upper().startswith("BAB "):
@@ -1069,7 +1051,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
         for n in nodes:
             t = (n.get("title") or "").strip()
             if _PASAL_TITLE_RE.match(t):
-                # Pasal leaf. Track best copy + current container key path.
                 key_tuple = tuple(current_keys)
                 existing = pasal_best.get(t)
                 if existing is None:
@@ -1085,7 +1066,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
                 continue
             depth = _container_depth(t)
             if depth is not None:
-                # Truncate path to this depth, then push this container.
                 current_path = current_path[:depth] + [t]
                 current_keys = current_keys[:depth] + [_container_key(n)]
                 key_tuple = tuple(current_keys)
@@ -1105,7 +1085,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
             return (10**9, name)
         return (int(m.group(1)), m.group(2) or "")
 
-    # Bucket pasals by their full container path.
     path_buckets: dict[tuple, list[str]] = {}
     unbucketed: list[str] = []
     for p in sorted(pasal_best.keys(), key=_pasal_key):
@@ -1115,9 +1094,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
             continue
         path_buckets.setdefault(path, []).append(p)
 
-    # Rebuild tree by nesting containers along their ordered paths.
-    # Strategy: walk container_order, creating nested dict nodes as needed.
-    # Use a tree built from path prefixes so common ancestors share one node.
     root_nodes: list[dict] = []
     node_index: dict[tuple, dict] = {}
 
@@ -1138,7 +1114,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
                 root_nodes.append(node)
         return node_index[path]
 
-    # Preserve first-seen order of container keys for deterministic layout.
     for key in container_order:
         _ensure_path(key)
 
@@ -1146,10 +1121,8 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
         container = _ensure_path(path)
         container.setdefault("nodes", []).extend(pasal_best[p] for p in pasal_list)
 
-    # Unbucketed pasals: attach to last container OR emit as top-level.
     if unbucketed:
         if root_nodes:
-            # Find deepest-last container
             last = root_nodes[-1]
             while last.get("nodes") and last["nodes"] and _is_container(last["nodes"][-1]):
                 last = last["nodes"][-1]
@@ -1157,7 +1130,6 @@ def _merge_chunk_structures(chunks: list[list[dict]]) -> list[dict]:
         else:
             root_nodes.extend(pasal_best[p] for p in unbucketed)
 
-    # Clean up: drop containers with no children.
     def _prune(nodes: list[dict]) -> list[dict]:
         out = []
         for n in nodes:
