@@ -22,33 +22,24 @@ from common import (
 
 log = logging.getLogger("bpk_scraper")
 
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
 
 def sanitize_filename(name: str) -> str:
-    """Clean a string for safe use as a filename."""
+    """Normalize a string into a filesystem-safe filename."""
     name = re.sub(r'[<>:"/\\|?*]', "", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
 
 def make_doc_id(bentuk_singkat: str, nomor: str, tahun: str) -> str:
-    """Build canonical doc_id like 'uu-1-2026'."""
+    """Build the canonical `doc_id`, for example `uu-1-2026`."""
     bs = bentuk_singkat.strip().lower() if bentuk_singkat else "unknown"
     n = nomor.strip() if nomor else "0"
     t = tahun.strip() if tahun else "0"
     return f"{bs}-{n}-{t}"
 
 
-# ---------------------------------------------------------------------------
-# Pagination
-# ---------------------------------------------------------------------------
-
-
 def get_total_pages(jenis_id: int, session: requests.Session, tahun: int | None = None) -> int:
-    """Discover the last page number from the pagination on page 1."""
+    """Return the last pagination page for a `jenis` listing."""
     url = f"{BASE_URL}/Search?jenis={jenis_id}&p=1"
     if tahun:
         url += f"&tahun={tahun}"
@@ -59,7 +50,6 @@ def get_total_pages(jenis_id: int, session: requests.Session, tahun: int | None 
     pagination = soup.select_one("ul.pagination")
     if not pagination:
         return 1
-    # The "Last" link is the last <a class="page-link"> whose text is "Last"
     last_link = None
     for a in pagination.find_all("a", class_="page-link"):
         if a.get_text(strip=True) == "Last":
@@ -69,7 +59,6 @@ def get_total_pages(jenis_id: int, session: requests.Session, tahun: int | None 
         match = re.search(r"[?&]p=(\d+)", last_link["href"])
         if match:
             return int(match.group(1))
-    # Fallback: find the highest numeric page link
     max_page = 1
     for a in pagination.find_all("a", class_="page-link"):
         txt = a.get_text(strip=True)
@@ -124,7 +113,7 @@ def scrape_list_page(jenis_id: int, page: int, session: requests.Session, tahun:
 
 
 def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> dict | None:
-    """Scrape a detail page and return full metadata dict."""
+    """Scrape a detail page into the metadata shape used on disk."""
     url = f"{BASE_URL}/Details/{detail_id}/{slug}"
     resp = fetch(url, session)
     if resp is None:
@@ -132,20 +121,17 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
     soup = BeautifulSoup(resp.text, "html.parser")
     metadata: dict = {"detail_id": detail_id, "slug": slug, "url": url}
 
-    # --- MATERI POKOK ---
-    # h4 has child <span>, so string= won't match; use lambda on get_text()
+    # `string=` does not match here because the heading contains child spans.
     materi_header = soup.find(
         lambda tag: tag.name == "h4" and "MATERI POKOK" in tag.get_text()
     )
     if materi_header:
         card_body = materi_header.find_parent("div", class_="card-body")
         if card_body:
-            # The materi pokok text is in <p> elements after the separator
             paragraphs = card_body.find_all("p")
             materi_texts = [p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)]
             metadata["materi_pokok"] = " ".join(materi_texts)
 
-    # --- METADATA PERATURAN ---
     meta_header = soup.find(
         lambda tag: tag.name == "h4" and "METADATA" in tag.get_text()
     )
@@ -161,11 +147,9 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
                     if key_div and val_div:
                         key = key_div.get_text(strip=True)
                         val = val_div.get_text(strip=True)
-                        # Normalize key to snake_case
                         norm_key = key.lower().replace(".", "").replace(" ", "_")
                         metadata[norm_key] = val
 
-    # --- STATUS PERATURAN ---
     status_header = soup.find(
         lambda tag: tag.name == "h4" and tag.get_text(strip=True).startswith("STATUS")
     )
@@ -176,7 +160,6 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
             if relasi:
                 metadata["relasi"] = relasi
 
-    # --- PDF FILE INFO ---
     pdf_links = soup.select("a.download-file[href^='/Download/']")
     pdf_files = []
     for a in pdf_links:
@@ -188,7 +171,6 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
         filename_part = href.split("/")[-1] if "/" in href else ""
         filename = unquote(filename_part)
         pdf_files.append({"file_id": data_id, "filename": filename, "href": href})
-    # Deduplicate by file_id
     seen_ids = set()
     unique_pdfs = []
     for pf in pdf_files:
@@ -198,7 +180,6 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
     if unique_pdfs:
         metadata["pdf_files"] = unique_pdfs
 
-    # --- Build doc_id ---
     bentuk_singkat = metadata.get("bentuk_singkat", "")
     nomor = metadata.get("nomor", "")
     tahun = metadata.get("tahun", "")
@@ -208,7 +189,7 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
 
 
 def _parse_status_peraturan(card_body) -> list[dict]:
-    """Parse the STATUS PERATURAN section into a list of relasi dicts."""
+    """Parse the STATUS PERATURAN card into relation entries."""
     relasi = []
     current_type = None
 
@@ -220,13 +201,11 @@ def _parse_status_peraturan(card_body) -> list[dict]:
         if not hasattr(div, "select_one"):
             continue
 
-        # Check for relasi type header (e.g. "Mengubah :")
         type_div = div.select_one("div.fw-semibold.bg-light-primary")
         if type_div:
             current_type = type_div.get_text(strip=True).rstrip(" :")
             continue
 
-        # Check for list of related regulations
         if current_type:
             for li in div.select("ol li"):
                 ref = {}
@@ -240,7 +219,6 @@ def _parse_status_peraturan(card_body) -> list[dict]:
                         ref["ref_id"] = ref_parts[1]
                         ref["ref_slug"] = ref_parts[2]
 
-                # Get the full text of the li minus the link text
                 full_text = li.get_text(" ", strip=True)
                 link_text = link.get_text(strip=True) if link else ""
                 remainder = full_text.replace(link_text, "", 1).strip()
@@ -307,17 +285,8 @@ def download_pdf(
         return None
 
 
-# ---------------------------------------------------------------------------
-# Registry generation
-# ---------------------------------------------------------------------------
-
-
 def generate_registry(output_dir: Path) -> dict:
-    """Build a unified registry from all jenis subfolders' metadata.
-
-    Merges with existing registry.json so incremental scraper runs
-    (different --jenis each time) don't lose previous entries.
-    """
+    """Rebuild `registry.json` from the scraped metadata directories."""
     registry_path = output_dir / "registry.json"
     if registry_path.exists():
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -325,9 +294,8 @@ def generate_registry(output_dir: Path) -> dict:
     else:
         registry = {}
 
-    # Scan all {jenis}/metadata/ subdirectories
     for metadata_dir in sorted(output_dir.glob("*/metadata")):
-        jenis_folder = metadata_dir.parent.name  # e.g. "UU", "PP"
+        jenis_folder = metadata_dir.parent.name
         for json_file in sorted(metadata_dir.glob("*.json")):
             try:
                 data = json.loads(json_file.read_text(encoding="utf-8"))

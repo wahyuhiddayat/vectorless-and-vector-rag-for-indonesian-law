@@ -23,36 +23,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ============================================================
-# CONFIGURATION (all overridable via env vars)
-# ============================================================
-
 EMBEDDING_MODEL = os.environ.get("VECTOR_EMBEDDING_MODEL", "bge-m3")
 COLLECTION_NAME = os.environ.get("VECTOR_COLLECTION", "law-pasal-bgem3")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-QDRANT_PATH = os.environ.get("QDRANT_PATH", None)  # local mode (takes priority over URL)
+QDRANT_PATH = os.environ.get("QDRANT_PATH", None)
 GRANULARITY = os.environ.get("VECTOR_GRANULARITY", "pasal")
 LOG_DIR = Path("data/retrieval_logs")
 
 
-# ============================================================
-# EMBEDDING MODEL CONFIG
-# ============================================================
-
 _EMBEDDING_MODEL_MAP: dict[str, dict] = {
-    # Hypothesis A: MIRACL SOTA, 8K context, handles long pasal
     "bge-m3": {
         "model_id": "BAAI/bge-m3",
         "dim": 1024,
         "backend": "sentence_transformers",
     },
-    # Hypothesis B: Indonesian-specific IndoBERT, 128-token limit (finding, not flaw)
     "all-indobert-base-v4": {
         "model_id": "LazarusNLP/all-indobert-base-v4",
         "dim": 768,
         "backend": "sentence_transformers",
     },
-    # Hypothesis C: MMTEB best public multilingual, instruction-tuned, 512-token context
     "multilingual-e5-large-instruct": {
         "model_id": "intfloat/multilingual-e5-large-instruct",
         "dim": 1024,
@@ -65,21 +54,13 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
 }
 
 
-# ============================================================
-# QDRANT CLIENT
-# ============================================================
-
 def get_qdrant_client():
-    """Return Qdrant client: local path mode if QDRANT_PATH is set, else URL mode."""
+    """Return a Qdrant client for local-path or server mode."""
     from qdrant_client import QdrantClient
     if QDRANT_PATH:
         return QdrantClient(path=QDRANT_PATH)
     return QdrantClient(url=QDRANT_URL)
 
-
-# ============================================================
-# CLIENTS / TOKEN COUNTERS
-# ============================================================
 
 _genai_client = None
 _total_input_tokens = 0
@@ -88,7 +69,7 @@ _total_calls = 0
 
 
 def _get_genai_client():
-    """Lazy-init Google GenAI client."""
+    """Create the Google GenAI client on first use."""
     global _genai_client
     if _genai_client is None:
         from google import genai
@@ -100,11 +81,11 @@ def _get_genai_client():
     return _genai_client
 
 
-_st_model_cache: dict = {}  # model_id -> SentenceTransformer instance
+_st_model_cache: dict = {}
 
 
 def _get_st_model(model_id: str):
-    """Lazy-init SentenceTransformer model (cached by model_id)."""
+    """Create and cache a SentenceTransformer model."""
     if model_id not in _st_model_cache:
         from sentence_transformers import SentenceTransformer
         _st_model_cache[model_id] = SentenceTransformer(model_id)
@@ -112,7 +93,7 @@ def _get_st_model(model_id: str):
 
 
 def reset_token_counters():
-    """Reset per-query token counters."""
+    """Reset the in-process token counters."""
     global _total_input_tokens, _total_output_tokens, _total_calls
     _total_input_tokens = 0
     _total_output_tokens = 0
@@ -129,16 +110,8 @@ def get_token_stats() -> dict:
     }
 
 
-# ============================================================
-# EMBEDDING
-# ============================================================
-
 def embed_query(query: str) -> list[float]:
-    """Embed a single query using the configured SentenceTransformer model.
-
-    For multilingual-e5-large-instruct the query is wrapped with the task instruction.
-    For bge-m3 and all-indobert-base-v4 no prefix is needed.
-    """
+    """Embed a query with the configured SentenceTransformer model."""
     cfg = _EMBEDDING_MODEL_MAP.get(EMBEDDING_MODEL)
     if not cfg:
         raise ValueError(f"Unknown embedding model: {EMBEDDING_MODEL!r}")
@@ -150,12 +123,8 @@ def embed_query(query: str) -> list[float]:
     return [float(x) for x in vec]
 
 
-# ============================================================
-# LLM
-# ============================================================
-
 def llm_call(prompt: str, max_retries: int = 3) -> dict:
-    """Send prompt to Gemini 2.5 Flash, return parsed JSON."""
+    """Send a prompt to Gemini and parse the JSON response."""
     global _total_input_tokens, _total_output_tokens, _total_calls
     client = _get_genai_client()
 
@@ -188,26 +157,12 @@ def llm_call(prompt: str, max_retries: int = 3) -> dict:
     return json.loads(text)
 
 
-# ============================================================
-# ANSWER GENERATION
-# ============================================================
-
 def generate_answer(query: str, results: list[dict],
                     verbose: bool = True) -> dict:
-    """Generate a grounded answer with label-based citations [R1], [R2].
-
-    Citation format matches vectorless-rag for fair evaluation comparison.
-
-    Returns:
-        {
-            "answer": "...[R1]...",
-            "citations": [{"label": "[R1]", "node_id": "...", "doc_id": "...", ...}]
-        }
-    """
+    """Generate an answer grounded in the retrieved chunks."""
     if not results:
         return {"answer": "No answer generated", "citations": []}
 
-    # Build label map: R1, R2, ... for each retrieved chunk
     label_map: dict[str, dict] = {}
     context_parts: list[str] = []
     for i, r in enumerate(results, 1):
@@ -264,12 +219,8 @@ Aturan:
     }
 
 
-# ============================================================
-# LOGGING
-# ============================================================
-
 def save_log(result: dict):
-    """Save retrieval result to data/retrieval_logs/."""
+    """Persist a retrieval result under `data/retrieval_logs`."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     strategy = result.get("strategy", "unknown").replace(" ", "_")

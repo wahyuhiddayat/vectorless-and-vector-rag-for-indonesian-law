@@ -1,6 +1,4 @@
-"""
-Shared constants and utilities for BPK JDIH scraper + survey scripts.
-"""
+"""Shared HTTP settings and type maps for the BPK JDIH scraper."""
 
 import logging
 import time
@@ -165,7 +163,7 @@ log = logging.getLogger("bpk")
 
 
 def fetch(url: str, session: requests.Session, retries: int = MAX_RETRIES) -> requests.Response | None:
-    """GET with retries. Returns Response or None on failure."""
+    """Fetch a page with bounded retries."""
     for attempt in range(1, retries + 1):
         try:
             resp = session.get(url, headers=HEADERS, timeout=30)

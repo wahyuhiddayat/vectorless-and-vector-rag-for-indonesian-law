@@ -34,31 +34,24 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 load_dotenv()
 
-BATCH_SIZE_ST = 64      # SentenceTransformer encode batch size
+BATCH_SIZE_ST = 64
 UPSERT_BATCH = 100
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 
 DEFAULT_SOURCE = Path("data/index_pasal")
 
-# ============================================================
-# EMBEDDING MODEL REGISTRY
-# ============================================================
-
 _EMBEDDING_MODEL_MAP: dict[str, dict] = {
-    # MIRACL SOTA, 8K context window, handles long pasal
     "bge-m3": {
         "model_id": "BAAI/bge-m3",
         "dim": 1024,
         "short": "bgem3",
     },
-    # Indonesian-specific, 128-token limit
     "all-indobert-base-v4": {
         "model_id": "LazarusNLP/all-indobert-base-v4",
         "dim": 768,
         "short": "indobert",
     },
-    # MMTEB best public multilingual, 512-token context
     "multilingual-e5-large-instruct": {
         "model_id": "intfloat/multilingual-e5-large-instruct",
         "dim": 1024,
@@ -78,12 +71,8 @@ def _source_to_gran(source_dir: Path) -> str:
     return _SOURCE_TO_GRAN.get(source_dir.name, source_dir.name)
 
 
-# ============================================================
-# CHUNK COLLECTION
-# ============================================================
-
 def collect_leaf_nodes(nodes: list[dict], doc_id: str, doc_title: str) -> list[dict]:
-    """Recursively collect all leaf nodes from a document tree structure."""
+    """Collect leaf nodes from a document tree."""
     chunks = []
     for node in nodes:
         if "nodes" in node and node["nodes"]:
@@ -105,18 +94,8 @@ def collect_leaf_nodes(nodes: list[dict], doc_id: str, doc_title: str) -> list[d
     return chunks
 
 
-# ============================================================
-# EMBEDDING
-# ============================================================
-
 def embed_texts_st(texts: list[str], model_id: str) -> list[list[float]]:
-    """Embed texts using SentenceTransformer (local, no API calls).
-
-    Passages are embedded without instruction prefix for all three models:
-    - BGE-M3: no prefix needed
-    - all-indobert-base-v4: no prefix needed
-    - multilingual-e5-large-instruct: instruction prefix is query-only; passages use raw text
-    """
+    """Embed passage text with SentenceTransformer."""
     from sentence_transformers import SentenceTransformer
     print(f"  Loading SentenceTransformer: {model_id}")
     st = SentenceTransformer(model_id)
@@ -129,10 +108,6 @@ def embed_texts_st(texts: list[str], model_id: str) -> list[list[float]]:
     return [v.tolist() for v in vecs]
 
 
-# ============================================================
-# INDEX BUILD
-# ============================================================
-
 def build_index(
     source_dir: Path,
     collection_name: str | None = None,
@@ -140,16 +115,7 @@ def build_index(
     qdrant_path: str | None = None,
     catalog_filename: str = "catalog.json",
 ):
-    """Build Qdrant collection from all index JSON files in source_dir.
-
-    Args:
-        source_dir:       Path to index JSON directory (e.g. data/index_pasal)
-        collection_name:  Qdrant collection name; auto-derived if None
-        model:            Embedding model key from _EMBEDDING_MODEL_MAP
-        qdrant_path:      Path to local Qdrant storage (None = use server URL)
-        catalog_filename: Catalog JSON filename inside source_dir (default: catalog.json).
-                          Use catalog_gt.json to embed only GT-verified documents.
-    """
+    """Build one Qdrant collection from the JSON index files in `source_dir`."""
     model_cfg = _EMBEDDING_MODEL_MAP.get(model)
     if not model_cfg:
         print(f"ERROR: Unknown model {model!r}. Choose from: {list(_EMBEDDING_MODEL_MAP)}")
@@ -177,7 +143,6 @@ def build_index(
     else:
         print(f"Qdrant:     server {QDRANT_URL}")
 
-    # Collect all chunks
     all_chunks: list[dict] = []
     for doc_meta in catalog:
         doc_id = doc_meta["doc_id"]
@@ -206,19 +171,16 @@ def build_index(
         print("ERROR: No chunks found")
         sys.exit(1)
 
-    # Embed
     texts = [c["text"] for c in all_chunks]
     print(f"\nEmbedding {len(texts)} chunks with {model}...")
     embeddings = embed_texts_st(texts, model_cfg["model_id"])
 
-    # Connect to Qdrant
     if qdrant_path:
         qdrant = QdrantClient(path=qdrant_path)
     else:
         qdrant = QdrantClient(url=QDRANT_URL)
         print(f"\nUploading to Qdrant ({QDRANT_URL})...")
 
-    # Recreate collection (drops existing data)
     qdrant.recreate_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(
@@ -227,7 +189,6 @@ def build_index(
         ),
     )
 
-    # Build and upsert points
     points = [
         PointStruct(
             id=i,
@@ -250,7 +211,6 @@ def build_index(
         if len(points) > UPSERT_BATCH:
             print(f"  Uploaded {min(i + UPSERT_BATCH, len(points))}/{len(points)} points")
 
-    # Verify
     info = qdrant.get_collection(collection_name)
     print(f"\nDone!")
     print(f"  Collection: {collection_name}")
@@ -258,10 +218,6 @@ def build_index(
     print(f"  Vectors:    {embedding_dim}d, distance=Cosine")
     print(f"  Status:     {info.status}")
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

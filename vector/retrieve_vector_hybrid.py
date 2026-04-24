@@ -41,7 +41,7 @@ _STOPWORDS = {
 
 
 def tokenize(text: str) -> list[str]:
-    """Simple Indonesian tokenizer: lowercase, split on non-alphanumeric, remove stopwords."""
+    """Lowercase, split, and drop common Indonesian stopwords."""
     tokens = re.findall(r'[a-z0-9]+', text.lower())
     return [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
 
@@ -51,7 +51,7 @@ def tokenize(text: str) -> list[str]:
 # ============================================================
 
 def load_all_chunks() -> list[dict]:
-    """Load all chunks from Qdrant for BM25 corpus building."""
+    """Load every chunk from Qdrant for BM25 scoring."""
     qdrant = get_qdrant_client()
     all_points = []
     offset = None
@@ -91,7 +91,7 @@ def load_all_chunks() -> list[dict]:
 
 def bm25_search(query: str, chunks: list[dict], top_k: int = 5,
                 verbose: bool = True) -> list[dict]:
-    """BM25 sparse search over chunk texts."""
+    """Run BM25 over the chunk text."""
     corpus = [tokenize(c["text"]) for c in chunks]
     bm25 = BM25Okapi(corpus)
 
@@ -130,7 +130,7 @@ def bm25_search(query: str, chunks: list[dict], top_k: int = 5,
 # ============================================================
 
 def dense_search(query: str, top_k: int = 5, verbose: bool = True) -> list[dict]:
-    """Dense vector search: embed query -> Qdrant cosine similarity -> top-K."""
+    """Embed the query and return the top Qdrant matches."""
     query_vec = embed_query(query)
 
     qdrant = get_qdrant_client()
@@ -169,10 +169,7 @@ def dense_search(query: str, top_k: int = 5, verbose: bool = True) -> list[dict]
 
 def merge_results(sparse: list[dict], dense: list[dict],
                   verbose: bool = True) -> list[dict]:
-    """Merge dense + sparse results by concatenation with deduplication.
-
-    Dense first (semantic priority), then sparse (keyword priority).
-    """
+    """Concatenate dense and sparse hits while removing duplicates."""
     seen: set = set()
     merged = []
 
@@ -199,7 +196,7 @@ def merge_results(sparse: list[dict], dense: list[dict],
 # ============================================================
 
 def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
-    """Full hybrid retrieval: BM25 sparse + Qdrant dense -> merge -> answer."""
+    """Run sparse search, dense search, merge, and answer generation."""
     reset_token_counters()
     t_start = time.time()
 
@@ -210,25 +207,19 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         print(f"Model: {EMBEDDING_MODEL}  Collection: {COLLECTION_NAME}")
         print(f"{'='*60}")
 
-    # Load all chunks for BM25
     chunks = load_all_chunks()
 
-    # Sparse search (BM25)
     sparse_results = bm25_search(query, chunks, top_k, verbose)
 
-    # Dense search (vector)
     dense_results = dense_search(query, top_k, verbose)
 
-    # Merge
     merged = merge_results(sparse_results, dense_results, verbose)
 
     if not merged:
         return {"query": query, "strategy": "vector-hybrid", "error": "No results found"}
 
-    # Answer generation
     answer_result = generate_answer(query, merged, verbose)
 
-    # Build sources
     sources = []
     for r in merged:
         src = {

@@ -1,4 +1,4 @@
-"""Shared utilities used by the active retrieval pipelines."""
+"""Shared helpers for the vectorless retrieval pipelines."""
 
 import json
 import os
@@ -17,10 +17,6 @@ DATA_INDEX = Path(os.environ.get("DATA_INDEX", "data/index_pasal"))
 LOG_DIR = Path("data/retrieval_logs")
 
 
-# ============================================================
-# TOKENIZER
-# ============================================================
-
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
     "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
@@ -32,15 +28,11 @@ STOPWORDS = {
 
 
 def tokenize(text: str) -> list[str]:
-    """Indonesian tokenizer: lowercase, split on non-alphanumeric, remove stopwords."""
+    """Lowercase, split, and drop common Indonesian stopwords."""
     text = text.lower()
     tokens = re.findall(r'[a-z0-9]+', text)
     return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
 
-
-# ============================================================
-# LLM CLIENT
-# ============================================================
 
 _client = None
 _total_input_tokens = 0
@@ -139,7 +131,7 @@ def llm_call(prompt: str, max_retries: int = 3) -> dict:
 
 
 def reset_token_counters():
-    """Reset per-query token counters."""
+    """Reset the in-process token counters."""
     global _total_input_tokens, _total_output_tokens, _total_calls
     _total_input_tokens = 0
     _total_output_tokens = 0
@@ -183,12 +175,8 @@ def compute_step_metrics(t_start: float, snap_before: dict) -> dict:
     }
 
 
-# ============================================================
-# DATA LOADING
-# ============================================================
-
 def load_catalog() -> list[dict]:
-    """Load catalog.json for doc-level search."""
+    """Load the document catalog."""
     with open(DATA_INDEX / "catalog.json", encoding="utf-8") as f:
         return json.load(f)
 
@@ -209,7 +197,7 @@ def _doc_category(doc_id: str) -> str:
 
 
 def load_doc(doc_id: str) -> dict:
-    """Load a full index document by doc_id."""
+    """Load one indexed document."""
     path = DATA_INDEX / _doc_category(doc_id) / f"{doc_id}.json"
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -258,17 +246,8 @@ def load_all_leaf_nodes() -> list[dict]:
     return all_leaves
 
 
-# ============================================================
-# TEXT HELPERS
-# ============================================================
-
 def extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
-    """Extract keyword-in-context snippet around the best query term match.
-
-    Instead of blindly taking the first 300 chars (which misses relevant content
-    deep in long Pasal like Pasal 1 with 57 definitions), find where the query
-    keywords actually appear and extract text around that position.
-    """
+    """Extract a snippet around the first matching query token."""
     text_lower = text.lower()
     query_tokens = tokenize(query)
 
@@ -295,12 +274,8 @@ def extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
     return snippet
 
 
-# ============================================================
-# TREE HELPERS
-# ============================================================
-
 def find_node(nodes: list[dict], node_id: str) -> dict | None:
-    """Find a node by node_id in a tree structure (recursive)."""
+    """Find one node in the tree by `node_id`."""
     for node in nodes:
         if node.get("node_id") == node_id:
             return node
@@ -327,19 +302,9 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
     return results
 
 
-# ============================================================
-# ANSWER GENERATION
-# ============================================================
-
 def generate_answer(query: str, nodes: list[dict], doc_meta: dict,
                     verbose: bool = True) -> dict:
-    """Generate a grounded answer from selected Pasal texts.
-
-    Uses label-based citations [R1], [R2], etc. to prevent hallucinated references.
-    Each retrieved chunk gets a label, and the LLM must cite using those labels.
-    The response maps labels back to actual node_ids for traceability.
-    """
-    # Build label mapping: R1 -> node info
+    """Generate an answer grounded in one document's selected nodes."""
     label_map = {}
     context_parts = []
     for i, node in enumerate(nodes, 1):
@@ -385,7 +350,6 @@ Aturan:
 
     result = llm_call(prompt)
 
-    # Map labels back to node_ids
     cited_labels = result.get("cited", [])
     result["citations"] = [
         {**label_map[l], "label": l}
@@ -403,15 +367,10 @@ Aturan:
 
 def generate_answer_multi_doc(query: str, results: list[dict],
                               verbose: bool = True) -> dict:
-    """Generate a grounded answer from results spanning multiple documents.
-
-    Same label-based citation as generate_answer, but each chunk shows its own
-    doc source instead of a single doc_meta header. Used by flat BM25 and hybrid flat.
-    """
+    """Generate an answer grounded in nodes from multiple documents."""
     if not results:
         return {"answer": "No answer generated", "cited": [], "citations": [], "label_map": {}}
 
-    # Build label mapping: R1 -> node info
     label_map = {}
     context_parts = []
     for i, r in enumerate(results, 1):
@@ -460,7 +419,6 @@ Aturan:
 
     result = llm_call(prompt)
 
-    # Map labels back to node_ids
     cited_labels = result.get("cited", [])
     result["citations"] = [
         {**label_map[l], "label": l}
@@ -476,12 +434,8 @@ Aturan:
     return result
 
 
-# ============================================================
-# LOGGING
-# ============================================================
-
 def save_log(result: dict):
-    """Save retrieval result to data/retrieval_logs/."""
+    """Persist a retrieval result under `data/retrieval_logs`."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = LOG_DIR / f"{timestamp}.json"

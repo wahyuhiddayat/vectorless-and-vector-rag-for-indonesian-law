@@ -1,8 +1,4 @@
-"""Build document metadata from scrape + PDF preamble (no regex structure).
-
-The output dict is the non-structure portion of a pasal-index JSON. The LLM
-structure tree is attached separately by scripts/parser/llm_parse.py.
-"""
+"""Build the metadata envelope for a pasal index document."""
 from __future__ import annotations
 
 import json
@@ -54,15 +50,7 @@ def _pick_penjelasan_pdf(detail: dict | None) -> str | None:
 
 
 def build_metadata(doc_id: str) -> dict:
-    """Build the non-structure metadata portion of a pasal-index document.
-
-    Sources:
-      - registry.json: judul, nomor, tahun, scrape fields
-      - detail metadata JSON: bidang, subjek, materi_pokok, relasi
-      - PDF preamble parse: total_pages, body_pages, penjelasan_page,
-        penjelasan_umum, penjelasan_pasal_demi_pasal
-      - Heuristic: is_perubahan
-    """
+    """Assemble metadata from the registry, detail JSON, and PDF text."""
     registry = _load_registry()
     entry = registry.get(doc_id)
     if not entry:
@@ -85,7 +73,6 @@ def build_metadata(doc_id: str) -> dict:
     boundaries = [p for p in (closing_page, penjelasan_page) if p]
     body_end = min(boundaries) - 1 if boundaries else total_pages
 
-    # Title regex first, fallback to PDF-text scan (catches OCR-dropped "PERUBAHAN").
     judul = entry["judul"]
     is_perubahan = bool(_AMENDMENT_TITLE_RE.search(judul or "")) or detect_perubahan(pages)
 
@@ -96,7 +83,6 @@ def build_metadata(doc_id: str) -> dict:
         penjelasan_umum = penj.get("umum")
         penjelasan_pasal = penj.get("pasal") or None
 
-    # Some older UUs ship penjelasan as a separate PDF listed in detail metadata.
     if penjelasan_umum is None:
         penj_filename = _pick_penjelasan_pdf(detail)
         if penj_filename:

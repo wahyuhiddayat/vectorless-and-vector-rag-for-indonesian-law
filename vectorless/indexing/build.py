@@ -52,7 +52,7 @@ CATALOG_FIELDS = (
 
 
 def add_navigation_paths(nodes: list[dict], ancestors: list[str] | None = None) -> None:
-    """Populate navigation_path for each node recursively."""
+    """Fill `navigation_path` from the node ancestry."""
     if ancestors is None:
         ancestors = []
     for node in nodes:
@@ -73,7 +73,7 @@ def resplit_one(pasal_doc: dict, granularity: str) -> dict:
 
 
 def build_catalog(index_dir: Path) -> list[dict]:
-    """Compact per-doc summary written as catalog.json in each index_* dir."""
+    """Build the compact catalog stored beside each index."""
     catalog = []
     for path in sorted(index_dir.rglob("*.json")):
         if path.name == "catalog.json":
@@ -107,13 +107,7 @@ def _resolve_targets(doc_ids: list[str], category: str | None) -> list[str]:
 
 
 def _update_cost_log(granularity: str, doc_id: str, entry: dict) -> None:
-    """Overwrite the per-doc cost entry in data/indexing_logs/cost_<granularity>.json.
-
-    The cost log is needed for RQ3 (vectorless vs vector cost comparison):
-    indexing tokens, time, leaf counts per granularity per doc. Entries are
-    replaced wholesale on re-indexing so stale fields from prior pipelines
-    do not accumulate.
-    """
+    """Replace one document entry in the per-granularity cost log."""
     INDEXING_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     path = INDEXING_LOGS_DIR / f"cost_{granularity}.json"
     data = {}
@@ -128,7 +122,7 @@ def _update_cost_log(granularity: str, doc_id: str, entry: dict) -> None:
 
 
 def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[str, int]:
-    """Re-split pasal doc to ayat + rincian. Returns leaf counts per granularity."""
+    """Re-split a pasal document into its derived granularities."""
     with open(pasal_path, encoding="utf-8") as f:
         pasal_doc = json.load(f)
 
@@ -144,17 +138,13 @@ def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[s
 
 
 def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
-    """Index one doc end-to-end: LLM-parse + re-split ayat + re-split rincian.
-
-    Returns a dict with status, pasal_count, and leaf counts per derived granularity.
-    """
+    """Index one document and return a short status summary."""
     from scripts.parser.llm_parse import parse_doc as llm_parse_doc, _append_audit
 
     t0 = time.time()
     summary: dict = {"doc_id": doc_id}
 
     if resplit_only:
-        # Skip LLM-parse; assume existing pasal JSON is source of truth.
         pasal_path = None
         for p in GRANULARITY_INDEX_MAP["pasal"].glob(f"*/{doc_id}.json"):
             pasal_path = p
@@ -198,7 +188,6 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
     usage = audit.get("usage") or {}
     now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
-    # Pasal-level cost entry: LLM token usage and latency.
     _update_cost_log("pasal", doc_id, {
         "category": jenis_folder.upper(),
         "updated_at": now_iso,

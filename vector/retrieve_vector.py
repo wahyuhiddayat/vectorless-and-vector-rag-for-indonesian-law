@@ -22,12 +22,8 @@ from .common import (
 )
 
 
-# ============================================================
-# RETRIEVAL
-# ============================================================
-
 def vector_search(query: str, top_k: int = 5, verbose: bool = True) -> dict:
-    """Dense vector search: embed query -> Qdrant cosine similarity -> top-K."""
+    """Embed the query and return the top Qdrant matches."""
     query_vec = embed_query(query)
 
     qdrant = get_qdrant_client()
@@ -60,12 +56,8 @@ def vector_search(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     return {"rankings": rankings}
 
 
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
-
 def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
-    """Full dense retrieval pipeline: vector search -> answer generation."""
+    """Run dense retrieval followed by answer generation."""
     reset_token_counters()
     t_start = time.time()
 
@@ -76,17 +68,14 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         print(f"Model: {EMBEDDING_MODEL}  Collection: {COLLECTION_NAME}")
         print(f"{'='*60}")
 
-    # Step 1: Vector search
     search_result = vector_search(query, top_k, verbose)
     rankings = search_result["rankings"]
 
     if not rankings:
         return {"query": query, "strategy": "vector-dense", "error": "No results found"}
 
-    # Step 2: Generate answer
     answer_result = generate_answer(query, rankings, verbose=verbose)
 
-    # Build sources
     sources = [
         {
             "doc_id": r["doc_id"],
@@ -124,10 +113,6 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
 
     return result
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 def main():
     ap = argparse.ArgumentParser(description="Vector (dense) retrieval for Indonesian legal docs")
