@@ -49,15 +49,25 @@ _total_calls = 0
 
 
 def _get_client():
-    """Lazy-init Gemini client."""
+    """Lazy-init Gemini client with 120s hard HTTP timeout.
+
+    The timeout is set at client level via HttpOptions (timeout in ms) so that
+    hung API calls cannot stall the subprocess indefinitely — a known failure
+    mode on Windows where subprocess.run(timeout=...) + capture_output=True
+    does not reliably kill a child process that is blocked in a network read.
+    """
     global _client
     if _client is None:
         from google import genai
+        from google.genai import types as _genai_types
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             print("ERROR: GEMINI_API_KEY not set.")
             sys.exit(1)
-        _client = genai.Client(api_key=api_key)
+        _client = genai.Client(
+            api_key=api_key,
+            http_options=_genai_types.HttpOptions(timeout=120_000),
+        )
     return _client
 
 

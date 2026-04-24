@@ -7,7 +7,7 @@ across pasal / ayat / rincian and writes reproducible run artifacts.
 Usage:
     python scripts/eval/vectorless.py
     python scripts/eval/vectorless.py --doc-id permenaker-1-2026 --query-limit 5
-    python scripts/eval/vectorless.py --systems bm25-flat,hybrid --granularities ayat
+    python scripts/eval/vectorless.py --systems bm25,hybrid --granularities ayat
     python scripts/eval/vectorless.py --self-test-metrics
 """
 
@@ -31,12 +31,12 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
-SYSTEMS = ["bm25", "hybrid", "hybrid-flat", "llm", "llm-full"]
+SYSTEMS = ["bm25", "hybrid", "hybrid-tree", "llm", "llm-full"]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 DEFAULT_CUTOFFS = [1, 3, 5, 10]
 # Seconds to sleep between queries for systems that make Gemini calls during retrieval
 LLM_INTER_QUERY_DELAY_S = 3
-LLM_SYSTEMS = {"hybrid", "hybrid-flat", "llm", "llm-full"}
+LLM_SYSTEMS = {"hybrid", "hybrid-tree", "llm", "llm-full"}
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
     "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
@@ -543,73 +543,80 @@ def main() -> int:
     total_combos = len(systems) * len(granularities)
     combo_idx = 0
 
-    for system in systems:
-        for granularity in granularities:
-            combo_idx += 1
-            hits10: list[float] = []
-            print(f"\n[{combo_idx}/{total_combos}] system={system}  granularity={granularity}  n={n_q}")
-            print(f"  {'qid':<8}  {'result':<4}  {'hit@1':>5}  {'hit@10':>6}  {'R@10':>5}  {'time':>6}  note")
+    # Write records incrementally so a crash mid-run does not lose completed work.
+    jsonl_path = run_dir / "per_query.jsonl"
+    jsonl_fh = jsonl_path.open("w", encoding="utf-8")
 
-            for q_idx, (qid, item) in enumerate(selected_queries, 1):
-                t0 = time.time()
-                payload, worker_stdout, worker_stderr = run_worker(
-                    system,
-                    granularity,
-                    item["query"],
-                    args.top_k,
-                    args.worker_timeout_s,
-                )
-                elapsed = time.time() - t0
-                normalized = normalize_worker_payload(payload)
-                record = build_per_query_record(
-                    qid=qid,
-                    item=item,
-                    system=system,
-                    granularity=granularity,
-                    cutoffs=cutoffs,
-                    normalized=normalized,
-                    worker_stdout=worker_stdout,
-                    worker_stderr=worker_stderr,
-                )
-                per_query_records.append(record)
+    try:
+        for system in systems:
+            for granularity in granularities:
+                combo_idx += 1
+                hits10: list[float] = []
+                print(f"\n[{combo_idx}/{total_combos}] system={system}  granularity={granularity}  n={n_q}")
+                print(f"  {'qid':<8}  {'result':<4}  {'hit@1':>5}  {'hit@10':>6}  {'R@10':>5}  {'time':>6}  note")
 
-                hit1 = record.get("hit@1", 0.0)
-                hit10 = record.get("hit@10", 0.0)
-                hits10.append(hit10)
-                running_r10 = sum(hits10) / len(hits10)
+                for q_idx, (qid, item) in enumerate(selected_queries, 1):
+                    t0 = time.time()
+                    payload, worker_stdout, worker_stderr = run_worker(
+                        system,
+                        granularity,
+                        item["query"],
+                        args.top_k,
+                        args.worker_timeout_s,
+                    )
+                    elapsed = time.time() - t0
+                    normalized = normalize_worker_payload(payload)
+                    record = build_per_query_record(
+                        qid=qid,
+                        item=item,
+                        system=system,
+                        granularity=granularity,
+                        cutoffs=cutoffs,
+                        normalized=normalized,
+                        worker_stdout=worker_stdout,
+                        worker_stderr=worker_stderr,
+                    )
+                    per_query_records.append(record)
+                    jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    jsonl_fh.flush()
 
-                if record.get("error"):
-                    result_label = "ERR"
-                    note = record["error"][:60]
-                elif hit1:
-                    result_label = "HIT"
-                    note = ""
-                elif hit10:
-                    result_label = "TOP"
-                    note = f"rank {record.get('first_relevant_rank', '?')}"
-                else:
-                    result_label = "MISS"
-                    note = f"got {record.get('retrieved_node_ids', [])[:2]}"
+                    hit1 = record.get("hit@1", 0.0)
+                    hit10 = record.get("hit@10", 0.0)
+                    hits10.append(hit10)
+                    running_r10 = sum(hits10) / len(hits10)
 
-                print(
-                    f"  {qid:<8}  {result_label:<4}  {hit1:>5.0f}  {hit10:>6.0f}"
-                    f"  {running_r10:>5.2f}  {elapsed:>5.1f}s  {note}"
-                )
+                    if record.get("error"):
+                        result_label = "ERR"
+                        note = record["error"][:60]
+                    elif hit1:
+                        result_label = "HIT"
+                        note = ""
+                    elif hit10:
+                        result_label = "TOP"
+                        note = f"rank {record.get('first_relevant_rank', '?')}"
+                    else:
+                        result_label = "MISS"
+                        note = f"got {record.get('retrieved_node_ids', [])[:2]}"
 
-                if system in LLM_SYSTEMS:
-                    time.sleep(LLM_INTER_QUERY_DELAY_S)
+                    print(
+                        f"  {qid:<8}  {result_label:<4}  {hit1:>5.0f}  {hit10:>6.0f}"
+                        f"  {running_r10:>5.2f}  {elapsed:>5.1f}s  {note}"
+                    )
 
-                if record.get("error"):
-                    error_records.append({
-                        "query_id": qid,
-                        "system": system,
-                        "eval_granularity": granularity,
-                        "query": item["query"],
-                        "error": record["error"],
-                        "worker_stderr": worker_stderr,
-                    })
+                    if system in LLM_SYSTEMS:
+                        time.sleep(LLM_INTER_QUERY_DELAY_S)
 
-    write_jsonl(run_dir / "per_query.jsonl", per_query_records)
+                    if record.get("error"):
+                        error_records.append({
+                            "query_id": qid,
+                            "system": system,
+                            "eval_granularity": granularity,
+                            "query": item["query"],
+                            "error": record["error"],
+                            "worker_stderr": worker_stderr,
+                        })
+    finally:
+        jsonl_fh.close()
 
     summary_rows: list[dict] = []
     for system in systems:
@@ -662,10 +669,12 @@ def main() -> int:
     if args.save_errors and error_records:
         write_jsonl(run_dir / "errors.jsonl", error_records)
 
+    total_wall_s = sum(float(r.get("elapsed_s", 0.0)) for r in per_query_records)
     print(f"Saved evaluation run to: {run_dir}")
     print(f"Queries evaluated: {len(selected_queries)}")
     print(f"Records written: {len(per_query_records)}")
     print(f"Summary rows: {len(summary_rows)} system/granularity, {len(slice_rows)} slice rows")
+    print(f"Total elapsed (sum across all queries): {total_wall_s/60:.1f} min ({total_wall_s:.0f}s)")
     if error_records:
         print(f"Worker errors: {len(error_records)}")
 

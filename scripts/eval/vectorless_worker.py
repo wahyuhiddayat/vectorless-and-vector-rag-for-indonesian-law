@@ -5,7 +5,7 @@ Runs exactly one vectorless retrieval call in a fresh Python process so the
 active DATA_INDEX granularity is isolated per invocation.
 
 Usage:
-    python scripts/eval/vectorless_worker.py --system bm25-flat --granularity ayat --query "..."
+    python scripts/eval/vectorless_worker.py --system bm25 --granularity ayat --query "..."
 """
 
 from __future__ import annotations
@@ -38,6 +38,14 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         return module.retrieve(query, top_k=top_k, verbose=False)
 
     if system == "hybrid":
+        # Primary hybrid: flat BM25 retrieve → flat LLM rerank
+        from vectorless.retrieval.hybrid_flat import search as module
+
+        module.save_log = lambda _result: None
+        return module.retrieve(query, bm25_top_k=max(top_k, 20), verbose=False)
+
+    if system == "hybrid-tree":
+        # Ablation: tree BM25 navigate → tree LLM rerank
         from vectorless.retrieval.hybrid import search as module
 
         module.save_log = lambda _result: None
@@ -55,18 +63,12 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         module.save_log = lambda _result: None
         return module.retrieve(query, strategy="full", verbose=False)
 
-    if system == "hybrid-flat":
-        from vectorless.retrieval.hybrid_flat import search as module
-
-        module.save_log = lambda _result: None
-        return module.retrieve(query, bm25_top_k=max(top_k, 20), verbose=False)
-
     raise ValueError(f"Unsupported system: {system}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run one vectorless retrieval call in a fresh process.")
-    ap.add_argument("--system", required=True, choices=["bm25", "hybrid", "hybrid-flat", "llm", "llm-full"])
+    ap.add_argument("--system", required=True, choices=["bm25", "hybrid", "hybrid-tree", "llm", "llm-full"])
     ap.add_argument("--granularity", required=True, choices=["pasal", "ayat", "rincian"])
     ap.add_argument("--query", required=True)
     ap.add_argument("--top-k", type=int, default=10)
