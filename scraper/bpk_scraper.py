@@ -1,7 +1,12 @@
-"""
-BPK JDIH Scraper — Legal Document Acquisition
-Scrapes metadata (JSON) and PDF files from peraturan.bpk.go.id
-for Indonesian regulatory documents (UU, Perpu, PP, Perpres).
+"""Scrape BPK JDIH legal documents into per-jenis metadata JSON and PDF files.
+
+Targets peraturan.bpk.go.id and supports UU, Perpu, PP, Perpres listings,
+detail-page metadata extraction, deterministic PDF naming, and a unified
+registry rebuild step.
+
+Usage:
+    python scraper/bpk_scraper.py --jenis 8 --pages 1-5
+    python scraper/bpk_scraper.py --jenis 8 --resume
 """
 
 import argparse
@@ -67,11 +72,6 @@ def get_total_pages(jenis_id: int, session: requests.Session, tahun: int | None 
     return max_page
 
 
-# ---------------------------------------------------------------------------
-# List page scraping
-# ---------------------------------------------------------------------------
-
-
 def scrape_list_page(jenis_id: int, page: int, session: requests.Session, tahun: int | None = None) -> list[dict]:
     """Scrape a single search results page. Returns list of item dicts."""
     url = f"{BASE_URL}/Search?jenis={jenis_id}&p={page}"
@@ -105,11 +105,6 @@ def scrape_list_page(jenis_id: int, page: int, session: requests.Session, tahun:
         items.append(item)
 
     return items
-
-
-# ---------------------------------------------------------------------------
-# Detail page scraping
-# ---------------------------------------------------------------------------
 
 
 def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> dict | None:
@@ -231,39 +226,19 @@ def _parse_status_peraturan(card_body) -> list[dict]:
     return relasi
 
 
-# ---------------------------------------------------------------------------
-# PDF download
-# ---------------------------------------------------------------------------
-
-
 def download_pdf(
-    doc_id: str,
-    file_id: str,
-    filename: str,
+    dest_name: str,
     href: str,
     output_dir: Path,
     session: requests.Session,
-    suffix_idx: int = 0,
 ) -> Path | None:
-    """Stream-download a PDF file with deterministic doc_id-based naming.
+    """Stream-download a PDF and write it under the caller-supplied filename.
 
-    Main PDF → "{doc_id}.pdf".
-    Additional PDFs (lampiran/etc) → "{doc_id}_lampiran_N.pdf" or
-    "{doc_id}_extra_N.pdf" based on source filename hint.
-
-    Returns: destination Path on success (or if already exists), None on error.
+    Returns the destination Path on success or when the file already exists,
+    None on error. The caller owns the naming policy so registry consumers do
+    not need to re-derive it from the source filename.
     """
-    original_name = sanitize_filename(filename) if filename else ""
-    is_lampiran = bool(original_name) and (
-        "lampiran" in original_name.lower() or "lamp_" in original_name.lower()
-    )
-    if suffix_idx == 0 and not is_lampiran:
-        safe_name = f"{doc_id}.pdf"
-    elif is_lampiran:
-        safe_name = f"{doc_id}_lampiran_{suffix_idx}.pdf"
-    else:
-        safe_name = f"{doc_id}_extra_{suffix_idx}.pdf"
-    dest = output_dir / safe_name
+    dest = output_dir / dest_name
 
     if dest.exists() and dest.stat().st_size > 0:
         log.debug("PDF already exists, skipping: %s", dest)
@@ -329,8 +304,8 @@ def generate_registry(output_dir: Path) -> dict:
                 entry["relasi"] = relasi_summary
 
             entry["has_pdf"] = bool(data.get("pdf_files"))
-            # Deterministic PDF paths (relative to data/raw/). Populated by the
-            # download step; consumers should prefer these over filename guessing.
+            # Deterministic PDF paths relative to data/raw/. Populated by the
+            # download step. Consumers should prefer these over filename guessing.
             if data.get("pdf_path"):
                 entry["pdf_path"] = data["pdf_path"]
             if data.get("lampiran_paths"):
@@ -348,11 +323,6 @@ def generate_registry(output_dir: Path) -> dict:
     return registry
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 def parse_page_range(page_str: str, total_pages: int) -> range:
     """Parse a page range string like '1-10', '5', or 'all'."""
     if page_str.lower() == "all":
@@ -360,7 +330,8 @@ def parse_page_range(page_str: str, total_pages: int) -> range:
     if "-" in page_str:
         start, end = page_str.split("-", 1)
         return range(int(start), min(int(end), total_pages) + 1)
-    return range(int(page_str), int(page_str) + 1)
+    page = min(int(page_str), total_pages)
+    return range(page, page + 1)
 
 
 def parse_tahun_arg(tahun_str: str | None) -> list[int | None]:
@@ -374,6 +345,7 @@ def parse_tahun_arg(tahun_str: str | None) -> list[int | None]:
 
 
 def main():
+    """Run the BPK scraper CLI, scrape pages, save metadata and PDFs, then rebuild registry."""
     parser = argparse.ArgumentParser(
         description="Scrape legal documents from BPK JDIH (peraturan.bpk.go.id)",
     )
@@ -460,6 +432,8 @@ def main():
 
     for jenis_id in args.jenis:
         jenis_name = JENIS_MAP.get(jenis_id, f"jenis-{jenis_id}")
+        if jenis_id not in KATEGORI_MAP:
+            log.warning("Unknown jenis_id %d, falling back to kategori 'Lainnya'", jenis_id)
         kategori = KATEGORI_MAP.get(jenis_id, "Lainnya")
         jenis_scraped_count = 0  # counts successful new scrapes for --limit
 
@@ -477,7 +451,7 @@ def main():
             # Discover total pages
             total_pages = get_total_pages(jenis_id, session, tahun=tahun)
             if total_pages == 0:
-                log.info("No pages found for %s%s. Skipping.", jenis_name, tahun_label)
+                log.error("Failed to fetch listing for %s%s, skipping.", jenis_name, tahun_label)
                 continue
             log.info("Total pages for %s%s: %d", jenis_name, tahun_label, total_pages)
             time.sleep(args.delay)
@@ -495,12 +469,12 @@ def main():
                     detail_id = item["detail_id"]
                     slug = item["slug"]
                     log.info(
-                        "  [%d/%d] %s — %s",
+                        "  [%d/%d] %s, %s",
                         idx, len(items), item.get("nomor_tahun_text", ""), item.get("judul", ""),
                     )
 
-                    # Check for resume: if metadata JSON already exists, skip
-                    # We check by detail_id since doc_id is only known after scraping
+                    # Resume support. If metadata JSON already exists for this detail_id, skip.
+                    # detail_id is the only id available before the detail page is scraped.
                     existing = list(metadata_dir.glob(f"*__{detail_id}.json"))
                     if args.resume and existing:
                         log.info("    Skipped (already scraped): %s", existing[0].name)
@@ -527,8 +501,7 @@ def main():
                     if "judul" not in meta or not meta["judul"]:
                         meta["judul"] = item.get("judul", "")
 
-                    # Save metadata JSON
-                    # Filename: {doc_id}__{detail_id}.json for uniqueness + lookup
+                    # Use {doc_id}__{detail_id}.json so the file is unique and resolvable by detail_id.
                     json_path = metadata_dir / f"{doc_id}__{detail_id}.json"
                     json_path.write_text(
                         json.dumps(meta, ensure_ascii=False, indent=2),
@@ -544,7 +517,7 @@ def main():
                         lampiran_paths: list[Path] = []
                         extra_paths: list[Path] = []
                         suffix_counter = {"lampiran": 0, "extra": 0}
-                        for idx, pdf_info in enumerate(meta["pdf_files"]):
+                        for pdf_info in meta["pdf_files"]:
                             original_name = pdf_info.get("filename", "")
                             is_lampiran = bool(original_name) and (
                                 "lampiran" in original_name.lower()
@@ -553,20 +526,20 @@ def main():
                             if is_lampiran:
                                 suffix_counter["lampiran"] += 1
                                 sfx = suffix_counter["lampiran"]
+                                dest_name = f"{doc_id}_lampiran_{sfx}.pdf"
                             elif main_pdf_path is not None:
-                                # Second non-lampiran PDF → treat as extra.
+                                # Second non-lampiran PDF, treat as extra.
                                 suffix_counter["extra"] += 1
                                 sfx = suffix_counter["extra"]
+                                dest_name = f"{doc_id}_extra_{sfx}.pdf"
                             else:
-                                sfx = 0  # main slot
+                                sfx = 0
+                                dest_name = f"{doc_id}.pdf"
                             result = download_pdf(
-                                doc_id,
-                                pdf_info["file_id"],
-                                pdf_info["filename"],
+                                dest_name,
                                 pdf_info["href"],
                                 pdfs_dir,
                                 session,
-                                suffix_idx=sfx,
                             )
                             if result is None:
                                 continue
