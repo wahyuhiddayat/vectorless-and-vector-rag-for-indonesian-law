@@ -1,9 +1,10 @@
-"""LLM-first indexing: LLM parse + deterministic re-split.
+"""LLM-first indexing: LLM parse + deterministic re-split + summary.
 
 For each target doc:
   1. LLM-parse → data/index_pasal/<CAT>/<doc_id>.json
   2. Re-split ayat → data/index_ayat/<CAT>/<doc_id>.json
   3. Re-split rincian → data/index_rincian/<CAT>/<doc_id>.json
+  4. Annotate summary on every node of all three granularities
 
 Usage:
     python -m vectorless.indexing.build --category UU
@@ -137,6 +138,16 @@ def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[s
     return counts
 
 
+def _annotate_granularities(doc_id: str, granularities: tuple[str, ...]) -> dict[str, dict]:
+    """Run the summary annotator for each given granularity. Stats keyed by granularity."""
+    from scripts.parser.add_node_summary import annotate_doc
+
+    stats: dict[str, dict] = {}
+    for gran in granularities:
+        stats[gran] = annotate_doc(doc_id, granularity=gran, verbose=False)
+    return stats
+
+
 def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
     """Index one document and return a short status summary."""
     from scripts.parser.llm_parse import parse_doc as llm_parse_doc, _append_audit
@@ -158,13 +169,19 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         t_resplit = time.time()
         derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
         resplit_elapsed = round(time.time() - t_resplit, 3)
+        # ayat & rincian leaves changed; pasal summaries are still valid.
+        summary_stats = _annotate_granularities(doc_id, ("ayat", "rincian"))
         summary.update({"status": "resplit_ok", "derived_counts": derived, "elapsed_s": round(time.time() - t0, 2)})
+        now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         for gran in ("ayat", "rincian"):
             _update_cost_log(gran, doc_id, {
                 "category": jenis_folder.upper(),
-                "updated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+                "updated_at": now_iso,
                 "resplit_time_s": resplit_elapsed,
                 "leaf_count": derived[gran],
+                "summary_time_s": summary_stats[gran]["elapsed_s"],
+                "summary_calls": summary_stats[gran]["llm_calls"],
+                "summary_tokens": summary_stats[gran]["total_tokens"],
             })
         return summary
 
@@ -185,6 +202,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
     t_resplit = time.time()
     derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
     resplit_elapsed = round(time.time() - t_resplit, 3)
+    summary_stats = _annotate_granularities(doc_id, ("pasal", "ayat", "rincian"))
     usage = audit.get("usage") or {}
     now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -201,6 +219,9 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         "pdf_pasal_regex_count": audit.get("pdf_pasal_regex_count"),
         "pdf_chars": audit.get("pdf_chars"),
         "body_pages": audit.get("body_pages"),
+        "summary_time_s": summary_stats["pasal"]["elapsed_s"],
+        "summary_calls": summary_stats["pasal"]["llm_calls"],
+        "summary_tokens": summary_stats["pasal"]["total_tokens"],
     })
     for gran in ("ayat", "rincian"):
         _update_cost_log(gran, doc_id, {
@@ -208,6 +229,9 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
             "updated_at": now_iso,
             "resplit_time_s": resplit_elapsed,
             "leaf_count": derived[gran],
+            "summary_time_s": summary_stats[gran]["elapsed_s"],
+            "summary_calls": summary_stats[gran]["llm_calls"],
+            "summary_tokens": summary_stats[gran]["total_tokens"],
         })
 
     summary.update({
@@ -227,8 +251,6 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="LLM-first indexing pipeline")
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[],
                     help="Doc to index (repeatable)")
-    ap.add_argument("--doc-ids", dest="doc_ids_csv", default="",
-                    help="Comma-separated doc_ids")
     ap.add_argument("--category",
                     help="Index every doc in this jenis_folder (e.g. UU, OJK)")
     ap.add_argument("--resplit-only", action="store_true",
@@ -237,11 +259,7 @@ def main() -> None:
                     help="Preview LLM-parse only; do not overwrite any index file")
     args = ap.parse_args()
 
-    doc_ids = list(args.doc_ids)
-    if args.doc_ids_csv:
-        doc_ids.extend([x.strip() for x in args.doc_ids_csv.split(",") if x.strip()])
-
-    targets = _resolve_targets(doc_ids, args.category)
+    targets = _resolve_targets(list(args.doc_ids), args.category)
     log.info(f"indexing {len(targets)} docs (resplit_only={args.resplit_only}, dry_run={args.dry_run})")
 
     ok = 0

@@ -11,7 +11,7 @@ external API alternatives.
 
 Usage:
     python scripts/parser/judge.py --doc-id uu-3-2025
-    python scripts/parser/judge.py --doc-ids uu-3-2025,uu-14-2025
+    python scripts/parser/judge.py --doc-id uu-3-2025 --doc-id uu-14-2025
     python scripts/parser/judge.py --category UU
 
 Requires: GEMINI_API_KEY in environment.
@@ -286,14 +286,10 @@ def _resolve_targets(specific: list[str], category: str | None) -> list[str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Gemini-based judge for parsed index quality")
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[])
-    ap.add_argument("--doc-ids", dest="doc_ids_csv", default="")
     ap.add_argument("--category", help="Judge every doc in this jenis_folder")
     args = ap.parse_args()
 
-    doc_ids = list(args.doc_ids)
-    if args.doc_ids_csv:
-        doc_ids.extend([x.strip() for x in args.doc_ids_csv.split(",") if x.strip()])
-    targets = _resolve_targets(doc_ids, args.category)
+    targets = _resolve_targets(list(args.doc_ids), args.category)
 
     print(f"judging {len(targets)} docs with {JUDGE_MODEL}")
     reports: list[dict] = []

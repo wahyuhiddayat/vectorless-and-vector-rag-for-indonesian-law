@@ -1329,19 +1329,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[],
                     help="Doc to parse (repeatable)")
-    ap.add_argument("--doc-ids", dest="doc_ids_csv", default="",
-                    help="Comma-separated list of doc_ids")
     ap.add_argument("--category",
                     help="Parse every doc in this jenis_folder (e.g. UU, OJK)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview only, do not overwrite index")
     args = ap.parse_args()
 
-    specific = list(args.doc_ids)
-    if args.doc_ids_csv:
-        specific.extend([x.strip() for x in args.doc_ids_csv.split(",") if x.strip()])
-
-    targets = _load_targets(specific or None, args.category)
+    targets = _load_targets(list(args.doc_ids) or None, args.category)
     print(f"Targets: {len(targets)} docs")
     if not targets:
         return
