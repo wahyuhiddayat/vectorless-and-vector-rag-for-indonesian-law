@@ -30,10 +30,11 @@ import time  # noqa: E402
 
 from vectorless.llm import client as gemini_client  # noqa: E402
 
-# Parse uses the stable 2.5 Flash because preview models exhibit deterministic
-# DEADLINE_EXCEEDED on certain legal-content prompts. Summary annotation still
-# uses vectorless.llm.MODEL (latest preview).
-MODEL_NAME = "gemini-2.5-flash"
+# Parse runs on Gemini 2.5 Pro: stable production tier, separate daily quota
+# from 2.5 Flash, and stronger long-context handling than preview Flash variants.
+# Summary annotation and OCR clean stay on the latest preview model via
+# vectorless.llm.MODEL — they run many short calls that benefit from speed.
+MODEL_NAME = "gemini-2.5-pro"
 MAX_RETRIES = 3
 
 
@@ -47,7 +48,9 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
         max_output_tokens=max_output_tokens,
         response_mime_type="application/json",
     )
-    if MODEL_NAME.startswith("gemini-2.5"):
+    # Only 2.5 Flash supports skipping the thinking phase. Pro requires thinking
+    # mode; 3.x rejects the budget setting outright.
+    if MODEL_NAME == "gemini-2.5-flash":
         config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
 
     usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}

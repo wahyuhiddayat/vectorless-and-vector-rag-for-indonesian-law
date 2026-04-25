@@ -86,7 +86,7 @@ python -m vectorless.indexing.status --doc-id pmk-6-2026 --refresh-verify
 
 ## Category workflow template
 
-Replace `PMK` with `PERMENAKER`, `PERMENDAG`, `PERMENKES`, `UU`, `PERPU`, `PP`, or `PERPRES`.
+Replace `PMK` with `PERMENAKER`, `PERMENDAG`, `PERMENKES`, `UU`, `PP`, or `PERPRES`.
 
 ```powershell
 python -m vectorless.indexing.status --category PMK --refresh-verify
