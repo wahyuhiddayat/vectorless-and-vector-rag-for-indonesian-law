@@ -322,14 +322,11 @@ def compute_adaptive_n(leaf_count: int) -> int:
     """
     Compute the adaptive question count based on number of rincian-index leaf nodes.
 
-    Returns 0 only if leaf_count == 0 (pure preamble / no body content) — skip signal.
-
-    Formula: min(leaf_count, 5)
-    - n <= leaf_count guarantees no forced anchor reuse (1 question per leaf at most).
-    - Duplicate anchor detection in gt_collect.py catches any ChatGPT errors.
-    - Cap at 5 keeps annotation diverse across many document types (dosbing directive).
+    Returns 0 if leaf_count < MIN_LEAF_FOR_GT — doc too small for meaningful GT.
+    Otherwise returns min(leaf_count, 5): cap at 5 keeps annotation diverse;
+    n <= leaf_count guarantees no forced anchor reuse.
     """
-    if leaf_count == 0:
+    if leaf_count < MIN_LEAF_FOR_GT:
         return 0
     return min(leaf_count, 5)
 
@@ -593,8 +590,11 @@ def main() -> None:
         print(f"\nDokumen    : {doc['judul'][:80]}")
         print(f"doc_id     : {doc['doc_id']}")
         print(f"Leaf nodes : {len(leaf_nodes)} body leaf nodes (setelah filter preamble)")
-        print(f"\n[SKIP] Dokumen tidak memiliki body leaf nodes setelah filter preamble.")
-        print("Kemungkinan dokumen ini hanya berisi preamble (Menimbang/Mengingat) tanpa pasal substantif.")
+        if len(leaf_nodes) == 0:
+            print(f"\n[SKIP] Tidak ada body leaf nodes — kemungkinan hanya preamble.")
+        else:
+            print(f"\n[SKIP] Hanya {len(leaf_nodes)} leaf nodes (< {MIN_LEAF_FOR_GT}); "
+                  f"dokumen terlalu kecil untuk dijadikan GT.")
         sys.exit(0)
 
     prompt_parts, final_budget = build_prompt_parts(doc, n_questions=n_used, char_budget=args.char_budget)
