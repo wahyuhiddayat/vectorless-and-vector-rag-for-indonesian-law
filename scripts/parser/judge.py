@@ -1,21 +1,10 @@
-"""LLM judge for parsed index quality.
+"""LLM judge for parsed-index quality.
 
-For each doc: compare raw PDF text against the parsed pasal-level JSON.
-Produces a per-doc report of coverage gaps (missing/extra pasals),
-structural issues (hybrid/unsplit/ordering), and OCR corruption samples.
+Compares raw PDF text against the parsed pasal-level JSON and produces a
+per-doc report of coverage gaps, structural issues, and OCR corruption.
+Runs on Gemini 2.5 Pro (stronger tier than the indexer) for independent review.
 
-Uses Gemini 2.5 Pro via API — a stronger tier than the parser's Gemini
-2.5 Flash — so the judge catches issues the parser produced. Same-family
-cross-tier provides independent review at significantly lower cost than
-external API alternatives.
-
-Usage:
-    python scripts/parser/judge.py --doc-id uu-3-2025
-    python scripts/parser/judge.py --doc-id uu-3-2025 --doc-id uu-14-2025
-    python scripts/parser/judge.py --category UU
-
-Requires: GEMINI_API_KEY in environment.
-Output: data/judge_report.json
+Output: data/judge_report.json. Requires GEMINI_API_KEY.
 """
 from __future__ import annotations
 
@@ -181,16 +170,13 @@ def _parse_judge_output(raw: str) -> dict:
 
 
 def _call_gemini(prompt: str) -> tuple[str, dict]:
-    """Invoke Gemini 2.5 Pro. Returns (response_text, usage_meta)."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-    from google import genai as newgenai
+    """Invoke the judge model and return (response_text, usage_meta)."""
     from google.genai import types as gtypes
+    from vectorless.llm import client as gemini_client
 
-    client = newgenai.Client(api_key=api_key)
+    cli = gemini_client()
     t0 = time.time()
-    resp = client.models.generate_content(
+    resp = cli.models.generate_content(
         model=JUDGE_MODEL,
         contents=prompt,
         config=gtypes.GenerateContentConfig(

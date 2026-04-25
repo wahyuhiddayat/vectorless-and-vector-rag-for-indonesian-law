@@ -28,26 +28,21 @@ from scripts.parser._common import (  # noqa: E402
 
 import time  # noqa: E402
 
-MODEL_NAME = "gemini-2.5-flash"
+from vectorless.llm import MODEL as MODEL_NAME, client as gemini_client  # noqa: E402
+
 MAX_RETRIES = 3
 
 
 def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
-    """Call the configured Gemini parser model."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-    from google import genai as newgenai
+    """Call Gemini for structured JSON parse output."""
     from google.genai import types as gtypes
-
-    client = newgenai.Client(api_key=api_key)
+    cli = gemini_client()
 
     config_kwargs = dict(
         temperature=0.0,
         max_output_tokens=max_output_tokens,
         response_mime_type="application/json",
     )
-    # Gemini 3.x rejects thinking_budget=0; 2.5 accepts it.
     if MODEL_NAME.startswith("gemini-2.5"):
         config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
 
@@ -55,7 +50,7 @@ def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]
     t0 = time.time()
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = client.models.generate_content(
+            resp = cli.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt,
                 config=gtypes.GenerateContentConfig(**config_kwargs),

@@ -17,10 +17,9 @@ import time
 
 from rank_bm25 import BM25Okapi
 
+from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, llm_call, reset_token_counters, get_token_stats,
-    snapshot_token_counters, compute_step_metrics,
-    load_all_leaf_nodes, extract_kwic_snippet,
+    tokenize, load_all_leaf_nodes, extract_kwic_snippet,
     generate_answer_multi_doc, save_log,
 )
 
@@ -110,9 +109,9 @@ Aturan:
 
 def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     """Run the global BM25 plus LLM-rerank pipeline for one query."""
-    reset_token_counters()
+    reset_counters()
     t_start = time.time()
-    step_metrics = {}
+    steps: dict = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -120,7 +119,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         print(f"Strategy: hybrid-flat (bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     leaves = load_all_leaf_nodes()
@@ -128,13 +127,13 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         print(f"\nCorpus: {len(leaves)} leaf nodes from all documents")
 
     candidates = flat_bm25_candidates(query, leaves, top_k=bm25_top_k, verbose=verbose)
-    step_metrics["bm25_search"] = compute_step_metrics(t_step, snap)
+    steps["bm25_search"] = step_metrics(t_step, snap)
 
     if not candidates:
         return {"query": query, "strategy": "hybrid-flat",
                 "error": "No BM25 candidates found"}
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     rerank_result = llm_rerank(query, candidates)
@@ -146,7 +145,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     if not selected_ids:
         selected_ids = [candidates[0]["node_id"]]
 
-    step_metrics["rerank"] = compute_step_metrics(t_step, snap)
+    steps["rerank"] = step_metrics(t_step, snap)
 
     if verbose:
         print(f"\n[Hybrid-Flat LLM Rerank] Selected: {selected_ids}")
@@ -156,11 +155,11 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     selected_map = {c["node_id"]: c for c in candidates}
     selected_results = [selected_map[nid] for nid in selected_ids if nid in selected_map]
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     answer_result = generate_answer_multi_doc(query, selected_results, verbose=verbose)
-    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
+    steps["answer_gen"] = step_metrics(t_step, snap)
 
     sources = []
     for r in selected_results:
@@ -173,7 +172,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         })
 
     elapsed = time.time() - t_start
-    stats = get_token_stats()
+    stats = get_stats()
 
     result = {
         "query": query,
@@ -190,7 +189,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
 
     save_log(result)
@@ -199,7 +198,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         print(f"\n{'='*60}")
         print(f"Done in {elapsed:.1f}s  |  {stats['llm_calls']} LLM calls  |  "
               f"{stats['total_tokens']:,} tokens")
-        for step_name, sm in step_metrics.items():
+        for step_name, sm in steps.items():
             print(f"  {step_name}: {sm['elapsed_s']:.1f}s, {sm['llm_calls']} calls, "
                   f"{sm['input_tokens']+sm['output_tokens']:,} tokens")
         print(f"{'='*60}")

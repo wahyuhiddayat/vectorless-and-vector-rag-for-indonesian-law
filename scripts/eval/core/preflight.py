@@ -59,36 +59,29 @@ def check_index_coverage(
 def check_gemini_reachable(timeout_s: float = 10.0) -> tuple[bool, str]:
     """Ping Gemini with a tiny request. Returns (ok, message)."""
     import os
-    # retrieval/common.py loads .env at import time; the pre-flight check runs
-    # outside that import path, so load it here too.
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except ImportError:
         pass
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not os.environ.get("GEMINI_API_KEY"):
         return False, "GEMINI_API_KEY not set"
     try:
-        from google import genai
         from google.genai import types as genai_types
-    except ImportError:
-        return False, "google.genai package not installed"
+        from vectorless.llm import MODEL, client as gemini_client
+    except ImportError as exc:
+        return False, f"import failed: {exc}"
     try:
-        client = genai.Client(
-            api_key=api_key,
-            http_options=genai_types.HttpOptions(timeout=int(timeout_s * 1000)),
-        )
+        cfg_kwargs: dict = {"max_output_tokens": 8}
+        if MODEL.startswith("gemini-2.5"):
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
         t0 = time.time()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
+        response = gemini_client().models.generate_content(
+            model=MODEL,
             contents="ping",
-            config=genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
-                max_output_tokens=8,
-            ),
+            config=genai_types.GenerateContentConfig(**cfg_kwargs),
         )
-        _ = response.text  # touch to force resolution
+        _ = response.text
         elapsed_ms = int((time.time() - t0) * 1000)
         return True, f"{elapsed_ms}ms"
     except Exception as exc:

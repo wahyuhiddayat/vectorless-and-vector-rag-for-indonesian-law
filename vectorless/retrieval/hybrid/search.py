@@ -19,10 +19,9 @@ import time
 
 from rank_bm25 import BM25Okapi
 
+from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, llm_call, reset_token_counters, get_token_stats,
-    snapshot_token_counters, compute_step_metrics,
-    load_catalog, load_doc, find_node, extract_nodes,
+    tokenize, load_catalog, load_doc, find_node, extract_nodes,
     extract_kwic_snippet, generate_answer, save_log, DATA_INDEX,
 )
 
@@ -243,9 +242,9 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
 
 def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
     """Run the catalog-first hybrid retrieval pipeline for one query."""
-    reset_token_counters()
+    reset_counters()
     t_start = time.time()
-    step_metrics = {}
+    steps: dict = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -253,18 +252,18 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         print(f"Strategy: hybrid (bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     catalog = load_catalog()
     doc_result = doc_search(query, catalog, verbose=verbose)
     doc_ids = doc_result.get("doc_ids", [])
-    step_metrics["doc_search"] = compute_step_metrics(t_step, snap)
+    steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_ids:
         return {"query": query, "strategy": "hybrid", "error": "No relevant documents found"}
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     doc_id = doc_ids[0]
@@ -272,13 +271,13 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     node_result = node_search(query, doc, bm25_top_k=bm25_top_k, verbose=verbose)
     node_ids = node_result.get("node_ids", [])
-    step_metrics["node_search"] = compute_step_metrics(t_step, snap)
+    steps["node_search"] = step_metrics(t_step, snap)
 
     if not node_ids:
         return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     nodes = extract_nodes(doc, node_ids)
@@ -289,7 +288,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
+    steps["answer_gen"] = step_metrics(t_step, snap)
 
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
     sources = []
@@ -303,7 +302,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         })
 
     elapsed = time.time() - t_start
-    stats = get_token_stats()
+    stats = get_stats()
 
     result = {
         "query": query,
@@ -313,7 +312,7 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
 
     save_log(result)

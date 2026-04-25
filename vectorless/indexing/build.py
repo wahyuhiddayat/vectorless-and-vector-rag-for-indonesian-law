@@ -182,6 +182,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
                 "summary_time_s": summary_stats[gran]["elapsed_s"],
                 "summary_calls": summary_stats[gran]["llm_calls"],
                 "summary_tokens": summary_stats[gran]["total_tokens"],
+                "summary_failed": summary_stats[gran].get("failed", 0),
             })
         return summary
 
@@ -222,6 +223,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         "summary_time_s": summary_stats["pasal"]["elapsed_s"],
         "summary_calls": summary_stats["pasal"]["llm_calls"],
         "summary_tokens": summary_stats["pasal"]["total_tokens"],
+        "summary_failed": summary_stats["pasal"].get("failed", 0),
     })
     for gran in ("ayat", "rincian"):
         _update_cost_log(gran, doc_id, {
@@ -232,6 +234,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
             "summary_time_s": summary_stats[gran]["elapsed_s"],
             "summary_calls": summary_stats[gran]["llm_calls"],
             "summary_tokens": summary_stats[gran]["total_tokens"],
+            "summary_failed": summary_stats[gran].get("failed", 0),
         })
 
     summary.update({

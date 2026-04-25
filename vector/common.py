@@ -126,12 +126,13 @@ def embed_query(query: str) -> list[float]:
 def llm_call(prompt: str, max_retries: int = 3) -> dict:
     """Send a prompt to Gemini and parse the JSON response."""
     global _total_input_tokens, _total_output_tokens, _total_calls
+    from vectorless.llm import MODEL
     client = _get_genai_client()
 
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=MODEL,
                 contents=prompt,
             )
             break

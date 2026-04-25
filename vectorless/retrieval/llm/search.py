@@ -13,9 +13,8 @@ import argparse
 import json
 import time
 
+from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    llm_call, reset_token_counters, get_token_stats,
-    snapshot_token_counters, compute_step_metrics,
     load_catalog, load_doc, find_node, extract_nodes,
     generate_answer, save_log,
 )
@@ -111,11 +110,7 @@ Aturan:
 
 
 def _node_entry(node: dict, include_preview: bool = True) -> dict:
-    """Render one node for an LLM navigation step.
-
-    Includes `summary` only if present in the index, so an annotated index
-    benefits automatically and a plain index degrades to title + preview.
-    """
+    """Render one node for an LLM navigation step."""
     entry: dict = {"node_id": node["node_id"], "title": node.get("title", "")}
     if node.get("navigation_path"):
         entry["navigation_path"] = node["navigation_path"]
@@ -136,11 +131,10 @@ def _get_children_summary(node: dict) -> list[dict]:
     return [_node_entry(c) for c in node["nodes"]]
 
 
-def _has_summaries(entries: list[dict]) -> bool:
-    return any(e.get("summary") for e in entries)
-
-
-_SUMMARY_HINT = "Gunakan `summary` setiap entri sebagai sinyal utama relevansi.\n"
+def _summary_hint(entries: list[dict]) -> str:
+    if not any(e.get("summary") for e in entries):
+        return ""
+    return "Gunakan `summary` setiap entri sebagai sinyal utama relevansi.\n"
 
 
 def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
@@ -152,7 +146,7 @@ def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
 
     top_nodes = _get_top_level_nodes(structure)
     top_text = json.dumps(top_nodes, ensure_ascii=False, indent=2)
-    hint = _SUMMARY_HINT if _has_summaries(top_nodes) else ""
+    hint = _summary_hint(top_nodes)
 
     prompt = f"""\
 Kamu sedang menavigasi struktur hierarkis UU "{doc_title}" untuk menjawab pertanyaan hukum.
@@ -210,7 +204,7 @@ Kembalikan HANYA JSON.
             return {"steps": steps, "node_ids": final_ids}
 
         drill_text = json.dumps(drill_candidates, ensure_ascii=False, indent=2)
-        hint = _SUMMARY_HINT if _has_summaries(drill_candidates) else ""
+        hint = _summary_hint(drill_candidates)
 
         prompt = f"""\
 Kamu sedang menavigasi UU "{doc_title}" ke level lebih dalam.
@@ -260,9 +254,9 @@ Aturan:
 
 def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> dict:
     """Run the LLM-only retrieval pipeline for one query."""
-    reset_token_counters()
+    reset_counters()
     t_start = time.time()
-    step_metrics = {}
+    timings: dict = {}
 
     if verbose:
         print(f"{'='*60}")
@@ -270,18 +264,18 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         print(f"Strategy: llm-{strategy}")
         print(f"{'='*60}")
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     catalog = load_catalog()
     doc_result = doc_search(query, catalog, verbose=verbose)
     doc_ids = doc_result.get("doc_ids", [])
-    step_metrics["doc_search"] = compute_step_metrics(t_step, snap)
+    timings["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_ids:
         return {"query": query, "strategy": f"llm-{strategy}", "error": "No relevant documents found"}
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     doc_id = doc_ids[0]
@@ -293,13 +287,13 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         tree_result = tree_search_stepwise(query, doc, verbose=verbose)
 
     node_ids = tree_result.get("node_ids", [])
-    step_metrics["tree_search"] = compute_step_metrics(t_step, snap)
+    timings["tree_search"] = step_metrics(t_step, snap)
 
     if not node_ids:
         return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    snap = snapshot_token_counters()
+    snap = snapshot_counters()
     t_step = time.time()
 
     nodes = extract_nodes(doc, node_ids)
@@ -310,7 +304,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
 
     doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
     answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-    step_metrics["answer_gen"] = compute_step_metrics(t_step, snap)
+    timings["answer_gen"] = step_metrics(t_step, snap)
 
     sources = []
     for node in nodes:
@@ -322,7 +316,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         })
 
     elapsed = time.time() - t_start
-    stats = get_token_stats()
+    stats = get_stats()
 
     result = {
         "query": query,
@@ -332,7 +326,7 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         "answer": answer_result.get("answer", ""),
         "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": step_metrics},
+        "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": timings},
     }
 
     save_log(result)
