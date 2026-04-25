@@ -60,11 +60,14 @@ Aturan:
 
 
 def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
-    """Render the tree as titles and node IDs only."""
+    """Render the tree as one line per node, appending `summary` when present."""
     lines = []
     for node in nodes:
         indent = "  " * depth
-        lines.append(f"{indent}{node['node_id']} {node['title']}")
+        line = f"{indent}{node['node_id']} {node['title']}"
+        if node.get("summary"):
+            line += f" — {node['summary']}"
+        lines.append(line)
         if "nodes" in node:
             lines.append(_build_tree_skeleton(node["nodes"], depth + 1))
     return "\n".join(lines)
@@ -107,24 +110,37 @@ Aturan:
     return result
 
 
+def _node_entry(node: dict, include_preview: bool = True) -> dict:
+    """Render one node for an LLM navigation step.
+
+    Includes `summary` only if present in the index, so an annotated index
+    benefits automatically and a plain index degrades to title + preview.
+    """
+    entry: dict = {"node_id": node["node_id"], "title": node.get("title", "")}
+    if node.get("navigation_path"):
+        entry["navigation_path"] = node["navigation_path"]
+    if node.get("summary"):
+        entry["summary"] = node["summary"]
+    if include_preview and not node.get("nodes") and node.get("text"):
+        entry["text_preview"] = node["text"][:150].rstrip()
+    return entry
+
+
 def _get_top_level_nodes(structure: list[dict]) -> list[dict]:
-    """Return the nodes shown in the first navigation round."""
-    return [{"node_id": n["node_id"], "title": n["title"]} for n in structure]
+    return [_node_entry(n) for n in structure]
 
 
 def _get_children_summary(node: dict) -> list[dict]:
-    """Summarize one node's children for the next navigation step."""
     if "nodes" not in node:
         return []
-    result = []
-    for c in node["nodes"]:
-        entry: dict = {"node_id": c["node_id"], "title": c["title"]}
-        if c.get("navigation_path"):
-            entry["navigation_path"] = c["navigation_path"]
-        if not c.get("nodes") and c.get("text"):
-            entry["text_preview"] = c["text"][:150].rstrip()
-        result.append(entry)
-    return result
+    return [_node_entry(c) for c in node["nodes"]]
+
+
+def _has_summaries(entries: list[dict]) -> bool:
+    return any(e.get("summary") for e in entries)
+
+
+_SUMMARY_HINT = "Gunakan `summary` setiap entri sebagai sinyal utama relevansi.\n"
 
 
 def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
@@ -136,6 +152,7 @@ def tree_search_stepwise(query: str, doc: dict, verbose: bool = True) -> dict:
 
     top_nodes = _get_top_level_nodes(structure)
     top_text = json.dumps(top_nodes, ensure_ascii=False, indent=2)
+    hint = _SUMMARY_HINT if _has_summaries(top_nodes) else ""
 
     prompt = f"""\
 Kamu sedang menavigasi struktur hierarkis UU "{doc_title}" untuk menjawab pertanyaan hukum.
@@ -146,7 +163,7 @@ Ini adalah bagian-bagian utama dalam UU tersebut:
 {top_text}
 
 Pilih 1-2 bagian yang paling relevan untuk menjawab pertanyaan.
-
+{hint}
 Balas dalam format JSON:
 {{
   "thinking": "<penalaran mengapa bagian ini relevan>",
@@ -193,6 +210,7 @@ Kembalikan HANYA JSON.
             return {"steps": steps, "node_ids": final_ids}
 
         drill_text = json.dumps(drill_candidates, ensure_ascii=False, indent=2)
+        hint = _SUMMARY_HINT if _has_summaries(drill_candidates) else ""
 
         prompt = f"""\
 Kamu sedang menavigasi UU "{doc_title}" ke level lebih dalam.
@@ -203,7 +221,7 @@ Ini adalah sub-bagian di dalam bagian yang kamu pilih:
 {drill_text}
 
 Pilih bagian yang paling relevan untuk menjawab pertanyaan.
-
+{hint}
 Balas dalam format JSON:
 {{
   "thinking": "<penalaran mengapa bagian ini relevan>",
