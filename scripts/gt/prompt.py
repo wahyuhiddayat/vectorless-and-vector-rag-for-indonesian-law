@@ -647,12 +647,12 @@ def main() -> None:
             print(f"Target      : {placeholder}  (sudah ada — overwrite dengan output ChatGPT)")
 
         print("\nLangkah selanjutnya:")
-        print(f"  1. Buka {output_path} dan copy isinya → paste ke ChatGPT")
-        print(f"  2. Paste output JSON ChatGPT ke: {placeholder}")
-        print(f"  3. python scripts/gt/collect.py --check-only --file \"{placeholder}\"")
-        print(f"     → fix hard errors, copy baris [WARN]")
-        print(f"  4. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
-        print(f"     → replace isi {placeholder} dengan ---CLEANED--- output Copilot")
+        print(f"  1. Paste {output_path} ke Generator LLM (Claude/GPT/etc — bukan Gemini)")
+        print(f"  2. Paste output JSON ke: {placeholder}")
+        print(f"  3. python scripts/gt/build_validate.py --doc-id {args.doc_id}")
+        print(f"     → emits tmp/validate_{args.doc_id}.txt (validation prompt)")
+        print(f"  4. Paste validation prompt ke Judge LLM, minta overwrite {placeholder}")
+        print(f"     dengan items hasil cleaned. Copilot di IDE bisa edit file langsung.")
         print(f"  5. python scripts/gt/collect.py --file \"{placeholder}\"")
         return
 
@@ -679,15 +679,15 @@ def main() -> None:
     if created_placeholders:
         print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
     print("\nLangkah selanjutnya:")
-    print(f"  1. Untuk setiap part, buka file prompt di tmp/ lalu paste ke ChatGPT")
-    print(f"  2. Paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
-    print(f"  3. python scripts/gt/merge_parts.py {doc['doc_id']}")
+    print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT/etc — bukan Gemini),")
+    print(f"     paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
+    print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']}")
     print(f"     → menghasilkan: {raw_placeholder}")
-    print(f"  4. python scripts/gt/collect.py --check-only --file \"{raw_placeholder}\"")
-    print(f"     → fix hard errors, copy baris [WARN]")
-    print(f"  5. Validasi semantik dengan Copilot (gt_validate_prompt.txt)")
-    print(f"     → replace isi {raw_placeholder} dengan ---CLEANED--- output Copilot")
-    print(f"  6. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
+    print(f"  3. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}")
+    print(f"     → emits tmp/validate_{doc['doc_id']}.txt (validation prompt)")
+    print(f"  4. Paste validation prompt ke Judge LLM, minta overwrite {raw_placeholder}")
+    print(f"     dengan items hasil cleaned. Copilot di IDE bisa edit file langsung.")
+    print(f"  5. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
 
 
 if __name__ == "__main__":
