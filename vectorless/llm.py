@@ -87,8 +87,12 @@ _RETRYABLE_TOKENS = (
 )
 
 
-def call(prompt: str, *, model: str = MODEL, max_retries: int = 3) -> dict:
-    """Send prompt; return parsed JSON. Retries transient errors and non-JSON responses."""
+def call(prompt: str, *, model: str = MODEL, max_retries: int = 3,
+         return_usage: bool = False) -> dict | tuple[dict, dict]:
+    """Send prompt; return parsed JSON. Retries transient errors and non-JSON responses.
+
+    With return_usage=True, returns (json_dict, usage_dict) for caller-local accounting.
+    """
     from google.genai import types as gtypes
     cli = client()
 
@@ -112,7 +116,7 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 3) -> dict:
                 lines = text.split("\n")
                 text = "\n".join(lines[1:-1])
             try:
-                return json.loads(text)
+                parsed = json.loads(text)
             except json.JSONDecodeError as json_err:
                 last_exc = json_err
                 if attempt < max_retries - 1:
@@ -123,6 +127,15 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 3) -> dict:
                     time.sleep(wait)
                     continue
                 raise
+
+            if return_usage:
+                u = resp.usage_metadata
+                return parsed, {
+                    "input_tokens": u.prompt_token_count or 0,
+                    "output_tokens": u.candidates_token_count or 0,
+                    "calls": 1,
+                }
+            return parsed
 
         except json.JSONDecodeError:
             raise

@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from vectorless.ids import doc_category
-from vectorless.llm import call as llm_call, get_stats, reset_counters
+from vectorless.llm import call as llm_call
 
 GRANULARITY_INDEX = {
     "pasal": Path("data/index_pasal"),
@@ -55,7 +56,14 @@ Balas dalam JSON:
 """
 
 
-def _summarise_leaf(node: dict) -> str:
+def _accumulate(usage_acc: dict, lock: threading.Lock, usage: dict) -> None:
+    with lock:
+        usage_acc["input_tokens"] += usage["input_tokens"]
+        usage_acc["output_tokens"] += usage["output_tokens"]
+        usage_acc["calls"] += usage["calls"]
+
+
+def _summarise_leaf(node: dict, usage_acc: dict, lock: threading.Lock) -> str:
     text = (node.get("text") or "").strip()
     if not text:
         return ""
@@ -64,10 +72,13 @@ def _summarise_leaf(node: dict) -> str:
         nav_path=node.get("navigation_path", ""),
         text=text[:4000],
     )
-    return (llm_call(prompt).get("summary") or "").strip()
+    result, usage = llm_call(prompt, return_usage=True)
+    _accumulate(usage_acc, lock, usage)
+    return (result.get("summary") or "").strip()
 
 
-def _summarise_internal(node: dict, child_pairs: list[tuple[str, str]]) -> str:
+def _summarise_internal(node: dict, child_pairs: list[tuple[str, str]],
+                        usage_acc: dict, lock: threading.Lock) -> str:
     children_text = "\n".join(f"- {t}: {s}" for t, s in child_pairs if s)
     if not children_text:
         return ""
@@ -76,7 +87,9 @@ def _summarise_internal(node: dict, child_pairs: list[tuple[str, str]]) -> str:
         nav_path=node.get("navigation_path", ""),
         children=children_text,
     )
-    return (llm_call(prompt).get("summary") or "").strip()
+    result, usage = llm_call(prompt, return_usage=True)
+    _accumulate(usage_acc, lock, usage)
+    return (result.get("summary") or "").strip()
 
 
 def _collect_leaves(nodes: list[dict], force: bool, todo: list[dict], skipped: list[dict]) -> None:
@@ -89,18 +102,19 @@ def _collect_leaves(nodes: list[dict], force: bool, todo: list[dict], skipped: l
             skipped.append(node)
 
 
-def _walk_internal(nodes: list[dict], counter: dict, force: bool, verbose: bool) -> None:
+def _walk_internal(nodes: list[dict], counter: dict, force: bool, verbose: bool,
+                   usage_acc: dict, lock: threading.Lock) -> None:
     for node in nodes:
         children = node.get("nodes")
         if not children:
             continue
-        _walk_internal(children, counter, force, verbose)
+        _walk_internal(children, counter, force, verbose, usage_acc, lock)
         if not force and node.get("summary"):
             counter["skipped"] += 1
             continue
         t0 = time.time()
         pairs = [(c.get("title", ""), c.get("summary", "")) for c in children]
-        node["summary"] = _summarise_internal(node, pairs)
+        node["summary"] = _summarise_internal(node, pairs, usage_acc, lock)
         counter["internal"] += 1
         if verbose:
             print(f"  [INT  {counter['internal']:>2}] {node.get('navigation_path', '')[:80]}  "
@@ -120,9 +134,10 @@ def annotate_doc(doc_id: str, granularity: str = "pasal",
     if verbose:
         print(f"Annotating {doc_id} ({granularity}) — {path.stat().st_size//1024}KB")
 
-    reset_counters()
     t_start = time.time()
     counter = {"leaf": 0, "internal": 0, "skipped": 0, "failed": 0}
+    usage_acc = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+    lock = threading.Lock()
 
     todo, leaf_skipped = [], []
     _collect_leaves(doc.get("structure", []), force, todo, leaf_skipped)
@@ -130,7 +145,7 @@ def annotate_doc(doc_id: str, granularity: str = "pasal",
 
     if todo:
         with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = {ex.submit(_summarise_leaf, leaf): leaf for leaf in todo}
+            futures = {ex.submit(_summarise_leaf, leaf, usage_acc, lock): leaf for leaf in todo}
             for fut in as_completed(futures):
                 leaf = futures[fut]
                 try:
@@ -147,11 +162,16 @@ def annotate_doc(doc_id: str, granularity: str = "pasal",
                           f"{leaf.get('navigation_path', '')[:80]} "
                           f"--> {(leaf['summary'] or '')[:80]}")
 
-    _walk_internal(doc.get("structure", []), counter, force, verbose)
+    _walk_internal(doc.get("structure", []), counter, force, verbose, usage_acc, lock)
 
     elapsed = time.time() - t_start
-    stats = get_stats()
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    stats = {
+        "llm_calls": usage_acc["calls"],
+        "input_tokens": usage_acc["input_tokens"],
+        "output_tokens": usage_acc["output_tokens"],
+        "total_tokens": usage_acc["input_tokens"] + usage_acc["output_tokens"],
+    }
     if verbose:
         suffix = f" failed={counter['failed']}" if counter["failed"] else ""
         print(f"Done in {elapsed:.1f}s — leaf={counter['leaf']} "

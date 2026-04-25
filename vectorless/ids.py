@@ -3,6 +3,7 @@
 _MULTI_WORD_PREFIXES = {
     "peraturan-bssn": "PERATURAN_BSSN",
     "peraturan-ojk": "PERATURAN_OJK",
+    "perma": "PERATURAN_MA",
 }
 
 

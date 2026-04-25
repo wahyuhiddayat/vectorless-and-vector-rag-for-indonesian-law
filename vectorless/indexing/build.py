@@ -20,6 +20,7 @@ import json
 import logging
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -139,13 +140,18 @@ def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[s
 
 
 def _annotate_granularities(doc_id: str, granularities: tuple[str, ...]) -> dict[str, dict]:
-    """Run the summary annotator for each given granularity. Stats keyed by granularity."""
+    """Annotate the given granularities concurrently. Stats keyed by granularity."""
     from scripts.parser.add_node_summary import annotate_doc
 
-    stats: dict[str, dict] = {}
-    for gran in granularities:
-        stats[gran] = annotate_doc(doc_id, granularity=gran, verbose=False)
-    return stats
+    with ThreadPoolExecutor(max_workers=len(granularities)) as ex:
+        futures = {gran: ex.submit(annotate_doc, doc_id, gran, False, False) for gran in granularities}
+        return {gran: f.result() for gran, f in futures.items()}
+
+
+def _clean_ocr(doc_id: str) -> dict:
+    """Repair OCR garbles in pasal-level leaves before resplit propagates them."""
+    from scripts.parser.clean_ocr import clean_doc
+    return clean_doc(doc_id, verbose=False)
 
 
 def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
@@ -200,6 +206,7 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
 
     pasal_path = Path(audit["index_path"])
     jenis_folder = pasal_path.parent.name
+    ocr_stats = _clean_ocr(doc_id)
     t_resplit = time.time()
     derived = _resplit_derived(pasal_path, jenis_folder, doc_id)
     resplit_elapsed = round(time.time() - t_resplit, 3)
@@ -224,6 +231,11 @@ def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) ->
         "summary_calls": summary_stats["pasal"]["llm_calls"],
         "summary_tokens": summary_stats["pasal"]["total_tokens"],
         "summary_failed": summary_stats["pasal"].get("failed", 0),
+        "ocr_clean_time_s": ocr_stats["elapsed_s"],
+        "ocr_clean_calls": ocr_stats["llm_calls"],
+        "ocr_clean_tokens": ocr_stats["total_tokens"],
+        "ocr_fixes_total": ocr_stats["fixes_total"],
+        "ocr_rejected": ocr_stats["rejected"],
     })
     for gran in ("ayat", "rincian"):
         _update_cost_log(gran, doc_id, {

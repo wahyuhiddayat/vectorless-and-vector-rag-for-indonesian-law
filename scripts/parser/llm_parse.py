@@ -28,8 +28,12 @@ from scripts.parser._common import (  # noqa: E402
 
 import time  # noqa: E402
 
-from vectorless.llm import MODEL as MODEL_NAME, client as gemini_client  # noqa: E402
+from vectorless.llm import client as gemini_client  # noqa: E402
 
+# Parse uses the stable 2.5 Flash because preview models exhibit deterministic
+# DEADLINE_EXCEEDED on certain legal-content prompts. Summary annotation still
+# uses vectorless.llm.MODEL (latest preview).
+MODEL_NAME = "gemini-2.5-flash"
 MAX_RETRIES = 3
 
 
