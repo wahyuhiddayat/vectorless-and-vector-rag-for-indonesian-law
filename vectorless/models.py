@@ -11,7 +11,7 @@ Roles.
 """
 
 PARSE_MODEL = "gemini-2.5-pro"
-SUMMARY_MODEL = "gemini-2.5-flash"
-OCR_CLEAN_MODEL = "gemini-2.5-flash"
+SUMMARY_MODEL = "gemini-2.5-flash-lite"
+OCR_CLEAN_MODEL = "gemini-2.5-flash-lite"
 JUDGE_MODEL = "gemini-2.5-pro"
-RETRIEVAL_MODEL = "gemini-2.5-flash"
+RETRIEVAL_MODEL = "gemini-2.5-flash-lite"
