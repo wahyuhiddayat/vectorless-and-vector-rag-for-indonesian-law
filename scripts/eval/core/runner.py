@@ -17,14 +17,20 @@ from pathlib import Path
 from . import io as eval_io
 from .aggregation import (
     aggregate_records,
+    compute_combo_confidence_intervals,
     compute_combo_summaries,
+    compute_reference_mode_breakdown,
     compute_slice_summaries,
 )
 from .logger import ProgressLogger
 from .metrics import DEFAULT_CUTOFFS
 from .preflight import (
+    check_corpus_consistency,
     check_gemini_reachable,
     check_index_coverage,
+    check_qdrant_reachable,
+    gemini_model_name,
+    gt_fingerprint,
     query_distribution,
 )
 from .records import build_per_query_record, normalize_worker_payload
@@ -162,6 +168,9 @@ class EvalRunner:
         doc_id: str | None,
         query_limit: int | None,
         label: str,
+        qdrant_path: str | None = None,
+        qdrant_url: str | None = None,
+        run_kind: str = "vectorless",
     ):
         self.repo_root = repo_root
         self.worker_script = worker_script
@@ -184,6 +193,9 @@ class EvalRunner:
         self.doc_id = doc_id
         self.query_limit = query_limit
         self.label = label
+        self.qdrant_path = qdrant_path
+        self.qdrant_url = qdrant_url
+        self.run_kind = run_kind
 
         self.logger = ProgressLogger(run_dir / "progress.log")
         self.started_at = datetime.now()
@@ -192,10 +204,13 @@ class EvalRunner:
     # ------------------------------------------------------------------
 
     def _build_config(self) -> dict:
+        """Snapshot the run configuration. Used for both write and resume diff."""
         return {
+            "run_kind": self.run_kind,
             "label": self.label,
             "started_at": self.started_at.isoformat(timespec="seconds"),
             "testset_file": str(self.testset_file.relative_to(self.repo_root)),
+            "testset_fingerprint": gt_fingerprint(self.testset_file),
             "systems": self.systems,
             "granularities": self.granularities,
             "top_k": self.top_k,
@@ -209,16 +224,78 @@ class EvalRunner:
             "inter_query_delay_s": self.inter_query_delay_s,
             "max_retries": self.max_retries,
             "resume": self.resume,
+            "qdrant_path": self.qdrant_path,
+            "qdrant_url": self.qdrant_url,
+            "llm_model": gemini_model_name(),
             "notes": {
-                "vectorless_only": True,
-                "llm_judge_used": False,
                 "answer_eval": "citation-grounding + weak lexical overlap vs answer_hint",
+                "single_gold_gt": True,
+                "metric_redundancy": "recall@k == hit@k, map@k == mrr@k for single-gold GT",
             },
         }
 
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _config_signature(cfg: dict) -> dict:
+        """Project the fields of config that must match across resume."""
+        keys = (
+            "run_kind", "testset_file", "systems", "granularities",
+            "top_k", "cutoffs", "doc_id", "query_limit", "random_seed",
+        )
+        return {k: cfg.get(k) for k in keys}
+
+    def _validate_resume_config(self, current: dict) -> None:
+        """Refuse to resume into a directory whose config disagrees with this run.
+
+        Mixed configs in one directory would corrupt the summary aggregation.
+        Compares only the structural fields (signature). The fingerprint of
+        the testset file is checked separately and surfaced as a warning so
+        users can decide whether GT churn is acceptable.
+        """
+        existing_path = self.run_dir / "config.json"
+        if not existing_path.exists():
+            return
+        try:
+            with open(existing_path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            self.logger.warn(
+                f"Existing config.json at {existing_path} is unreadable, leaving it in place."
+            )
+            return
+
+        cur_sig = self._config_signature(current)
+        old_sig = self._config_signature(existing)
+        if cur_sig != old_sig:
+            diffs = [
+                f"  - {k}: existing={old_sig.get(k)!r} new={cur_sig.get(k)!r}"
+                for k in cur_sig
+                if cur_sig.get(k) != old_sig.get(k)
+            ]
+            self.logger.warn("Resume config mismatch, refusing to mix configs:")
+            for line in diffs:
+                self.logger.warn(line)
+            raise SystemExit(2)
+
+        # GT fingerprint drift is a warning, not an error. The user may have
+        # intentionally regenerated GT and wants to keep prior eval rows.
+        old_fp = (existing.get("testset_fingerprint") or {}).get("sha256_16")
+        new_fp = (current.get("testset_fingerprint") or {}).get("sha256_16")
+        if old_fp and new_fp and old_fp != new_fp:
+            self.logger.warn(
+                f"Testset fingerprint changed since last run ({old_fp} -> {new_fp}). "
+                f"Resumed records may reference older GT. Use --overwrite to start fresh."
+            )
+
+    # ------------------------------------------------------------------
+
     def preflight(self) -> None:
+        """Run pre-flight checks and persist config.json.
+
+        On --resume, validates that the new invocation's structural config
+        matches the stored one before writing.
+        """
         config = self._build_config()
         self.logger.header(config)
 
@@ -249,12 +326,42 @@ class EvalRunner:
         else:
             self.logger.ok("Index coverage complete for all requested granularities.")
 
+        # rincian >= ayat >= pasal leaf-count invariant per doc.
+        offenders = check_corpus_consistency(
+            self.repo_root, dict(self.selected_queries), self.granularities
+        )
+        if offenders:
+            self.logger.warn(
+                f"{len(offenders)} doc(s) violate the leaf-count invariant "
+                f"(rincian >= ayat >= pasal). Re-split likely incomplete."
+            )
+            for doc_id, reasons in list(offenders.items())[:10]:
+                self.logger.warn(f"  - {doc_id}: {', '.join(reasons)}")
+            if self.strict:
+                self.logger.warn("--strict set, aborting.")
+                raise SystemExit(2)
+        else:
+            self.logger.ok("Corpus leaf-count invariant holds across granularities.")
+
         if any(sys in self.llm_systems for sys in self.systems):
             ok, msg = check_gemini_reachable(timeout_s=15.0)
             self.logger.preflight_gemini(ok, msg)
             if not ok and self.strict:
                 self.logger.warn("--strict set and Gemini unreachable, aborting.")
                 raise SystemExit(2)
+
+        if self.run_kind == "vector":
+            ok, msg = check_qdrant_reachable(self.qdrant_path, self.qdrant_url)
+            if ok:
+                self.logger.ok(f"Qdrant reachable, {msg}")
+            else:
+                self.logger.warn(f"Qdrant check failed, {msg}")
+                if self.strict:
+                    self.logger.warn("--strict set, aborting.")
+                    raise SystemExit(2)
+
+        if self.resume:
+            self._validate_resume_config(config)
 
         eval_io.write_json(self.run_dir / "config.json", config)
 
@@ -325,6 +432,13 @@ class EvalRunner:
                     eval_io.completed_qids_for_combo(self.records_dir, system, granularity)
                     if self.resume else set()
                 )
+                invalid = getattr(eval_io.read_records_file, "last_invalid_count", 0)
+                if invalid:
+                    self.logger.warn(
+                        f"  resume: skipped {invalid} truncated/invalid record(s) in "
+                        f"{system} x {granularity}, those queries will be re-run"
+                    )
+                    eval_io.read_records_file.last_invalid_count = 0  # type: ignore[attr-defined]
                 if completed:
                     self.logger.info(
                         f"  resume: {len(completed)}/{len(self.selected_queries)} "
@@ -366,6 +480,7 @@ class EvalRunner:
     # ------------------------------------------------------------------
 
     def finalize(self) -> None:
+        """Aggregate all records, write summaries (CSV + JSON), close logs."""
         completed_at = datetime.now()
         wall_s = (completed_at - self.started_at).total_seconds()
 
@@ -377,9 +492,16 @@ class EvalRunner:
         slice_rows = compute_slice_summaries(
             all_records, self.systems, self.granularities, self.cutoffs
         )
+        ref_mode_rows = compute_reference_mode_breakdown(
+            all_records, self.systems, self.granularities, self.cutoffs
+        )
+        bootstrap_ci = compute_combo_confidence_intervals(
+            all_records, self.systems, self.granularities, self.cutoffs
+        )
 
         eval_io.write_csv(self.run_dir / "summary_by_system_granularity.csv", combo_summaries)
         eval_io.write_csv(self.run_dir / "summary_by_slice.csv", slice_rows)
+        eval_io.write_csv(self.run_dir / "summary_by_reference_mode.csv", ref_mode_rows)
 
         overall_summary = {
             "generated_at": completed_at.isoformat(timespec="seconds"),
@@ -389,6 +511,8 @@ class EvalRunner:
             "config": self._build_config(),
             "overall": aggregate_records(all_records, self.cutoffs),
             "by_system_granularity": combo_summaries,
+            "by_reference_mode": ref_mode_rows,
+            "bootstrap_ci": bootstrap_ci,
             "error_categories": self.error_categories,
         }
         eval_io.write_json(self.run_dir / "summary_overall.json", overall_summary)
@@ -403,6 +527,7 @@ class EvalRunner:
             "summary_overall.json",
             "summary_by_system_granularity.csv",
             "summary_by_slice.csv",
+            "summary_by_reference_mode.csv",
             "progress.log",
         ]
         if error_records:

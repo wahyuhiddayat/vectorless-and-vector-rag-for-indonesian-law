@@ -146,6 +146,7 @@ def main() -> int:
         doc_id=args.doc_id,
         query_limit=args.query_limit,
         label=label,
+        run_kind="vectorless",
     )
 
     runner.preflight()

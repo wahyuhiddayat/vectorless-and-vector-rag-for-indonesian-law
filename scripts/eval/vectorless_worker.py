@@ -31,6 +31,13 @@ GRANULARITY_TO_INDEX = {
 
 
 def run_retrieval(system: str, query: str, top_k: int) -> dict:
+    """Dispatch to the requested retrieval module in this fresh subprocess.
+
+    The module-level `save_log = lambda _: None` patch disables the on-disk
+    retrieval log each module would normally write. We mute it so concurrent
+    eval combos do not race on the same log file. Real retrieval logs from
+    the eval harness live in records/<system>__<granularity>.jsonl instead.
+    """
     if system == "bm25":
         from vectorless.retrieval.bm25 import flat as module
 
@@ -38,14 +45,12 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         return module.retrieve(query, top_k=top_k, verbose=False)
 
     if system == "hybrid":
-        # Primary hybrid: flat BM25 retrieve → flat LLM rerank
         from vectorless.retrieval.hybrid_flat import search as module
 
         module.save_log = lambda _result: None
         return module.retrieve(query, bm25_top_k=max(top_k, 20), verbose=False)
 
     if system == "hybrid-tree":
-        # Ablation: tree BM25 navigate → tree LLM rerank
         from vectorless.retrieval.hybrid import search as module
 
         module.save_log = lambda _result: None
@@ -66,6 +71,15 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
     raise ValueError(f"Unsupported system: {system}")
 
 
+def _llm_model_constant() -> str | None:
+    """Capture the LLM model name used by the retrieval modules, if any."""
+    try:
+        from vectorless.llm import MODEL
+        return str(MODEL)
+    except Exception:
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run one vectorless retrieval call in a fresh process.")
     ap.add_argument("--system", required=True, choices=["bm25", "hybrid", "hybrid-tree", "llm", "llm-full"])
@@ -82,6 +96,7 @@ def main() -> int:
             "ok": True,
             "system": args.system,
             "granularity": args.granularity,
+            "llm_model": _llm_model_constant(),
             "result": result,
         }
     except Exception as exc:  # pragma: no cover - operational fallback
@@ -89,6 +104,7 @@ def main() -> int:
             "ok": False,
             "system": args.system,
             "granularity": args.granularity,
+            "llm_model": _llm_model_constant(),
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }

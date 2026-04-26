@@ -1,7 +1,22 @@
 """Pure retrieval + answer scoring functions.
 
-Zero I/O, zero side effects. Identical semantics to the legacy monolith so
-existing summary numbers reproduce byte-for-byte.
+Zero I/O, zero side effects. Used by both the vectorless and vector eval
+harnesses so RQ1, RQ2, and RQ3 numbers are computed identically.
+
+Methodology notes for thesis writeup.
+
+  N1. Single-gold GT collapses several IR metrics. With exactly one gold node
+      per query per granularity, recall@k equals hit@k, and map@k equals
+      mrr@k. NDCG@k is monotone-equivalent to mrr@k. We still report all of
+      them so reader can cross-reference the name they prefer.
+
+  N2. Retrieval may return fewer than k items (LLM-stepwise can stop early).
+      Metrics are computed over the actual list. Recall@k for a 3-item list
+      with the gold at rank 2 is hit. We do not pad to length k.
+
+  N3. full_reciprocal_rank ignores the cutoff. Useful when gold appears at
+      rank 12 with k=10, where mrr@10=0 hides the signal but the system
+      still found the answer. Report alongside mrr@10 for failure analysis.
 """
 
 from __future__ import annotations
@@ -73,6 +88,13 @@ def score_ranked_retrieval(
     relevant_ids: set[str],
     cutoffs: list[int],
 ) -> dict:
+    """Score one ranked retrieval result against the gold set.
+
+    Outputs cover every cutoff plus a few rank-distribution descriptive stats.
+    For single-gold GT (the thesis design) recall@k collapses to hit@k and
+    map@k collapses to mrr@k. We emit both names so reviewers from different
+    sub-fields can reference the metric they recognise.
+    """
     ranked = unique_preserve_order(ranked_ids)
     relevant = set(relevant_ids)
     hit_positions = [idx for idx, node_id in enumerate(ranked, start=1) if node_id in relevant]
@@ -83,6 +105,9 @@ def score_ranked_retrieval(
         "num_relevant": len(relevant),
         "first_relevant_rank": first_rank,
         "exact_top1_hit": bool(ranked) and ranked[0] in relevant,
+        # Reciprocal rank without a cutoff. Useful when gold lands beyond k
+        # (mrr@k = 0 hides the rank, full_rr keeps the signal).
+        "full_reciprocal_rank": (1.0 / first_rank) if first_rank else 0.0,
     }
 
     for k in cutoffs:
@@ -107,14 +132,57 @@ def score_ranked_retrieval(
                 precision_sum += num_hits / rank
         ap = precision_sum / len(relevant) if relevant else 0.0
 
+        # Per-cutoff MRR. For single-gold GT this equals map@k, but both names
+        # appear in the literature so we keep both for completeness.
+        mrr_k = (1.0 / first_rank) if first_rank and first_rank <= k else 0.0
+
         out[f"hit@{k}"] = float(hit)
         out[f"recall@{k}"] = recall
         out[f"ndcg@{k}"] = ndcg
         out[f"map@{k}"] = ap
+        out[f"mrr@{k}"] = mrr_k
 
-    max_k = max(cutoffs)
-    out[f"mrr@{max_k}"] = (1.0 / first_rank) if first_rank and first_rank <= max_k else 0.0
     return out
+
+
+# ----------------------------------------------------------------------
+# Rank-distribution descriptive stats over a population of records
+# ----------------------------------------------------------------------
+
+def rank_distribution_stats(records: list[dict]) -> dict:
+    """Mean and median rank across records that hit, plus hit-rate context.
+
+    MRR weighs top ranks heavily so the average can be misleading. Reporting
+    mean and median rank on the hit-only subset gives a complementary view of
+    "where does the gold land when we find it".
+    """
+    ranks = [
+        int(row["first_relevant_rank"])
+        for row in records
+        if row.get("first_relevant_rank")
+    ]
+    if not ranks:
+        return {
+            "n_hits_anywhere": 0,
+            "n_total": len(records),
+            "mean_rank_on_hit": 0.0,
+            "median_rank_on_hit": 0.0,
+            "max_rank_on_hit": 0,
+        }
+    sorted_ranks = sorted(ranks)
+    n = len(sorted_ranks)
+    median = (
+        sorted_ranks[n // 2]
+        if n % 2 == 1
+        else 0.5 * (sorted_ranks[n // 2 - 1] + sorted_ranks[n // 2])
+    )
+    return {
+        "n_hits_anywhere": n,
+        "n_total": len(records),
+        "mean_rank_on_hit": float(sum(sorted_ranks) / n),
+        "median_rank_on_hit": float(median),
+        "max_rank_on_hit": int(sorted_ranks[-1]),
+    }
 
 
 # ----------------------------------------------------------------------
@@ -188,9 +256,11 @@ def run_self_test() -> None:
     row = score_ranked_retrieval(["a", "b"], {"a"}, cutoffs)
     assert_close(row["hit@1"], 1.0)
     assert_close(row["recall@1"], 1.0)
+    assert_close(row["mrr@1"], 1.0)
     assert_close(row["mrr@10"], 1.0)
     assert_close(row["map@10"], 1.0)
     assert_close(row["ndcg@10"], 1.0)
+    assert_close(row["full_reciprocal_rank"], 1.0)
 
     row = score_ranked_retrieval(["a", "b", "c"], {"a", "c"}, cutoffs)
     assert_close(row["hit@1"], 1.0)
@@ -205,8 +275,31 @@ def run_self_test() -> None:
     assert_close(row["mrr@10"], 0.0)
     assert_close(row["map@10"], 0.0)
     assert_close(row["ndcg@10"], 0.0)
+    assert_close(row["full_reciprocal_rank"], 0.0)
 
     row = score_ranked_retrieval(["x", "y", "a"], {"a"}, cutoffs)
     assert_close(row["hit@1"], 0.0)
     assert_close(row["hit@3"], 1.0)
+    assert_close(row["mrr@1"], 0.0)
+    assert_close(row["mrr@3"], 1 / 3)
     assert_close(row["mrr@10"], 1 / 3)
+    assert_close(row["full_reciprocal_rank"], 1 / 3)
+
+    # full_reciprocal_rank > 0 even when gold is past cutoff k=10
+    long_list = [f"x{i}" for i in range(11)] + ["a"]
+    row = score_ranked_retrieval(long_list, {"a"}, cutoffs)
+    assert_close(row["mrr@10"], 0.0)
+    assert_close(row["full_reciprocal_rank"], 1 / 12)
+
+    # Rank distribution stats over a small population
+    fake_records = [
+        {"first_relevant_rank": 1},
+        {"first_relevant_rank": 3},
+        {"first_relevant_rank": 5},
+        {"first_relevant_rank": None},
+    ]
+    rstat = rank_distribution_stats(fake_records)
+    assert_close(rstat["mean_rank_on_hit"], 3.0)
+    assert_close(rstat["median_rank_on_hit"], 3.0)
+    if rstat["n_hits_anywhere"] != 3 or rstat["n_total"] != 4:
+        raise AssertionError("rank_distribution_stats hit count mismatch")

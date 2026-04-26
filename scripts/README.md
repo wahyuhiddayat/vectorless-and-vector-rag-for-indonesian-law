@@ -5,7 +5,7 @@ Top-level index for everything under `scripts/`. Each sub-package owns its own R
 | Package | Purpose | Doc |
 |---|---|---|
 | `scripts/gt/` | Ground truth generation, validation, audit, finalization | [scripts/gt/README.md](gt/README.md) |
-| `scripts/eval/` | RQ1 to RQ3 retrieval experiments runner | (see CLI help, `python -m scripts.eval --help`) |
+| `scripts/eval/` | RQ1 to RQ3 retrieval experiments runner | [scripts/eval/README.md](eval/README.md) |
 | `scripts/parser/` | Indexing helpers, OCR clean, judge, granularity check | (see CLAUDE.md, `Notes/Indexing Flow.md`) |
 | `scripts/_shared/` | Common utilities shared across the above |  |
 

@@ -101,21 +101,41 @@ def write_csv(path: Path, records: list[dict]) -> None:
 # Records directory readers (resume support)
 # ----------------------------------------------------------------------
 
-def read_records_file(path: Path) -> list[dict]:
-    """Load all records from one JSONL file. Tolerates empty / missing file."""
+REQUIRED_RECORD_FIELDS = {
+    "query_id", "system", "eval_granularity", "gold_doc_id",
+    "recall@10", "mrr@10",
+}
+
+
+def read_records_file(path: Path, *, validate: bool = False) -> list[dict]:
+    """Load all records from one JSONL file. Tolerates empty / missing file.
+
+    With validate=True, drops records that are missing any required field.
+    Returns the dropped count alongside the records via the side-channel
+    last_invalid_records[]. Used on resume to skip rows that may have been
+    written before a crash mid-flush.
+    """
     if not path.exists():
         return []
     records: list[dict] = []
+    invalid_count = 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
-                # Skip truncated tail records (e.g., crash during flush)
+                invalid_count += 1
                 continue
+            if validate and not REQUIRED_RECORD_FIELDS.issubset(row.keys()):
+                invalid_count += 1
+                continue
+            records.append(row)
+    if invalid_count:
+        # Stash count on the function for the runner to surface in logs.
+        read_records_file.last_invalid_count = invalid_count  # type: ignore[attr-defined]
     return records
 
 
@@ -130,9 +150,17 @@ def read_all_records(records_dir: Path) -> list[dict]:
 
 
 def completed_qids_for_combo(records_dir: Path, system: str, granularity: str) -> set[str]:
-    """Set of query_ids already recorded for this (system, granularity)."""
+    """Set of query_ids already recorded for this (system, granularity).
+
+    Validates each record on read. Truncated rows or rows missing a required
+    metric are not counted as completed and will be re-run on resume.
+    """
     path = records_dir / combo_filename(system, granularity)
-    return {r["query_id"] for r in read_records_file(path) if r.get("query_id")}
+    return {
+        r["query_id"]
+        for r in read_records_file(path, validate=True)
+        if r.get("query_id")
+    }
 
 
 # ----------------------------------------------------------------------

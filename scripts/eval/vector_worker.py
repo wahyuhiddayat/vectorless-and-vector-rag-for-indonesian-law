@@ -82,6 +82,13 @@ def main() -> int:
     if args.qdrant_path:
         os.environ["QDRANT_PATH"] = args.qdrant_path
 
+    # Capture the answer-generation LLM model for provenance, if importable.
+    try:
+        from vectorless.llm import MODEL as _ans_model
+        llm_model = str(_ans_model)
+    except Exception:
+        llm_model = None
+
     try:
         result = run_retrieval(args.system, args.query, args.top_k)
         payload = {
@@ -90,6 +97,7 @@ def main() -> int:
             "granularity": args.granularity,
             "embedding_model": args.embedding_model,
             "collection": collection,
+            "llm_model": llm_model,
             "result": result,
         }
     except Exception as exc:  # pragma: no cover - operational fallback
@@ -98,6 +106,7 @@ def main() -> int:
             "system": args.system,
             "granularity": args.granularity,
             "embedding_model": args.embedding_model,
+            "llm_model": llm_model,
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }

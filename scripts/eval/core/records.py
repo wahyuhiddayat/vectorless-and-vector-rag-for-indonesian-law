@@ -15,6 +15,7 @@ from .metrics import (
 
 
 def normalize_worker_payload(payload: dict | None) -> dict:
+    """Flatten and validate the worker JSON output for downstream scoring."""
     if not payload:
         return {
             "worker_ok": False,
@@ -24,6 +25,7 @@ def normalize_worker_payload(payload: dict | None) -> dict:
             "retrieved_sources": [],
             "retrieved_node_ids": [],
             "metrics": {},
+            "llm_model": None,
         }
 
     if not payload.get("ok"):
@@ -36,6 +38,7 @@ def normalize_worker_payload(payload: dict | None) -> dict:
             "retrieved_sources": [],
             "retrieved_node_ids": [],
             "metrics": {},
+            "llm_model": payload.get("llm_model"),
         }
 
     raw = payload.get("result", {})
@@ -52,6 +55,7 @@ def normalize_worker_payload(payload: dict | None) -> dict:
         "citation_node_ids": unique_preserve_order([c.get("node_id", "") for c in citations]),
         "metrics": raw.get("metrics", {}) or {},
         "raw_strategy": raw.get("strategy", payload.get("system", "")),
+        "llm_model": payload.get("llm_model"),
     }
 
 
@@ -109,6 +113,7 @@ def build_per_query_record(
         "total_tokens": metrics.get("total_tokens", 0),
         "elapsed_s": metrics.get("elapsed_s", 0.0),
         "step_metrics": metrics.get("step_metrics", {}),
+        "llm_model": normalized.get("llm_model"),
     }
     record.update(retrieval_metrics)
     record.update(answer_metrics)
