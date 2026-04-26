@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL = "gemini-3-flash-preview"
+MODEL = "gemini-2.5-flash"
 
 _client = None
 _input_tokens = 0
