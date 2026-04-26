@@ -36,6 +36,7 @@ from .parser import (  # noqa: E402
     iter_leaves,
     strip_ocr_headers,
 )
+from ..ids import doc_category  # noqa: E402
 
 REGISTRY_PATH = Path("data/raw/registry.json")
 INDEXING_LOGS_DIR = Path("data/indexing_logs")
@@ -272,9 +273,18 @@ def main() -> None:
                     help="Skip LLM-parse; only re-derive ayat + rincian from existing pasal index")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview LLM-parse only; do not overwrite any index file")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="Skip docs already fully indexed across all 3 granularities")
     args = ap.parse_args()
 
     targets = _resolve_targets(list(args.doc_ids), args.category)
+    if args.skip_existing:
+        before = len(targets)
+        targets = [d for d in targets if not all(
+            (idx_dir / doc_category(d) / f"{d}.json").exists()
+            for idx_dir in GRANULARITY_INDEX_MAP.values()
+        )]
+        log.info(f"--skip-existing: {before - len(targets)} already indexed, {len(targets)} remaining")
     log.info(f"indexing {len(targets)} docs (resplit_only={args.resplit_only}, dry_run={args.dry_run})")
 
     ok = 0
@@ -314,6 +324,13 @@ def main() -> None:
         with open(idx_dir / "catalog.json", "w", encoding="utf-8") as f:
             json.dump(catalog, f, ensure_ascii=False, indent=2)
         log.info(f"catalog ({gran})  {len(catalog)} docs  {idx_dir / 'catalog.json'}")
+
+    try:
+        from scripts.parser.corpus_status import build_status, write_status
+        write_status(build_status())
+        log.info("corpus_status.json refreshed")
+    except Exception as exc:
+        log.warning("corpus_status refresh failed: %s", exc)
 
 
 if __name__ == "__main__":

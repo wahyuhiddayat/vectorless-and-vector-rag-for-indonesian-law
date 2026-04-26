@@ -313,6 +313,13 @@ def main() -> None:
     )
     print(f"report: {REPORT_PATH}")
 
+    try:
+        from scripts.parser.corpus_status import build_status, write_status
+        write_status(build_status())
+        print("corpus_status.json refreshed")
+    except Exception as exc:
+        print(f"warning: corpus_status refresh failed: {exc}")
+
 
 if __name__ == "__main__":
     main()

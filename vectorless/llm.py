@@ -34,7 +34,7 @@ def client():
             sys.exit(1)
         _client = genai.Client(
             api_key=api_key,
-            http_options=gtypes.HttpOptions(timeout=120_000),
+            http_options=gtypes.HttpOptions(timeout=300_000),
         )
     return _client
 
