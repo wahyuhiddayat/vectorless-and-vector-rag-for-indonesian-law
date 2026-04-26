@@ -25,7 +25,7 @@ python scraper/bpk_scraper.py [OPTIONS]
 | `--skip-pdf` | - | Hanya scrape metadata, skip download PDF |
 | `--tahun` | - | Filter tahun, misal `2024` atau `2020-2026`, range iterasi per tahun |
 | `--resume` | - | Lewati dokumen yang sudah pernah di-scrape (cek by `detail_id`) |
-| `--skip-doc-ids` | - | Comma-separated doc_id yang dilewati, misal `uu-1-2026,uu-20-2025` |
+| `--skip-doc-ids` | - | Comma-separated doc_id yang dilewati, misal `uu-1-2026,uu-20-2025`. Otomatis di-merge dengan blacklist dari `data/dropped_docs.json` |
 | `--limit` | `0` | Maksimum dokumen baru per jenis, `0` artinya tanpa batas |
 | `--log-level` | `INFO` | Level logging, `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
@@ -181,6 +181,7 @@ Registry merge-aware. Jalankan ulang scraper akan menggabungkan entry baru ke re
 ## Fitur
 
 - **Resume.** `--resume` skip dokumen yang sudah ada berdasarkan `detail_id`.
+- **Auto-skip dropped docs.** Saat startup, scraper baca `data/dropped_docs.json` dan otomatis tambahkan semua doc_id di sana ke skip set. Doc yang pernah di-drop karena MAJOR/FAIL/ERROR ga akan re-fetched ulang waktu expand kategori. Lihat `scripts/parser/corpus_status.py`.
 - **Retry.** Setiap request otomatis di-retry hingga 3 kali pada error transien.
 - **Short-circuit pada status non-recoverable.** Status 400, 401, 403, 404, 405, 410, 451 tidak di-retry, langsung return None agar tidak buang waktu.
 - **Streaming PDF.** PDF di-download streaming agar tidak membebani memori.
