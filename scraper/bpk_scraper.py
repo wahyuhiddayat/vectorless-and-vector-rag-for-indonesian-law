@@ -166,6 +166,7 @@ def sanitize_filename(name: str) -> str:
 def make_doc_id(bentuk_singkat: str, nomor: str, tahun: str) -> str:
     """Build the canonical `doc_id`, for example `uu-1-2026`."""
     bs = bentuk_singkat.strip().lower() if bentuk_singkat else "unknown"
+    bs = re.sub(r"\s+", "-", bs)
     n = nomor.strip() if nomor else "0"
     t = tahun.strip() if tahun else "0"
     return f"{bs}-{n}-{t}"
