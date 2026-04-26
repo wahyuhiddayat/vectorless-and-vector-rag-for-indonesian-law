@@ -41,6 +41,7 @@ INDEX_DIRS = {
 }
 JUDGE_PATH = ROOT / "data" / "judge_report.json"
 STATUS_PATH = ROOT / "data" / "corpus_status.json"
+DROPPED_LOG_PATH = ROOT / "data" / "dropped_docs.json"
 
 KEEP_VERDICTS = {"OK", "MINOR"}
 DROP_VERDICTS = {"MAJOR", "FAIL", "ERROR"}
@@ -172,10 +173,27 @@ def write_status(status: dict) -> None:
     )
 
 
+def _load_dropped_log() -> dict:
+    """Load the persistent log of previously-dropped doc_ids."""
+    if not DROPPED_LOG_PATH.exists():
+        return {"docs": []}
+    try:
+        return json.load(DROPPED_LOG_PATH.open(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"docs": []}
+
+
 def reconcile(status: dict, dry_run: bool = False) -> dict:
-    """Drop ineligible doc artifacts so raw, registry, and index stay in sync."""
+    """Drop ineligible doc artifacts so raw, registry, and index stay in sync.
+
+    Appends an entry to data/dropped_docs.json for each doc dropped, so
+    future scrapes or expansions can skip known-bad docs without losing
+    the reason they were rejected.
+    """
     registry = _load_registry()
     judge_data = json.load(JUDGE_PATH.open(encoding="utf-8")) if JUDGE_PATH.exists() else None
+    dropped_log = _load_dropped_log()
+    log_seen = {d["doc_id"] for d in dropped_log["docs"]}
 
     drops = [d for d in status["docs"] if not d["eligible_for_gt"]]
     actions = {"docs_dropped": [], "files_removed": []}
@@ -184,6 +202,22 @@ def reconcile(status: dict, dry_run: bool = False) -> dict:
         doc_id = d["doc_id"]
         category = d["category"]
         removed: list[str] = []
+
+        judge_entry = next(
+            (j for j in (judge_data or {}).get("docs", []) if j["doc_id"] == doc_id),
+            None,
+        )
+        if doc_id not in log_seen:
+            dropped_log["docs"].append({
+                "doc_id": doc_id,
+                "category": category,
+                "dropped_at": datetime.now(timezone.utc).isoformat(),
+                "reason": d["skip_reason"],
+                "verdict": d["judge_verdict"],
+                "score": d["judge_score"],
+                "missing_pasals": d["judge_missing_pasals"],
+                "notes": (judge_entry or {}).get("notes"),
+            })
 
         for gran, base in INDEX_DIRS.items():
             f = base / category / f"{doc_id}.json"
@@ -225,6 +259,9 @@ def reconcile(status: dict, dry_run: bool = False) -> dict:
             JUDGE_PATH.write_text(
                 json.dumps(judge_data, indent=2, ensure_ascii=False), encoding="utf-8"
             )
+        DROPPED_LOG_PATH.write_text(
+            json.dumps(dropped_log, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     return actions
 

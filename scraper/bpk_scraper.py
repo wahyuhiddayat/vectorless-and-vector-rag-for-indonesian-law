@@ -556,6 +556,17 @@ def main():
     skip_doc_ids = {
         d.strip().lower() for d in args.skip_doc_ids.split(",") if d.strip()
     }
+    dropped_log_path = Path("data/dropped_docs.json")
+    if dropped_log_path.exists():
+        try:
+            dropped = json.load(dropped_log_path.open(encoding="utf-8"))
+            blacklist = {d["doc_id"].lower() for d in dropped.get("docs", [])}
+            new = blacklist - skip_doc_ids
+            if new:
+                log.info("Auto-skip %d doc_ids from dropped_docs.json", len(new))
+            skip_doc_ids |= blacklist
+        except (json.JSONDecodeError, KeyError) as exc:
+            log.warning("Could not load dropped_docs.json: %s", exc)
     if skip_doc_ids:
         log.info("Will skip doc_ids: %s", sorted(skip_doc_ids))
 
