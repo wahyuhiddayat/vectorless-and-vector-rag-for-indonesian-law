@@ -8,7 +8,7 @@ Run all commands from the project root.
 cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vector-rag-for-indonesian-law"
 ```
 
-For experimental design, supervisor decisions, and the RQ3 winner-selection rule see [`Notes/Retrieval Experiments.md`](../../../Notes/Retrieval%20Experiments.md). For ground-truth construction see [`scripts/gt/README.md`](../gt/README.md).
+For experimental design, supervisor decisions, and the RQ3 winner-selection rule see [`Notes/design/Retrieval Experiments.md`](../../../Notes/design/Retrieval%20Experiments.md). For ground-truth construction see [`scripts/gt/README.md`](../gt/README.md).
 
 ## Files
 
@@ -83,7 +83,7 @@ python scripts/eval/vector.py --label main_rq2_140q --resume --qdrant-path ./qdr
 
 ## RQ3, head-to-head
 
-After RQ1 and RQ2 finish, pick winners per the criterion in [Retrieval Experiments.md](../../../Notes/Retrieval%20Experiments.md), section "RQ3 Winner-Selection Criterion".
+After RQ1 and RQ2 finish, pick winners per the criterion in [Retrieval Experiments.md](../../../Notes/design/Retrieval%20Experiments.md), section "RQ3 Winner-Selection Criterion".
 
 Report from `summary_overall.json` of each run.
 

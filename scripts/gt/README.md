@@ -8,7 +8,7 @@ Run all commands from the project root.
 cd "d:\Fasilkom UI\Kuliah\Semester 8\TA - Skripsi\02 Codebase\vectorless-and-vector-rag-for-indonesian-law"
 ```
 
-For the design rationale (anchor granularity, roll-up, fairness arguments), see [`Notes/Ground Truth Design.md`](../../../Notes/Ground%20Truth%20Design.md).
+For the design rationale (anchor granularity, roll-up, fairness arguments), see [`Notes/design/Ground Truth Design.md`](../../../Notes/design/Ground%20Truth%20Design.md).
 
 ## Pipeline at a glance
 

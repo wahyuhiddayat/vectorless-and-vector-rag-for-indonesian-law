@@ -163,12 +163,43 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def make_doc_id(bentuk_singkat: str, nomor: str, tahun: str) -> str:
-    """Build the canonical `doc_id`, for example `uu-1-2026`."""
+_DAERAH_RE = re.compile(
+    r"\b(?:Provinsi|Kabupaten|Kota)\s+(.+?)\s+Nomor\b", re.IGNORECASE
+)
+
+
+def _daerah_slug(judul: str | None) -> str | None:
+    """Extract daerah issuer slug from judul, or None for non-daerah docs.
+
+    Pusat/Kementerian docs do not match the Provinsi/Kabupaten/Kota pattern
+    and return None, so their doc_id format stays the legacy two-segment shape.
+    """
+    if not judul:
+        return None
+    m = _DAERAH_RE.search(judul)
+    if not m:
+        return None
+    name = m.group(1).strip().lower()
+    name = re.sub(r"[^\w\s-]", "", name)
+    return re.sub(r"\s+", "-", name).strip("-")
+
+
+def make_doc_id(bentuk_singkat: str, nomor: str, tahun: str,
+                judul: str | None = None) -> str:
+    """Build the canonical `doc_id`.
+
+    Pusat/Kementerian docs use `{bentuk}-{nomor}-{tahun}` (e.g. `uu-1-2026`).
+    Daerah docs (PERGUB, PERBUP, PERWAL, PERDA-Provinsi/Kab/Kota) include a
+    daerah segment to disambiguate identical numbering across provinces, e.g.
+    `pergub-dki-jakarta-11-2026` vs `pergub-jambi-1-2026`.
+    """
     bs = bentuk_singkat.strip().lower() if bentuk_singkat else "unknown"
     bs = re.sub(r"\s+", "-", bs)
     n = nomor.strip() if nomor else "0"
     t = tahun.strip() if tahun else "0"
+    daerah = _daerah_slug(judul)
+    if daerah:
+        return f"{bs}-{daerah}-{n}-{t}"
     return f"{bs}-{n}-{t}"
 
 
@@ -307,7 +338,8 @@ def scrape_detail_page(detail_id: str, slug: str, session: requests.Session) -> 
     bentuk_singkat = metadata.get("bentuk_singkat", "")
     nomor = metadata.get("nomor", "")
     tahun = metadata.get("tahun", "")
-    metadata["doc_id"] = make_doc_id(bentuk_singkat, nomor, tahun)
+    judul = metadata.get("judul", "")
+    metadata["doc_id"] = make_doc_id(bentuk_singkat, nomor, tahun, judul)
 
     return metadata
 
