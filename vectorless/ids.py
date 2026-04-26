@@ -1,6 +1,7 @@
 """Document-id parsing utilities shared by indexing and retrieval."""
 
 _MULTI_WORD_PREFIXES = {
+    "peraturan-bi": "PERATURAN_BI",
     "peraturan-bssn": "PERATURAN_BSSN",
     "peraturan-ojk": "PERATURAN_OJK",
     "perma": "PERATURAN_MA",
