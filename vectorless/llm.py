@@ -9,9 +9,11 @@ import time
 
 from dotenv import load_dotenv
 
+from .models import RETRIEVAL_MODEL
+
 load_dotenv()
 
-MODEL = "gemini-2.5-flash"
+MODEL = RETRIEVAL_MODEL
 
 _client = None
 _input_tokens = 0

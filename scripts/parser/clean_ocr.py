@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from vectorless.ids import doc_category
 from vectorless.llm import call as llm_call
+from vectorless.models import OCR_CLEAN_MODEL
 
 INDEX_PASAL = Path("data/index_pasal")
 REGISTRY_PATH = ROOT / "data/raw/registry.json"
@@ -75,7 +76,7 @@ def _clean_text(text: str, usage_acc: dict, lock: threading.Lock) -> tuple[str, 
     """Return (cleaned_text, fixes_list, rejection_reason). text echoed back if rejected."""
     if not text.strip():
         return text, [], None
-    result, usage = llm_call(PROMPT.format(text=text[:8000]), return_usage=True)
+    result, usage = llm_call(PROMPT.format(text=text[:8000]), model=OCR_CLEAN_MODEL, return_usage=True)
     with lock:
         usage_acc["input_tokens"] += usage["input_tokens"]
         usage_acc["output_tokens"] += usage["output_tokens"]

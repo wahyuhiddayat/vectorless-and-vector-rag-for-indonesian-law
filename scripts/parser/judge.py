@@ -24,12 +24,12 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
 from scripts.parser._common import load_pdf_pages  # noqa: E402
+from vectorless.models import JUDGE_MODEL  # noqa: E402
 
 INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 REPORT_PATH = REPO_ROOT / "data" / "judge_report.json"
 REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 
-JUDGE_MODEL = "gemini-2.5-pro"
 MAX_OUTPUT_TOKENS = 16384
 
 # Gemini 2.5 Pro pricing per 1M tokens (context <=200K). Used for cost logs.

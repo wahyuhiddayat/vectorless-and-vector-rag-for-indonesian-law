@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from vectorless.ids import doc_category
 from vectorless.llm import call as llm_call
+from vectorless.models import SUMMARY_MODEL
 
 GRANULARITY_INDEX = {
     "pasal": Path("data/index_pasal"),
@@ -72,7 +73,7 @@ def _summarise_leaf(node: dict, usage_acc: dict, lock: threading.Lock) -> str:
         nav_path=node.get("navigation_path", ""),
         text=text[:4000],
     )
-    result, usage = llm_call(prompt, return_usage=True)
+    result, usage = llm_call(prompt, model=SUMMARY_MODEL, return_usage=True)
     _accumulate(usage_acc, lock, usage)
     return (result.get("summary") or "").strip()
 
@@ -87,7 +88,7 @@ def _summarise_internal(node: dict, child_pairs: list[tuple[str, str]],
         nav_path=node.get("navigation_path", ""),
         children=children_text,
     )
-    result, usage = llm_call(prompt, return_usage=True)
+    result, usage = llm_call(prompt, model=SUMMARY_MODEL, return_usage=True)
     _accumulate(usage_acc, lock, usage)
     return (result.get("summary") or "").strip()
 

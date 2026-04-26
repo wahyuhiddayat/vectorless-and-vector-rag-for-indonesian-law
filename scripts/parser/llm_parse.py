@@ -29,12 +29,8 @@ from scripts.parser._common import (  # noqa: E402
 import time  # noqa: E402
 
 from vectorless.llm import client as gemini_client  # noqa: E402
+from vectorless.models import PARSE_MODEL as MODEL_NAME  # noqa: E402
 
-# Parse runs on Gemini 2.5 Pro: stable production tier, separate daily quota
-# from 2.5 Flash, and stronger long-context handling than preview Flash variants.
-# Summary annotation and OCR clean stay on the latest preview model via
-# vectorless.llm.MODEL — they run many short calls that benefit from speed.
-MODEL_NAME = "gemini-2.5-pro"
 MAX_RETRIES = 3
 
 
