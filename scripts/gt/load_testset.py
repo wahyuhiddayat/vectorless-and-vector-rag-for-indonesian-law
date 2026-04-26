@@ -39,6 +39,11 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from vectorless.ids import doc_category
+
 # Force UTF-8 on Windows
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -70,36 +75,63 @@ def load_testset(path: Path = None) -> dict:
 
 
 def show_stats(data: dict):
-    """Print comprehensive statistics about the testset."""
+    """Print comprehensive statistics about the testset.
+
+    Adds a per-category breakdown (derived via vectorless.ids.doc_category)
+    plus a category x reference_mode cross-tab so reviewers can see whether
+    any sub-task is starved of queries.
+    """
     doc_counts = defaultdict(int)
     anchor_nodes = defaultdict(set)
     reference_mode_counts = defaultdict(int)
+    cat_counts: dict[str, int] = defaultdict(int)
+    cat_ref_counts: dict[tuple[str, str], int] = defaultdict(int)
+    cat_doc_counts: dict[str, set[str]] = defaultdict(set)
 
     for item in data.values():
         doc_id = item.get("gold_doc_id", "?")
         node_id = item.get("gold_anchor_node_id") or item.get("gold_node_id", "?")
+        ref_mode = item.get("reference_mode", "(missing)")
+        cat = doc_category(doc_id) if doc_id != "?" else "(unknown)"
+
         doc_counts[doc_id] += 1
         anchor_nodes[doc_id].add(node_id)
-        reference_mode_counts[item.get("reference_mode", "(missing)")] += 1
+        reference_mode_counts[ref_mode] += 1
+        cat_counts[cat] += 1
+        cat_ref_counts[(cat, ref_mode)] += 1
+        cat_doc_counts[cat].add(doc_id)
+
+    total = len(data) or 1
 
     print("\n" + "=" * 70)
     print("TESTSET STATISTICS")
     print("=" * 70)
     print(f"\nTotal questions       : {len(data)}")
     print(f"Documents covered     : {len(doc_counts)}")
+    print(f"Categories covered    : {len(cat_counts)}")
     print(f"Unique anchor nodes   : {sum(len(nodes) for nodes in anchor_nodes.values())}")
 
-    print(f"\nQuestions per document:")
+    print("\nReference mode distribution:")
+    for ref_mode in ["none", "legal_ref", "doc_only", "both", "(missing)"]:
+        count = reference_mode_counts.get(ref_mode, 0)
+        if count:
+            print(f"  {ref_mode:15s}  {count:4d}  ({100.0 * count / total:5.1f}%)")
+
+    print("\nPer category, queries x docs x reference_mode (n / d):")
+    modes = ["none", "legal_ref", "doc_only", "both"]
+    header_modes = "  ".join(f"{m:>9s}" for m in modes)
+    print(f"  {'category':22s}  {'n':>4s}  {'d':>3s}  {header_modes}")
+    for cat in sorted(cat_counts):
+        n = cat_counts[cat]
+        d = len(cat_doc_counts[cat])
+        cells = "  ".join(f"{cat_ref_counts.get((cat, m), 0):>9d}" for m in modes)
+        print(f"  {cat:22s}  {n:>4d}  {d:>3d}  {cells}")
+
+    print("\nQuestions per document:")
     for doc_id in sorted(doc_counts.keys()):
         count = doc_counts[doc_id]
         unique_nodes = len(anchor_nodes[doc_id])
         print(f"  {doc_id:30s}  {count:3d} questions  ({unique_nodes} unique anchors)")
-
-    print(f"\nReference mode distribution:")
-    for ref_mode in ["none", "legal_ref", "doc_only", "both", "(missing)"]:
-        count = reference_mode_counts.get(ref_mode, 0)
-        if count:
-            print(f"  {ref_mode:15s}  {count:3d}")
 
     print()
 

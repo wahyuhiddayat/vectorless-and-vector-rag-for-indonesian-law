@@ -36,6 +36,7 @@ if sys.stdout.encoding != "utf-8":
 RAW_DIR = Path("data/ground_truth_raw")
 GT_FILE = Path("data/ground_truth.json")
 DATA_INDEX = Path("data/index_rincian")
+AUDIT_DIR = Path("data/gt_audit")
 
 VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
 REQUIRED_FIELDS = {
@@ -229,6 +230,25 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
     return valid_items, hard_errors
 
 
+def load_audit_dropped_anchors(doc_id: str) -> set[str]:
+    """Return anchor_node_ids that the author flagged 'wrong' for a doc.
+
+    The set comes from data/gt_audit/<doc_id>.json, which is produced by the
+    interactive log_review.py pass. Returns an empty set when no log exists,
+    so audit logging stays optional.
+    """
+    audit_path = AUDIT_DIR / f"{doc_id}.json"
+    if not audit_path.exists():
+        return set()
+    with open(audit_path, encoding="utf-8") as f:
+        audit = json.load(f)
+    return {
+        entry["anchor_node_id"]
+        for entry in audit.get("items", [])
+        if entry.get("verdict") == "wrong" and entry.get("anchor_node_id")
+    }
+
+
 def load_existing_gt() -> dict:
     """Load existing ground_truth.json or return empty dict if not found."""
     if not GT_FILE.exists():
@@ -385,9 +405,19 @@ def main() -> None:
     print(f"\nMemvalidasi {len(raw_files)} file...")
     print()
 
+    audit_drops_total = 0
     for raw_path in raw_files:
         doc_id = raw_path.stem
         valid_items, hard_errors = validate_raw_file(raw_path)
+
+        dropped_anchors = load_audit_dropped_anchors(doc_id)
+        if dropped_anchors:
+            kept = [it for it in valid_items if it.get("gold_anchor_node_id") not in dropped_anchors]
+            n_dropped = len(valid_items) - len(kept)
+            if n_dropped:
+                audit_drops_total += n_dropped
+                print(f"  [audit] {doc_id}: dropping {n_dropped} item(s) flagged 'wrong' in gt_audit/")
+            valid_items = kept
 
         accepted: list[dict] = []
         dup_errors: list[str] = []
@@ -424,7 +454,7 @@ def main() -> None:
 
         all_valid.extend(accepted)
 
-    print(f"\nTotal: {len(all_valid)} pertanyaan valid, {total_hard_errors} hard errors")
+    print(f"\nTotal: {len(all_valid)} pertanyaan valid, {total_hard_errors} hard errors, {audit_drops_total} dropped via audit")
 
     if total_hard_errors > 0 and not args.force_merge:
         print("\nAda hard errors — perbaiki sebelum merge atau gunakan --force-merge.")

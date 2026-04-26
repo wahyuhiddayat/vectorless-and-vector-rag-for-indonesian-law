@@ -21,6 +21,8 @@ Usage:
 """
 
 import argparse
+import datetime as dt
+import hashlib
 import json
 import math
 import sys
@@ -32,6 +34,8 @@ if sys.stdout.encoding != "utf-8":
 
 DATA_INDEX = Path("data/index_rincian")
 TMP_DIR = Path("tmp")
+SELECTION_FILE = Path("data/gt_doc_selection.json")
+META_SUFFIX = ".meta.json"
 DEFAULT_PROMPT_CHAR_BUDGET = 45000
 PROMPT_BUDGET_GROWTH = 1.25
 
@@ -238,6 +242,54 @@ node PALING SPESIFIK yang tersedia (huruf/angka jika ada, ayat jika tidak dipeca
 lebih lanjut, pasal jika tidak punya ayat).
 Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 """
+
+
+def prompt_template_version() -> str:
+    """Return the SHA-8 hash of the current PROMPT_TEMPLATE for provenance."""
+    return hashlib.sha256(PROMPT_TEMPLATE.encode("utf-8")).hexdigest()[:8]
+
+
+def write_meta_sidecar(category: str, doc_id: str, n_questions: int, total_parts: int) -> Path:
+    """Write a provenance sidecar next to the raw GT placeholder.
+
+    The sidecar records the prompt template version, generation timestamp,
+    and placeholders for the annotator and judge model that the author fills
+    in after running each respective LLM call. log_review.py and the eventual
+    skripsi metodologi section read from this sidecar.
+    """
+    raw_dir = Path("data/ground_truth_raw") / category
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = raw_dir / f"{doc_id}{META_SUFFIX}"
+    if meta_path.exists():
+        return meta_path
+
+    payload = {
+        "doc_id": doc_id,
+        "category": category,
+        "prompt_version": prompt_template_version(),
+        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "n_questions_target": n_questions,
+        "n_parts": total_parts,
+        "annotator_model": "<FILL>",
+        "judge_model": "<FILL>",
+        "notes": "",
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return meta_path
+
+
+def load_selection_for(category: str) -> set[str] | None:
+    """Return the selected doc_id set for a category, or None if absent."""
+    if not SELECTION_FILE.exists():
+        return None
+    with open(SELECTION_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+    entry = data.get(category)
+    if not entry:
+        return None
+    return {row["doc_id"] for row in entry.get("selected", [])}
 
 
 def default_output_path(doc_id: str) -> Path:
@@ -564,6 +616,10 @@ def main() -> None:
         "--char-budget", type=int, default=DEFAULT_PROMPT_CHAR_BUDGET,
         help=f"Approximate prompt-size budget before automatic multipart splitting (default: {DEFAULT_PROMPT_CHAR_BUDGET})",
     )
+    ap.add_argument(
+        "--allow-unselected", action="store_true",
+        help="Allow generating a prompt for a doc that is not in data/gt_doc_selection.json",
+    )
     args = ap.parse_args()
 
     if args.list or not args.doc_id:
@@ -576,6 +632,14 @@ def main() -> None:
     if not doc_path:
         print(f"ERROR: doc_id '{args.doc_id}' tidak ditemukan di {DATA_INDEX}")
         print("Gunakan --list untuk melihat semua doc_id yang tersedia.")
+        sys.exit(1)
+
+    category = doc_path.parent.name
+    selected = load_selection_for(category)
+    if selected is not None and args.doc_id not in selected and not args.allow_unselected:
+        print(f"ERROR: doc '{args.doc_id}' is NOT in {SELECTION_FILE} for category {category}")
+        print("It will act as a distractor in the corpus, not a GT source.")
+        print("If this is intentional, pass --allow-unselected.")
         sys.exit(1)
 
     with open(doc_path, encoding="utf-8") as f:
@@ -636,7 +700,6 @@ def main() -> None:
         write_single_prompt(output_path, prompt_parts[0]["prompt"])
         print(f"Prompt disimpan ke: {output_path}")
 
-        category = doc_path.parent.name  # e.g. "PERMENAKER"
         raw_dir = Path("data/ground_truth_raw") / category
         raw_dir.mkdir(parents=True, exist_ok=True)
         placeholder = raw_dir / f"{args.doc_id}.json"
@@ -646,25 +709,31 @@ def main() -> None:
         else:
             print(f"Target      : {placeholder}  (sudah ada — overwrite dengan output ChatGPT)")
 
+        meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1)
+        print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
+
         print("\nLangkah selanjutnya:")
         print(f"  1. Paste {output_path} ke Generator LLM (Claude/GPT/etc — bukan Gemini)")
         print(f"  2. Paste output JSON ke: {placeholder}")
-        print(f"  3. python scripts/gt/build_validate.py --doc-id {args.doc_id}")
+        print(f"  3. Update {meta_path} field annotator_model dengan model+versi yang dipakai")
+        print(f"  4. python scripts/gt/build_validate.py --doc-id {args.doc_id}")
         print(f"     → emits tmp/validate_{args.doc_id}.txt (validation prompt)")
-        print(f"  4. Paste validation prompt ke Judge LLM, minta overwrite {placeholder}")
-        print(f"     dengan items hasil cleaned. Copilot di IDE bisa edit file langsung.")
-        print(f"  5. python scripts/gt/collect.py --file \"{placeholder}\"")
+        print(f"  5. Paste validation prompt ke Judge LLM, minta overwrite {placeholder}")
+        print(f"     dengan items hasil cleaned. Atau, simpan output Judge ke file lalu jalankan")
+        print(f"     python scripts/gt/apply_validation.py --doc-id {args.doc_id} --judge-file <path>")
+        print(f"  6. Update {meta_path} field judge_model")
+        print(f"  7. python scripts/gt/log_review.py {args.doc_id}   # author spot-check")
+        print(f"  8. python scripts/gt/collect.py --file \"{placeholder}\"")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
-    part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget, category=doc_path.parent.name)
+    part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget, category=category)
 
     print(f"Output     : {len(part_paths)} part files + manifest")
     for part, path in zip(prompt_parts, part_paths):
         print(f"  - part {part['part_index']:02d}: {path}  [{part['question_quota']} pertanyaan, {part['leaf_count']} leaf]")
     print(f"  - manifest: {manifest_path}")
 
-    category = doc_path.parent.name  # e.g. "PERMENKES"
     parts_dir = Path("data/ground_truth_parts") / category / doc["doc_id"]
     parts_dir.mkdir(parents=True, exist_ok=True)
     # Auto-create empty part JSON placeholders so annotator can paste directly.
@@ -678,16 +747,21 @@ def main() -> None:
     (Path("data/ground_truth_raw") / category).mkdir(parents=True, exist_ok=True)
     if created_placeholders:
         print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
+    meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts))
+    print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT/etc — bukan Gemini),")
     print(f"     paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
     print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']}")
     print(f"     → menghasilkan: {raw_placeholder}")
-    print(f"  3. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}")
+    print(f"  3. Update {meta_path} field annotator_model")
+    print(f"  4. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}")
     print(f"     → emits tmp/validate_{doc['doc_id']}.txt (validation prompt)")
-    print(f"  4. Paste validation prompt ke Judge LLM, minta overwrite {raw_placeholder}")
-    print(f"     dengan items hasil cleaned. Copilot di IDE bisa edit file langsung.")
-    print(f"  5. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
+    print(f"  5. Paste validation prompt ke Judge LLM, atau simpan output Judge ke file lalu")
+    print(f"     python scripts/gt/apply_validation.py --doc-id {doc['doc_id']} --judge-file <path>")
+    print(f"  6. Update {meta_path} field judge_model")
+    print(f"  7. python scripts/gt/log_review.py {doc['doc_id']}   # author spot-check")
+    print(f"  8. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
 
 
 if __name__ == "__main__":
