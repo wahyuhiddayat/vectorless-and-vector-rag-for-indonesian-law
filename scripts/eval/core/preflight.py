@@ -77,7 +77,7 @@ def check_gemini_reachable(timeout_s: float = 10.0) -> tuple[bool, str]:
     except ImportError as exc:
         return False, f"import failed: {exc}"
     try:
-        cfg_kwargs: dict = {"max_output_tokens": 8}
+        cfg_kwargs: dict = {"max_output_tokens": 8, "temperature": 0.0}
         if MODEL.startswith("gemini-2.5"):
             cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
         t0 = time.time()

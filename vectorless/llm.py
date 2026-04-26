@@ -98,7 +98,10 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 3,
     from google.genai import types as gtypes
     cli = client()
 
-    cfg_kwargs: dict = {}
+    # temperature=0.0 for run-to-run determinism (eval reproducibility).
+    # Residual non-determinism from server-side floating-point ordering still
+    # exists, see Threats to Validity in Notes/design/Retrieval Experiments.md.
+    cfg_kwargs: dict = {"temperature": 0.0}
     # gemini-2.5.x supports thinking_budget=0 to skip the thinking phase; 3.x rejects it.
     if model.startswith("gemini-2.5"):
         cfg_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
