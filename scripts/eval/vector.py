@@ -48,6 +48,7 @@ from scripts.eval.core.preflight import (  # noqa: E402
     gt_fingerprint,
     query_distribution,
 )
+from scripts.eval.core.metrics import sibling_failure_stats  # noqa: E402
 from scripts.eval.core.records import build_per_query_record, normalize_worker_payload  # noqa: E402
 from scripts.eval.core.runner import (  # noqa: E402
     categorise_error,
@@ -450,6 +451,18 @@ def main() -> int:  # noqa: C901
     eval_io.write_csv(run_dir / "summary_by_slice.csv", slice_rows)
     eval_io.write_csv(run_dir / "summary_by_reference_mode.csv", ref_mode_rows)
 
+    # Diagnostic only failure analysis, see metrics module N4.
+    failure_analysis: dict[str, dict] = {}
+    for system in synthetic_systems:
+        for granularity in args.granularities_list:
+            rows = [
+                r for r in all_records
+                if r["system"] == system and r["eval_granularity"] == granularity
+            ]
+            if not rows:
+                continue
+            failure_analysis[f"{system}__{granularity}"] = sibling_failure_stats(rows, cutoffs)
+
     overall = {
         "generated_at": completed_at.isoformat(timespec="seconds"),
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -460,6 +473,7 @@ def main() -> int:  # noqa: C901
         "by_system_granularity": combo_summaries,
         "by_reference_mode": ref_mode_rows,
         "bootstrap_ci": bootstrap_ci,
+        "failure_analysis": failure_analysis,
         "error_categories": error_categories,
     }
     eval_io.write_json(run_dir / "summary_overall.json", overall)

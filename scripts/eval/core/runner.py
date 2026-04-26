@@ -23,7 +23,7 @@ from .aggregation import (
     compute_slice_summaries,
 )
 from .logger import ProgressLogger
-from .metrics import DEFAULT_CUTOFFS
+from .metrics import DEFAULT_CUTOFFS, sibling_failure_stats
 from .preflight import (
     check_corpus_consistency,
     check_gemini_reachable,
@@ -503,6 +503,20 @@ class EvalRunner:
         eval_io.write_csv(self.run_dir / "summary_by_slice.csv", slice_rows)
         eval_io.write_csv(self.run_dir / "summary_by_reference_mode.csv", ref_mode_rows)
 
+        # Failure analysis, per-combo sibling near-miss rates. Diagnostic
+        # only, not a headline metric, see metrics module N4.
+        failure_analysis: dict[str, dict] = {}
+        for system in self.systems:
+            for granularity in self.granularities:
+                rows = [
+                    r for r in all_records
+                    if r["system"] == system and r["eval_granularity"] == granularity
+                ]
+                if not rows:
+                    continue
+                key = f"{system}__{granularity}"
+                failure_analysis[key] = sibling_failure_stats(rows, self.cutoffs)
+
         overall_summary = {
             "generated_at": completed_at.isoformat(timespec="seconds"),
             "started_at": self.started_at.isoformat(timespec="seconds"),
@@ -513,6 +527,7 @@ class EvalRunner:
             "by_system_granularity": combo_summaries,
             "by_reference_mode": ref_mode_rows,
             "bootstrap_ci": bootstrap_ci,
+            "failure_analysis": failure_analysis,
             "error_categories": self.error_categories,
         }
         eval_io.write_json(self.run_dir / "summary_overall.json", overall_summary)

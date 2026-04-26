@@ -7,8 +7,9 @@ Methodology notes for thesis writeup.
 
   N1. Single-gold GT collapses several IR metrics. With exactly one gold node
       per query per granularity, recall@k equals hit@k, and map@k equals
-      mrr@k. NDCG@k is monotone-equivalent to mrr@k. We still report all of
-      them so reader can cross-reference the name they prefer.
+      mrr@k. NDCG@k is monotone-equivalent to mrr@k (Sakai 2007, IPSJ Trans.
+      Databases 48 SIG9). Headline metrics for the thesis are MRR@k, Recall@k,
+      Hit@k. NDCG@k and MAP@k are reported for completeness only.
 
   N2. Retrieval may return fewer than k items (LLM-stepwise can stop early).
       Metrics are computed over the actual list. Recall@k for a 3-item list
@@ -17,6 +18,16 @@ Methodology notes for thesis writeup.
   N3. full_reciprocal_rank ignores the cutoff. Useful when gold appears at
       rank 12 with k=10, where mrr@10=0 hides the signal but the system
       still found the answer. Report alongside mrr@10 for failure analysis.
+
+  N4. sibling_hit@k is a diagnostic, not a headline metric. It fires when a
+      retrieved node shares the immediate parent of the gold anchor but is
+      not the gold itself. Useful to distinguish "right paragraph, wrong
+      sub-clause" failures from "completely wrong article" failures.
+      Conceptually inspired by INEX near-miss evaluation (Kazai & Lalmas
+      2006, ACM TOIS 24(4)) and hierarchical classification's ancestor
+      partial-credit philosophy (Kiritchenko et al. 2006). The sibling-only
+      specialization is novel to this work and reported only in the failure
+      analysis section, never as a headline claim.
 """
 
 from __future__ import annotations
@@ -77,6 +88,78 @@ def normalize_tokens(text: str) -> list[str]:
     lowered = strip_citation_labels(text).lower()
     tokens = re.findall(r"[a-z0-9]+", lowered)
     return [tok for tok in tokens if tok not in STOPWORDS and len(tok) > 1]
+
+
+# ----------------------------------------------------------------------
+# Hierarchical node-id helpers (for sibling_hit@k diagnostic, see N4)
+# ----------------------------------------------------------------------
+
+def parent_prefix(node_id: str) -> str:
+    """Strip the trailing label-value pair from a node_id to get its parent.
+
+    Node ids follow the LLM-parser readable format `pasal_3_ayat_2_huruf_a`
+    where each level adds two segments (label, value). The immediate parent
+    is obtained by removing the last two segments. Returns "" when the input
+    is already at the top level (e.g. `pasal_3`) and has no parent.
+    """
+    if not node_id:
+        return ""
+    parts = node_id.split("_")
+    if len(parts) < 4:
+        return ""
+    return "_".join(parts[:-2])
+
+
+def sibling_hit_at_k(
+    ranked_ids: list[str],
+    relevant_ids: set[str],
+    k: int,
+) -> float:
+    """Return 1.0 if any node in top-k is a sibling of any gold node, else 0.0.
+
+    A sibling shares the immediate parent of the gold but is not the gold
+    itself. Diagnostic only, see metrics module docstring N4.
+    """
+    if not relevant_ids or not ranked_ids:
+        return 0.0
+    gold_parents = {p for g in relevant_ids if (p := parent_prefix(g))}
+    if not gold_parents:
+        return 0.0
+    for retrieved in ranked_ids[:k]:
+        if retrieved in relevant_ids:
+            continue
+        parent = parent_prefix(retrieved)
+        if parent and parent in gold_parents:
+            return 1.0
+    return 0.0
+
+
+def sibling_failure_stats(records: list[dict], cutoffs: list[int]) -> dict:
+    """For each cutoff, count failure cases and how many had a sibling near-miss.
+
+    A failure case is a non-error query with hit@k = 0. Of those, we report
+    how many had sibling_hit@k = 1 (parent right, child wrong). This lives
+    in the failure analysis section of summary_overall.json, not in headline
+    tables.
+    """
+    out: dict[str, dict] = {}
+    for k in cutoffs:
+        failures = [
+            r for r in records
+            if not r.get("error") and float(r.get(f"hit@{k}", 0.0)) == 0.0
+        ]
+        with_sibling = [
+            r for r in failures
+            if float(r.get(f"sibling_hit@{k}", 0.0)) > 0.0
+        ]
+        out[f"k={k}"] = {
+            "n_failures": len(failures),
+            "n_with_sibling_near_miss": len(with_sibling),
+            "near_miss_rate": (
+                float(len(with_sibling)) / len(failures) if failures else 0.0
+            ),
+        }
+    return out
 
 
 # ----------------------------------------------------------------------
@@ -141,6 +224,7 @@ def score_ranked_retrieval(
         out[f"ndcg@{k}"] = ndcg
         out[f"map@{k}"] = ap
         out[f"mrr@{k}"] = mrr_k
+        out[f"sibling_hit@{k}"] = sibling_hit_at_k(ranked, relevant, k)
 
     return out
 
@@ -303,3 +387,59 @@ def run_self_test() -> None:
     assert_close(rstat["median_rank_on_hit"], 3.0)
     if rstat["n_hits_anywhere"] != 3 or rstat["n_total"] != 4:
         raise AssertionError("rank_distribution_stats hit count mismatch")
+
+    # parent_prefix correctness across all node-id shapes
+    if parent_prefix("pasal_3_ayat_2_huruf_a") != "pasal_3_ayat_2":
+        raise AssertionError("parent_prefix(huruf-leaf) failed")
+    if parent_prefix("pasal_3_ayat_2") != "pasal_3":
+        raise AssertionError("parent_prefix(ayat) failed")
+    if parent_prefix("pasal_3") != "":
+        raise AssertionError("parent_prefix(pasal-only) should return empty string")
+    if parent_prefix("pasal_I_angka_2_pasal_7_ayat_1_huruf_a") != "pasal_I_angka_2_pasal_7_ayat_1":
+        raise AssertionError("parent_prefix(amendment) failed")
+
+    # sibling_hit@k semantics
+    gold = {"pasal_3_ayat_2_huruf_a"}
+    # exact gold in top-k, no sibling -> 0
+    if sibling_hit_at_k(["pasal_3_ayat_2_huruf_a"], gold, 5) != 0.0:
+        raise AssertionError("sibling_hit should be 0 when only gold present")
+    # sibling in top-k -> 1
+    if sibling_hit_at_k(["pasal_3_ayat_2_huruf_b", "pasal_4"], gold, 5) != 1.0:
+        raise AssertionError("sibling_hit should fire on sibling huruf")
+    # cousin (different parent) -> 0
+    if sibling_hit_at_k(["pasal_3_ayat_3_huruf_a"], gold, 5) != 0.0:
+        raise AssertionError("sibling_hit should not fire on cousin (different ayat)")
+    # gold and sibling both present -> 1
+    if sibling_hit_at_k(["pasal_3_ayat_2_huruf_a", "pasal_3_ayat_2_huruf_b"], gold, 5) != 1.0:
+        raise AssertionError("sibling_hit should fire when sibling co-occurs with gold")
+    # sibling beyond cutoff -> 0
+    long_list = ["x"] * 10 + ["pasal_3_ayat_2_huruf_b"]
+    if sibling_hit_at_k(long_list, gold, 10) != 0.0:
+        raise AssertionError("sibling_hit should respect cutoff k=10")
+    if sibling_hit_at_k(long_list, gold, 11) != 1.0:
+        raise AssertionError("sibling_hit should fire at k=11 when sibling at rank 11")
+
+    # sibling_hit@k integrated into score_ranked_retrieval
+    row = score_ranked_retrieval(
+        ["pasal_3_ayat_2_huruf_b", "pasal_3_ayat_2_huruf_a"], gold, [1, 3, 5, 10]
+    )
+    if row["sibling_hit@1"] != 1.0:
+        raise AssertionError("sibling_hit@1 should be 1.0 when sibling at rank 1")
+    if row["hit@1"] != 0.0:
+        raise AssertionError("hit@1 should be 0.0 when sibling not gold at rank 1")
+    if row["hit@5"] != 1.0:
+        raise AssertionError("hit@5 should be 1.0 when gold at rank 2")
+
+    # sibling_failure_stats aggregation
+    fake = [
+        {"hit@5": 0.0, "sibling_hit@5": 1.0},  # failure with sibling near-miss
+        {"hit@5": 0.0, "sibling_hit@5": 0.0},  # failure no near-miss
+        {"hit@5": 1.0, "sibling_hit@5": 0.0},  # not a failure
+        {"hit@5": 0.0, "sibling_hit@5": 0.0, "error": "boom"},  # error excluded
+    ]
+    fstats = sibling_failure_stats(fake, [5])
+    if fstats["k=5"]["n_failures"] != 2:
+        raise AssertionError("sibling_failure_stats failure count wrong")
+    if fstats["k=5"]["n_with_sibling_near_miss"] != 1:
+        raise AssertionError("sibling_failure_stats near-miss count wrong")
+    assert_close(fstats["k=5"]["near_miss_rate"], 0.5)

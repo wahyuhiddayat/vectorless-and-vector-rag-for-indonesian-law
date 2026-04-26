@@ -16,11 +16,13 @@ For experimental design, supervisor decisions, and the RQ3 winner-selection rule
 |---|---|
 | `vectorless.py` | RQ1 CLI (3 systems x 3 granularities, 9 combos) |
 | `vector.py` | RQ2 CLI (2 systems x 3 granularities x 3 embedding models, 18 combos) |
+| `significance.py` | RQ3 CLI, on-demand paired significance test between two combos |
 | `vectorless_worker.py` | Subprocess worker for one vectorless retrieval call |
 | `vector_worker.py` | Subprocess worker for one vector retrieval call |
 | `core/runner.py` | EvalRunner, preflight, per-combo loop, retry, finalize |
-| `core/metrics.py` | Pure IR metrics, retrieval + answer scoring + rank stats |
+| `core/metrics.py` | Pure IR metrics, retrieval + answer scoring + rank stats + sibling diagnostic |
 | `core/aggregation.py` | Per-combo, per-slice, per-reference_mode summaries + bootstrap CI |
+| `core/significance.py` | Paired randomization test, paired t-test, Cohen's d (Sawilowsky) |
 | `core/preflight.py` | Index coverage, Gemini, Qdrant, corpus consistency, GT fingerprint |
 | `core/records.py` | Per-query record schema and worker payload normalisation |
 | `core/io.py` | JSONL/CSV writers, testset loader, resume helpers |
@@ -85,16 +87,27 @@ python scripts/eval/vector.py --label main_rq2_140q --resume --qdrant-path ./qdr
 
 After RQ1 and RQ2 finish, pick winners per the criterion in [Retrieval Experiments.md](../../../Notes/design/Retrieval%20Experiments.md), section "RQ3 Winner-Selection Criterion".
 
-Report from `summary_overall.json` of each run.
+There is no separate RQ3 runner. RQ3 is a comparison of the existing artifacts via `significance.py`.
 
-```python
-# Pseudocode for the laporan section
-v_winner = best_combo(rq1_summary, by="recall@10")
-e_winner = best_combo(rq2_summary, by="recall@10")
-report(v_winner, e_winner, ci=rq{1,2}_summary["bootstrap_ci"])
+```powershell
+# Compare RQ1 winner vs RQ2 winner on shared queries
+python scripts/eval/significance.py `
+    --run-a data/eval_runs/main_rq1_140q --system-a hybrid --gran-a ayat `
+    --run-b data/eval_runs/main_rq2_140q --system-b vector-dense:bge-m3 --gran-b pasal `
+    --metrics recall@10,mrr@10,recall@5,recall@1 `
+    --output data/eval_runs/rq3_significance.json
+
+# Self-test the significance module
+python scripts/eval/significance.py --self-test
 ```
 
-There is no separate RQ3 runner. RQ3 is a comparison of the existing artifacts.
+The CLI loads per-query records from each run, aligns on `query_id`, drops error rows, then computes paired-randomization p-value (B=10000 default), paired t-test p-value, and Cohen's d with Sawilowsky 2009 label per metric.
+
+Report each row of the head-to-head table as.
+
+> Recall@10, mean diff = 0.030, 95% CI [0.018, 0.071], p_paired_randomization = 0.012, p_paired_t_test = 0.014, Cohen's d = 0.31 (small).
+
+If the two p-values converge, the conclusion is robust. If they diverge, trust paired randomization (no normality assumption).
 
 ## Outputs
 
@@ -114,33 +127,45 @@ data/eval_runs/<label>/
 
 ## Metrics
 
-Per query, retrieval.
+Three tiers, see [Notes/design/Evaluation Methodology.md](../../../Notes/design/Evaluation%20Methodology.md) for the literature defense behind each choice.
 
-- `hit@k`, `recall@k` (equal for single-gold, both reported)
-- `mrr@k` for every cutoff in {1, 3, 5, 10}
-- `ndcg@k`, `map@k`
-- `first_relevant_rank`, `full_reciprocal_rank` (no cutoff, captures gold beyond k)
-- `exact_top1_hit`
+**Headline tier** (cite in skripsi tables and discussion).
 
-Per combo, descriptive stats.
+- `hit@k`, `recall@k` for k in {1, 3, 5, 10}
+- `mrr@k` for k in {1, 3, 5, 10}
 
-- `mean_rank_on_hit`, `median_rank_on_hit`, `max_rank_on_hit`
-- `hits_anywhere` (count of queries with gold somewhere in retrieved list)
+For single-gold GT these three names refer to mathematically equivalent values (recall@k == hit@k, and mrr@k is the rank-aware variant). All are emitted so readers from different IR sub-fields can cross-reference.
 
-Per query, answer.
+**Completeness tier** (in code, in CSVs, but footnoted in skripsi as monotone-equivalent to mrr).
+
+- `ndcg@k` for every cutoff
+- `map@k` for every cutoff
+
+**Diagnostic tier** (failure analysis only, not headline).
+
+- `sibling_hit@k`, retrieved set contains a sibling of the gold anchor in top-k
+- `failure_analysis` block in `summary_overall.json`, per-combo near-miss rate among hit@k=0 cases
+
+**Descriptive stats per combo.**
+
+- `mean_rank_on_hit`, `median_rank_on_hit`, `max_rank_on_hit`, `hits_anywhere`
+- `full_reciprocal_rank`, mean reciprocal rank without a cutoff (captures gold beyond k)
+- `exact_top1_hit_rate`
+
+**Per query, answer.**
 
 - `answer_nonempty`, `num_citations`
 - `citation_precision`, `citation_recall`, `citation_hit`, `fully_grounded_citations`
-- `answer_hint_token_recall`, `answer_hint_token_f1` (sanity-check only, not headline)
+- `answer_hint_token_recall`, `answer_hint_token_f1`, sanity-check only, not headline
 
-Per query, cost.
+**Per query, cost.**
 
 - `llm_calls`, `input_tokens`, `output_tokens`, `total_tokens`, `elapsed_s`
-- `step_metrics` (per-stage breakdown if the retrieval module exposes it)
+- `step_metrics`, per-stage breakdown when the retrieval module exposes it
 
-Per combo, statistical.
+**Per combo, confidence intervals.**
 
-- `bootstrap_ci`, percentile bootstrap CI for `recall@k` (every cutoff) and `mrr@10`. 1000 resamples, seed 42, 95% interval.
+- `bootstrap_ci`, percentile bootstrap CI for `recall@k` and `mrr@max_k`. 1000 resamples, seed 42, 95% interval. For comparing two combos use `significance.py` instead, which adds paired randomization + paired t-test + Cohen's d.
 
 ## Methodology notes
 

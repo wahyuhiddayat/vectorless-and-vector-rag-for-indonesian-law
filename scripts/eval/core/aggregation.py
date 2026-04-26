@@ -77,12 +77,18 @@ def aggregate_records(records: list[dict], cutoffs: list[int]) -> dict:
         "full_reciprocal_rank": safe_mean([row.get("full_reciprocal_rank", 0.0) for row in records]),
     }
 
+    # Headline metrics for the thesis: hit@k, recall@k, mrr@k.
+    # Completeness only: ndcg@k, map@k (monotone-equivalent under single-gold).
+    # Diagnostic: sibling_hit@k (failure analysis, see metrics module N4).
     for k in cutoffs:
         summary[f"hit@{k}"] = safe_mean([row.get(f"hit@{k}", 0.0) for row in records])
         summary[f"recall@{k}"] = safe_mean([row.get(f"recall@{k}", 0.0) for row in records])
+        summary[f"mrr@{k}"] = safe_mean([row.get(f"mrr@{k}", 0.0) for row in records])
         summary[f"ndcg@{k}"] = safe_mean([row.get(f"ndcg@{k}", 0.0) for row in records])
         summary[f"map@{k}"] = safe_mean([row.get(f"map@{k}", 0.0) for row in records])
-        summary[f"mrr@{k}"] = safe_mean([row.get(f"mrr@{k}", 0.0) for row in records])
+        summary[f"sibling_hit@{k}"] = safe_mean(
+            [row.get(f"sibling_hit@{k}", 0.0) for row in records]
+        )
 
     summary["exact_top1_hit_rate"] = safe_mean([float(row.get("exact_top1_hit", False)) for row in records])
 
