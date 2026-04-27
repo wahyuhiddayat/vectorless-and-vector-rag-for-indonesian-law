@@ -45,25 +45,25 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         return module.retrieve(query, top_k=top_k, verbose=False)
 
     if system == "hybrid":
-        from vectorless.retrieval.hybrid_flat import search as module
+        from vectorless.retrieval.hybrid import flat as module
 
         module.save_log = lambda _result: None
         return module.retrieve(query, bm25_top_k=max(top_k, 20), verbose=False)
 
     if system == "hybrid-tree":
-        from vectorless.retrieval.hybrid import search as module
+        from vectorless.retrieval.hybrid import tree as module
 
         module.save_log = lambda _result: None
         return module.retrieve(query, bm25_top_k=max(top_k, 10), verbose=False)
 
     if system == "llm":
-        from vectorless.retrieval.llm import search as module
+        from vectorless.retrieval.llm import tree as module
 
         module.save_log = lambda _result: None
         return module.retrieve(query, strategy="stepwise", verbose=False)
 
     if system == "llm-full":
-        from vectorless.retrieval.llm import search as module
+        from vectorless.retrieval.llm import tree as module
 
         module.save_log = lambda _result: None
         return module.retrieve(query, strategy="full", verbose=False)

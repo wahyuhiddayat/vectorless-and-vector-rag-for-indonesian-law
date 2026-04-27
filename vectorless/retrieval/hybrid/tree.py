@@ -1,16 +1,21 @@
-"""
-Hybrid BM25 + LLM retrieval strategy for Indonesian legal QA.
+"""Hybrid tree-based retrieval for Indonesian legal QA.
 
-Combines keyword matching (BM25) with LLM semantic understanding:
-  1. Doc search  — union of BM25 metadata match + LLM semantic selection
-  2. Node search — BM25 retrieves candidate Pasal, LLM reranks with text context
-  3. Answer gen  — LLM generates grounded answer (same as other strategies)
+Combines keyword matching (BM25) with LLM semantic understanding using the
+document tree structure. This is the tree variant of hybrid retrieval.
+
+Pipeline:
+  1. Doc search  - union of BM25 metadata match + LLM semantic selection
+  2. Node search - BM25 retrieves candidate Pasal within selected doc, LLM reranks
+  3. Answer gen  - LLM generates grounded answer (same as other strategies)
 
 This addresses weaknesses of both pure approaches:
   - Pure BM25 fails on vocabulary mismatch (query term not in metadata)
   - Pure LLM fails on blind navigation (generic titles like "Pasal 3")
   - Hybrid: BM25 finds keyword-relevant content, LLM adds semantic understanding
 
+Usage:
+    python -m vectorless.retrieval.hybrid.tree "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.hybrid.tree "Apa syarat penyadapan?" --bm25_top_k 10
 """
 
 import argparse

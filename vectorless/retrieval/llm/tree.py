@@ -1,12 +1,17 @@
-"""LLM-only retrieval strategies for the vectorless legal index.
+"""LLM tree-based retrieval for Indonesian legal QA.
 
 All retrieval decisions (doc selection, tree navigation) are made by LLM prompting.
-No algorithmic scoring — the LLM is the sole searcher.
+No algorithmic scoring. The LLM is the sole searcher, navigating the document
+tree structure to find relevant leaf nodes. This is the PageIndex-style approach.
 
 Two tree search modes:
-  - "full"     — show entire tree skeleton, LLM picks nodes in one shot
-  - "stepwise" — navigate level-by-level (BAB → Bagian → Pasal) with reasoning
+  - "full"     - show entire tree skeleton, LLM picks nodes in one shot
+  - "stepwise" - navigate level-by-level (BAB to Bagian to Pasal) with reasoning
 
+Usage:
+    python -m vectorless.retrieval.llm.tree "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.llm.tree "Apa syarat penyadapan?" --strategy stepwise
+    python -m vectorless.retrieval.llm.tree "Apa syarat penyadapan?" --strategy full
 """
 
 import argparse

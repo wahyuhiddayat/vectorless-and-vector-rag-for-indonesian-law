@@ -1,14 +1,19 @@
-"""
-Hybrid-flat retrieval: BM25 global search + LLM rerank for Indonesian legal QA.
+"""Hybrid flat retrieval for Indonesian legal QA.
 
-Stage 1: BM25 search across ALL leaf nodes (same corpus as bm25-flat)
-Stage 2: LLM reranks top-K BM25 candidates using KWIC text snippets
-Stage 3: Answer generation from reranked results (multi-doc)
+BM25 global search across all leaf nodes, followed by LLM reranking.
+No tree structure is used. This is the flat variant of hybrid retrieval.
 
-Unlike the catalog-based "hybrid" strategy that searches only 1 doc,
-this variant searches the full leaf node corpus directly — eliminating
-the doc selection bottleneck where a wrong doc pick causes total miss.
+Stage 1: BM25 search across ALL leaf nodes (same corpus as bm25-flat).
+Stage 2: LLM reranks top-K BM25 candidates using KWIC text snippets.
+Stage 3: Answer generation from reranked results (multi-doc).
 
+Unlike the tree-based hybrid strategy that navigates within a selected doc,
+this variant searches the full leaf node corpus directly, eliminating the
+doc selection bottleneck where a wrong doc pick causes total miss.
+
+Usage:
+    python -m vectorless.retrieval.hybrid.flat "Apa syarat penyadapan?"
+    python -m vectorless.retrieval.hybrid.flat "Apa syarat penyadapan?" --bm25_top_k 20
 """
 
 import argparse
