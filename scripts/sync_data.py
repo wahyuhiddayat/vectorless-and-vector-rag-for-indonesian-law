@@ -25,7 +25,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 
 DEFAULT_REPO = "wahyyuht/skripsi-data"
 DEFAULT_LOCAL = Path("data")
@@ -85,7 +85,7 @@ def pull(api: HfApi, repo: str, local_dir: Path, dry_run: bool) -> None:
 
     if missing_local or extra_local:
         print("downloading from HF...")
-        api.snapshot_download(
+        snapshot_download(
             repo_id=repo,
             repo_type="dataset",
             local_dir=str(local_dir),
