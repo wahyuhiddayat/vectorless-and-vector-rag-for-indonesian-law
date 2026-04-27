@@ -43,9 +43,9 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
-SYSTEMS = ["bm25", "hybrid", "hybrid-tree", "llm", "llm-full"]
+SYSTEMS = ["bm25-flat", "bm25-tree", "hybrid-flat", "hybrid-tree", "llm-flat", "llm-tree"]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
-LLM_SYSTEMS = {"hybrid", "hybrid-tree", "llm", "llm-full"}
+LLM_SYSTEMS = {"hybrid-flat", "hybrid-tree", "llm-flat", "llm-tree"}
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900
 DEFAULT_MAX_RETRIES = 2
