@@ -6,18 +6,21 @@ gt_collect.py) into data/validated_testset.pkl, which stores reference_mode
 plus gold node ID sets for all three index granularities: pasal, ayat, and
 rincian.
 
-DESIGN: Anchor at finest granularity, roll UP.
+DESIGN. Anchor at finest granularity, roll UP across one or more anchors.
 
-Each GT question anchors at the most specific leaf in the rincian index
-(e.g., a specific huruf or angka). Gold sets for coarser granularities are
-derived by finding the parent node via prefix lookup:
+Each GT question anchors at one or more leaves in the rincian index. Single-
+anchor types (factual, paraphrased, adversarial) have one anchor. Multi-
+anchor types (multihop, crossdoc) have two anchors. Gold sets for coarser
+granularities are derived by rolling each anchor up to its parent in the
+target index, then unioning into a set.
 
-  rincian: gold = {anchor}                          (exact, 1 node)
-  ayat:       gold = {derive_parent(anchor, ayat)}     (parent, 1 node)
-  pasal:      gold = {derive_parent(anchor, pasal)}    (parent, 1 node)
+  rincian. gold = set(anchors)
+  ayat.    gold = set of parent_ayat per anchor
+  pasal.   gold = set of parent_pasal per anchor
 
-Every granularity has exactly 1 gold node per question, ensuring fair
-evaluation: harder at fine granularity (larger corpus, same target).
+Single-anchor queries always have gold size 1 at every granularity. Multi-
+anchor queries have gold size up to N (collapses if two anchors share a
+parent at a coarser granularity, e.g., two leaves of the same ayat).
 
 EVALUATION USAGE (in your retrieval eval script):
   if granularity == "pasal":
@@ -111,8 +114,34 @@ def get_leaf_ids(doc_id: str, index_dir: Path) -> set[str]:
 
 
 def get_anchor_node_id(item: dict) -> str:
-    """Return the leaf anchor node ID from a merged GT item."""
+    """Return the primary leaf anchor node ID from a merged GT item."""
     return item.get("gold_anchor_node_id") or item["gold_node_id"]
+
+
+def get_anchor_node_ids(item: dict) -> list[str]:
+    """Return the full list of leaf anchor node IDs from a merged GT item.
+
+    For single-anchor types this is a single-element list. For multihop and
+    crossdoc the list has two elements. Falls back to wrapping the singular
+    field for legacy items that predate the typed-query schema.
+    """
+    if isinstance(item.get("gold_anchor_node_ids"), list) and item["gold_anchor_node_ids"]:
+        return list(item["gold_anchor_node_ids"])
+    return [get_anchor_node_id(item)]
+
+
+def get_doc_ids(item: dict) -> list[str]:
+    """Return the list of doc IDs parallel to gold_anchor_node_ids."""
+    if isinstance(item.get("gold_doc_ids"), list) and item["gold_doc_ids"]:
+        return list(item["gold_doc_ids"])
+    primary = item.get("gold_doc_id", "")
+    n = len(get_anchor_node_ids(item))
+    return [primary] * n
+
+
+def get_query_type(item: dict) -> str:
+    """Return the query type, defaulting to 'factual' for legacy items."""
+    return item.get("query_type") or "factual"
 
 
 def get_anchor_granularity(item: dict) -> str:
@@ -184,9 +213,12 @@ def finalize(check_only: bool = False) -> dict:
     errors: list[str] = []
 
     for qid, item in gt.items():
-        doc_id = item["gold_doc_id"]
+        primary_doc_id = item["gold_doc_id"]
         anchor_granularity = get_anchor_granularity(item)
         anchor_node_id = get_anchor_node_id(item)
+        anchor_node_ids = get_anchor_node_ids(item)
+        anchor_doc_ids = get_doc_ids(item)
+        query_type = get_query_type(item)
         reference_mode = item.get("reference_mode") or infer_reference_mode(item.get("query", ""))
 
         if anchor_granularity != "rincian":
@@ -202,43 +234,52 @@ def finalize(check_only: bool = False) -> dict:
             )
             continue
 
-        full_leaf_ids = get_leaf_ids(doc_id, INDEX_FULL_SPLIT)
-        if not full_leaf_ids:
-            errors.append(f"{qid}: doc '{doc_id}' not found in {INDEX_FULL_SPLIT}")
-            continue
-
-        if anchor_node_id not in full_leaf_ids:
+        if len(anchor_node_ids) != len(anchor_doc_ids):
             errors.append(
-                f"{qid}: anchor node '{anchor_node_id}' is not a leaf in {INDEX_FULL_SPLIT}; "
-                "the GT may use old ayat-anchored annotations — regenerate from rincian index"
+                f"{qid}: gold_anchor_node_ids and gold_doc_ids length mismatch "
+                f"({len(anchor_node_ids)} vs {len(anchor_doc_ids)})"
             )
             continue
 
-        # Roll UP: derive parent nodes at coarser granularities
-        gold_full = {anchor_node_id}
+        # Validate every anchor is a leaf in its respective doc, then roll UP
+        # to ayat and pasal granularity. Gold sets are unions across anchors.
+        gold_full: set[str] = set()
+        gold_ayat: set[str] = set()
+        gold_pasal: set[str] = set()
+        per_anchor_errors: list[str] = []
 
-        try:
-            ayat_node_id = derive_parent_node_id(anchor_node_id, doc_id, INDEX_AYAT)
-        except ValueError as e:
-            errors.append(f"{qid}: {e}")
-            continue
-        gold_ayat = {ayat_node_id}
+        for aid, did in zip(anchor_node_ids, anchor_doc_ids):
+            full_leaf_ids = get_leaf_ids(did, INDEX_FULL_SPLIT)
+            if not full_leaf_ids:
+                per_anchor_errors.append(f"doc '{did}' not found in {INDEX_FULL_SPLIT}")
+                continue
+            if aid not in full_leaf_ids:
+                per_anchor_errors.append(
+                    f"anchor '{aid}' is not a leaf in {INDEX_FULL_SPLIT} for doc '{did}'"
+                )
+                continue
+            gold_full.add(aid)
+            try:
+                gold_ayat.add(derive_parent_node_id(aid, did, INDEX_AYAT))
+                gold_pasal.add(derive_parent_node_id(aid, did, INDEX_PASAL))
+            except ValueError as e:
+                per_anchor_errors.append(str(e))
 
-        try:
-            pasal_node_id = derive_parent_node_id(anchor_node_id, doc_id, INDEX_PASAL)
-        except ValueError as e:
-            errors.append(f"{qid}: {e}")
+        if per_anchor_errors:
+            errors.append(f"{qid}: {'; '.join(per_anchor_errors)}")
             continue
-        gold_pasal = {pasal_node_id}
 
         testset[qid] = {
             "query": item["query"],
+            "query_type": query_type,
             "query_style": item.get("query_style", ""),
             "difficulty": item.get("difficulty", ""),
             "reference_mode": reference_mode,
-            "gold_doc_id": doc_id,
+            "gold_doc_id": primary_doc_id,
+            "gold_doc_ids": list(anchor_doc_ids),
             "gold_anchor_granularity": "rincian",
             "gold_anchor_node_id": anchor_node_id,
+            "gold_anchor_node_ids": list(anchor_node_ids),
             # Backward-compatible singular field used by load_testset.py
             "gold_node_id": anchor_node_id,
             "gold_pasal_node_ids": gold_pasal,
@@ -257,10 +298,13 @@ def finalize(check_only: bool = False) -> dict:
 
     n = len(testset)
 
-    print("\nGold set sizes (per query):")
-    print("  rincian : 1 node  (exact anchor — finest granularity)")
-    print("  ayat       : 1 node  (derived parent in ayat index)")
-    print("  pasal      : 1 node  (derived parent in pasal index)")
+    rincian_sizes = [len(item["gold_rincian_node_ids"]) for item in testset.values()]
+    ayat_sizes = [len(item["gold_ayat_node_ids"]) for item in testset.values()]
+    pasal_sizes = [len(item["gold_pasal_node_ids"]) for item in testset.values()]
+    print("\nGold set sizes (per query, mean across queries):")
+    print(f"  rincian : mean {sum(rincian_sizes)/len(rincian_sizes):.2f}  max {max(rincian_sizes)}")
+    print(f"  ayat    : mean {sum(ayat_sizes)/len(ayat_sizes):.2f}  max {max(ayat_sizes)}")
+    print(f"  pasal   : mean {sum(pasal_sizes)/len(pasal_sizes):.2f}  max {max(pasal_sizes)}")
 
     if check_only:
         print("\n[check-only] Tidak menulis output.")
@@ -294,6 +338,7 @@ def print_stats() -> None:
     diff_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
     reference_mode_counts: dict[str, int] = {}
+    query_type_counts: dict[str, int] = {}
 
     for item in testset.values():
         doc_id = item["gold_doc_id"]
@@ -311,11 +356,19 @@ def print_stats() -> None:
         ref_mode = item.get("reference_mode") or "(missing)"
         reference_mode_counts[ref_mode] = reference_mode_counts.get(ref_mode, 0) + 1
 
-        # All gold sets are now exactly size 1 (roll-up design)
+        qtype = item.get("query_type") or "(missing)"
+        query_type_counts[qtype] = query_type_counts.get(qtype, 0) + 1
 
     print(f"\nValidated testset stats: {TESTSET_FILE}")
     print(f"  Total queries     : {total}")
     print(f"  Documents covered : {len(doc_counts)}")
+
+    print("\n  Query type distribution:")
+    for qtype in ["factual", "paraphrased", "multihop", "crossdoc", "adversarial", "(missing)"]:
+        count = query_type_counts.get(qtype, 0)
+        if count == 0:
+            continue
+        print(f"    {qtype:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
     print("\n  Anchor granularity distribution:")
     for anchor in sorted(anchor_counts.keys()):
@@ -339,10 +392,13 @@ def print_stats() -> None:
         if count:
             print(f"    {diff:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
+    rincian_sizes = [len(item["gold_rincian_node_ids"]) for item in testset.values()]
+    ayat_sizes = [len(item["gold_ayat_node_ids"]) for item in testset.values()]
+    pasal_sizes = [len(item["gold_pasal_node_ids"]) for item in testset.values()]
     print("\n  Gold set sizes (per query):")
-    print("    rincian : 1.0  (exact anchor — finest granularity)")
-    print("    ayat       : 1.0  (derived parent in ayat index)")
-    print("    pasal      : 1.0  (derived parent in pasal index)")
+    print(f"    rincian : mean {sum(rincian_sizes)/total:.2f}  max {max(rincian_sizes)}")
+    print(f"    ayat    : mean {sum(ayat_sizes)/total:.2f}  max {max(ayat_sizes)}")
+    print(f"    pasal   : mean {sum(pasal_sizes)/total:.2f}  max {max(pasal_sizes)}")
 
     print("\n  Per document:")
     for doc_id, count in sorted(doc_counts.items()):

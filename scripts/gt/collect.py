@@ -39,6 +39,9 @@ DATA_INDEX = Path("data/index_rincian")
 AUDIT_DIR = Path("data/gt_audit")
 
 VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
+VALID_QUERY_TYPES = {"factual", "paraphrased", "multihop", "crossdoc", "adversarial"}
+SINGLE_ANCHOR_TYPES = {"factual", "paraphrased", "adversarial"}
+MULTI_ANCHOR_TYPES = {"multihop", "crossdoc"}
 REQUIRED_FIELDS = {
     "query",
     "reference_mode",
@@ -150,13 +153,21 @@ def infer_reference_mode(query: str) -> str:
     return "none"
 
 
+def doc_id_from_path(path: Path) -> str:
+    """Strip the optional `__<query_type>` suffix from a raw GT filename stem."""
+    stem = path.stem
+    if "__" in stem:
+        return stem.split("__", 1)[0]
+    return stem
+
+
 def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
     """Run hard structural validation on a raw GT file.
 
     Returns (valid_items, hard_errors). Semantic checks (cross-ref anchors,
     referential queries, multi-hop) are delegated to the LLM judge step.
     """
-    doc_id = path.stem
+    doc_id = doc_id_from_path(path)
     hard_errors: list[str] = []
 
     try:
@@ -222,6 +233,36 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
                 f"got '{item.get('reference_mode')}'"
             )
 
+        # query_type is optional for backward compat. Legacy files default to 'factual'.
+        # When present, validate against the allowed set and the per-type anchor count.
+        query_type = item.get("query_type", "factual")
+        if query_type not in VALID_QUERY_TYPES:
+            item_errors.append(
+                f"query_type must be one of {sorted(VALID_QUERY_TYPES)}, got '{query_type}'"
+            )
+        else:
+            anchor_ids = item.get("gold_anchor_node_ids")
+            if anchor_ids is not None:
+                if not isinstance(anchor_ids, list) or not all(isinstance(a, str) for a in anchor_ids):
+                    item_errors.append("gold_anchor_node_ids must be a list of strings when present")
+                elif query_type in SINGLE_ANCHOR_TYPES and len(anchor_ids) != 1:
+                    item_errors.append(
+                        f"query_type '{query_type}' requires exactly 1 anchor, got {len(anchor_ids)}"
+                    )
+                elif query_type in MULTI_ANCHOR_TYPES and len(anchor_ids) != 2:
+                    item_errors.append(
+                        f"query_type '{query_type}' requires exactly 2 anchors, got {len(anchor_ids)}"
+                    )
+                else:
+                    for aid in anchor_ids:
+                        if aid not in leaf_map and aid != anchor_node_id:
+                            # Cross-doc secondary anchor lives in a different doc and cannot be
+                            # validated here. We accept it now and let finalize.py verify.
+                            if query_type != "crossdoc":
+                                item_errors.append(
+                                    f"gold_anchor_node_ids entry '{aid}' not found as leaf in this doc"
+                                )
+
         if item_errors:
             hard_errors.append(f"  Item {i} ({label}): {'; '.join(item_errors)}")
         else:
@@ -265,6 +306,12 @@ def load_existing_gt() -> dict:
             item["gold_anchor_node_id"] = item["gold_node_id"]
         if "reference_mode" not in item and "query" in item:
             item["reference_mode"] = infer_reference_mode(item["query"])
+        if "query_type" not in item:
+            item["query_type"] = "factual"
+        if "gold_anchor_node_ids" not in item:
+            item["gold_anchor_node_ids"] = [item.get("gold_anchor_node_id", item.get("gold_node_id", ""))]
+        if "gold_doc_ids" not in item:
+            item["gold_doc_ids"] = [item.get("gold_doc_id", "")]
 
     return data
 
@@ -295,6 +342,7 @@ def print_stats(gt: dict) -> None:
     difficulty_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
     reference_mode_counts: dict[str, int] = {}
+    query_type_counts: dict[str, int] = {}
 
     for item in gt.values():
         doc_id = item["gold_doc_id"]
@@ -312,9 +360,20 @@ def print_stats(gt: dict) -> None:
         ref_mode = item.get("reference_mode") or "(missing)"
         reference_mode_counts[ref_mode] = reference_mode_counts.get(ref_mode, 0) + 1
 
+        qtype = item.get("query_type") or "(missing)"
+        query_type_counts[qtype] = query_type_counts.get(qtype, 0) + 1
+
     print(f"\nGround truth stats: {GT_FILE}")
     print(f"  Total questions   : {total}")
     print(f"  Documents covered : {len(doc_counts)}")
+
+    print("\n  Query type distribution:")
+    for qtype in ["factual", "paraphrased", "multihop", "crossdoc", "adversarial", "(missing)"]:
+        count = query_type_counts.get(qtype, 0)
+        if count == 0:
+            continue
+        pct = count / total * 100
+        print(f"    {qtype:15s}  {count:4d}  ({pct:.1f}%)")
 
     print("\n  Anchor granularity distribution:")
     for anchor in sorted(anchor_counts.keys()):
@@ -385,7 +444,7 @@ def main() -> None:
             print(f"Raw directory not found: {RAW_DIR}")
             print("Simpan output ChatGPT ke data/ground_truth_raw/<KATEGORI>/<doc_id>.json")
             return
-        raw_files = sorted(RAW_DIR.rglob("*.json"))
+        raw_files = sorted(p for p in RAW_DIR.rglob("*.json") if not p.name.endswith(".meta.json"))
 
     if not raw_files:
         print(f"Tidak ada file di {RAW_DIR}")
@@ -407,7 +466,7 @@ def main() -> None:
 
     audit_drops_total = 0
     for raw_path in raw_files:
-        doc_id = raw_path.stem
+        doc_id = doc_id_from_path(raw_path)
         valid_items, hard_errors = validate_raw_file(raw_path)
 
         dropped_anchors = load_audit_dropped_anchors(doc_id)
@@ -474,15 +533,21 @@ def main() -> None:
     merged_gt = dict(existing_gt)
     for item in all_valid:
         qid = assign_query_id(merged_gt)
+        query_type = item.get("query_type", "factual")
+        anchor_ids = item.get("gold_anchor_node_ids") or [item["gold_anchor_node_id"]]
+        doc_ids = item.get("gold_doc_ids") or [item["gold_doc_id"]]
         merged_gt[qid] = {
             "query": item["query"],
+            "query_type": query_type,
             "query_style": item.get("query_style", ""),
             "difficulty": item.get("difficulty", ""),
             "reference_mode": item["reference_mode"],
             "gold_anchor_granularity": item["gold_anchor_granularity"],
             "gold_anchor_node_id": item["gold_anchor_node_id"],
+            "gold_anchor_node_ids": list(anchor_ids),
             "gold_node_id": item["gold_node_id"],
             "gold_doc_id": item["gold_doc_id"],
+            "gold_doc_ids": list(doc_ids),
             "navigation_path": item["navigation_path"],
             "answer_hint": item.get("answer_hint", ""),
         }

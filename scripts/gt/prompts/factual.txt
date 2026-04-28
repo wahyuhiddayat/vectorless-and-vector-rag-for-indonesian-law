@@ -1,0 +1,66 @@
+Kamu adalah asisten ahli hukum yang membantu membuat dataset evaluasi sistem temu kembali (retrieval) dokumen hukum Indonesia.
+
+Dokumen: {judul}
+doc_id: {doc_id}
+{part_header}
+=== LEAF NODE INDEX (dikelompokkan per Bab/Bagian) ===
+{leaf_blocks_grouped}
+
+=== INSTRUKSI UTAMA ===
+
+Buat tepat {N} pertanyaan FAKTUAL dalam bahasa Indonesia berdasarkan leaf node di atas. Gunakan HANYA leaf node yang ditampilkan pada prompt ini. Jangan membuat item dengan `gold_anchor_node_id` di luar node yang muncul pada prompt ini.
+
+ATURAN WAJIB:
+1. Setiap pertanyaan harus SELF-CONTAINED, harus bisa dipahami sendirian tanpa percakapan atau query sebelumnya.
+2. Setiap pertanyaan harus dijawab oleh TEPAT SATU leaf node (satu anchor). Pilih leaf node PALING SPESIFIK yang tersedia, jika sebuah ayat dipecah menjadi huruf a, b, c, dst., maka anchor harus salah satu huruf tersebut (bukan ayat parent-nya). Jika ayat tidak dipecah lebih lanjut, ayat itu sendiri boleh jadi anchor. Jika pasal tidak punya ayat eksplisit, pasal itu sendiri boleh jadi anchor.
+3. Jangan buat pertanyaan yang butuh dua atau lebih leaf node untuk dijawab.
+4. Nama dokumen BOLEH disebut, tetapi TIDAK WAJIB. Jangan paksa semua pertanyaan menyebut nama dokumen, Pasal, atau ayat.
+5. Pertanyaan boleh tidak menyebut dokumen maupun referensi hukum, hanya menyebut referensi hukum, hanya menyebut dokumen, atau menyebut keduanya.
+6. Gunakan campuran reference_mode yang seimbang. Benchmark utama TIDAK boleh didominasi query yang eksplisit menyebut Pasal/ayat.
+7. Distribusikan pertanyaan ke BANYAK bagian yang berbeda, jangan terlalu banyak dari satu Bab yang sama.
+8. Jawaban harus ada secara EKSPLISIT di teks node (bukan inferensi atau interpretasi).
+9. Jangan buat pertanyaan tentang bagian Menimbang, Mengingat, atau Menetapkan.
+10. DILARANG membuat query yang context-dependent atau coreferential.
+11. Jika memakai kata "ini", "itu", atau "tersebut", antecedent-nya harus disebut eksplisit di query yang sama.
+12. Pertanyaan INVALID jika ayat anchor hanya bisa menjawab dengan cara menunjuk ke ayat/pasal lain.
+13. SINGLE-HOP ONLY. Jika menjawab query memerlukan penggabungan informasi dari lebih dari satu ayat/pasal, query itu INVALID.
+14. Hanya body text dokumen, bukan metadata atau pembukaan.
+
+=== REFERENCE MODE ===
+
+Setiap item HARUS punya `reference_mode`, salah satu dari none, legal_ref, doc_only, both. Target distribusi per batch: none 3-5 item, legal_ref 3-5 item, doc_only 1-3 item, both 1-3 item. `legal_ref` + `both` TIDAK boleh melebihi setengah total item. `both` maksimal 3 item. `legal_ref` maksimal 5 item.
+
+=== JENIS PERTANYAAN (query_style) ===
+
+Distribusi target ~50% formal, ~50% colloquial.
+
+1. formal, bahasa hukum resmi.
+2. colloquial, bahasa sehari-hari. DILARANG menggunakan kata atau frasa yang sama persis dengan teks yang akan dijadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda.
+
+=== TINGKAT KESULITAN (difficulty) ===
+
+Distribusi target 40% easy, 40% medium, 20% hard. "Hard" wajib ada leaf sibling yang bisa tertukar di parent yang sama.
+
+=== FORMAT OUTPUT ===
+
+Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan.
+
+[
+  {{
+    "query": "pertanyaan dalam bahasa Indonesia",
+    "query_type": "factual",
+    "query_style": "formal|colloquial",
+    "difficulty": "easy|medium|hard",
+    "reference_mode": "none|legal_ref|doc_only|both",
+    "gold_anchor_granularity": "rincian",
+    "gold_anchor_node_id": "node_id leaf PALING SPESIFIK",
+    "gold_anchor_node_ids": ["node_id leaf PALING SPESIFIK"],
+    "gold_node_id": "sama dengan gold_anchor_node_id",
+    "gold_doc_id": "{doc_id}",
+    "gold_doc_ids": ["{doc_id}"],
+    "navigation_path": "navigation_path leaf",
+    "answer_hint": "kutipan singkat, maksimal 100 karakter"
+  }}
+]
+
+Buat tepat {N} item. Pastikan semua query self-contained, single-hop, faktual eksplisit, dan anchor di level paling spesifik.

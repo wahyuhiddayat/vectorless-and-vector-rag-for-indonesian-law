@@ -1,0 +1,62 @@
+Kamu adalah asisten ahli hukum yang membuat dataset evaluasi retrieval dokumen hukum Indonesia dengan fokus pada PARAFRASE SEMANTIK.
+
+Dokumen: {judul}
+doc_id: {doc_id}
+{part_header}
+=== LEAF NODE INDEX ===
+{leaf_blocks_grouped}
+
+=== TUJUAN TIPE QUERY ===
+
+Tipe `paraphrased` menguji apakah sistem retrieval dapat menemukan node target ketika query menggunakan kata-kata yang BERBEDA SECARA LEKSIKAL dari teks node, tetapi MAKNA SEMANTIK SAMA. Ini menstress-test kemampuan dense embedding vs BM25 (BM25 akan kesulitan, dense embedding seharusnya lebih unggul).
+
+=== INSTRUKSI UTAMA ===
+
+Buat tepat {N} pertanyaan PARAFRASED dalam bahasa Indonesia. Setiap pertanyaan dijawab oleh TEPAT SATU leaf node (anchor tunggal).
+
+ATURAN LEKSIKAL WAJIB (yang membedakan paraphrased dari factual):
+1. WAJIB: Ganti minimal 3 kata kunci konten (noun/verb/adjective utama) dari teks anchor dengan SINONIM atau abstraksi.
+2. DILARANG: menyalin frasa kata-benda 2 kata atau lebih VERBATIM dari teks anchor leaf. Misalnya jika anchor mengatakan "kepala daerah", query tidak boleh memuat "kepala daerah" persis, gunakan "pimpinan pemerintahan daerah" atau "gubernur/bupati/walikota".
+3. DILARANG: query yang Jaccard overlap-nya dengan teks anchor di atas 0.40 (dihitung pada token konten, stopword diabaikan). Validator otomatis akan reject.
+4. BOLEH: ubah struktur kalimat (deklaratif <-> interogatif), pasif/aktif, urutan klausa.
+5. WAJIB: jawaban tetap ada di anchor secara semantik, walau kata-katanya berbeda.
+
+ATURAN SISA (sama seperti factual):
+- SELF-CONTAINED, SINGLE-HOP, anchor paling spesifik, hindari context-dependent ("ini", "itu" tanpa antecedent), hanya body text.
+
+CONTOH:
+- Anchor text: "Kepala daerah dilarang melakukan pungutan di luar yang ditetapkan dalam peraturan daerah."
+- Query factual (TIDAK BOLEH untuk paraphrased): "Apakah kepala daerah boleh melakukan pungutan di luar peraturan daerah?"
+- Query paraphrased VALID: "Apakah pimpinan eksekutif provinsi/kabupaten diizinkan menarik biaya di luar yang dirumuskan dalam regulasi lokal?"
+- Query paraphrased VALID (colloquial): "Bupati boleh nggak narik biaya kalau nggak ada di perda?"
+
+=== REFERENCE MODE ===
+
+Mayoritas paraphrased seharusnya `none` atau `doc_only` karena merujuk legal_ref eksplisit cenderung mengembalikan kata-kata literal. Target distribusi: none 60-80%, doc_only 10-20%, legal_ref 0-15%, both 0-10%.
+
+=== QUERY STYLE & DIFFICULTY ===
+
+Sama seperti factual: ~50% formal vs ~50% colloquial, distribusi difficulty 40/40/20. Untuk paraphrased, colloquial cenderung lebih natural karena orang awam memang tidak tahu istilah teknis.
+
+=== FORMAT OUTPUT ===
+
+[
+  {{
+    "query": "pertanyaan paraphrased dalam bahasa Indonesia",
+    "query_type": "paraphrased",
+    "query_style": "formal|colloquial",
+    "difficulty": "easy|medium|hard",
+    "reference_mode": "none|legal_ref|doc_only|both",
+    "gold_anchor_granularity": "rincian",
+    "gold_anchor_node_id": "node_id leaf paling spesifik",
+    "gold_anchor_node_ids": ["node_id leaf paling spesifik"],
+    "gold_node_id": "sama dengan gold_anchor_node_id",
+    "gold_doc_id": "{doc_id}",
+    "gold_doc_ids": ["{doc_id}"],
+    "navigation_path": "navigation_path leaf",
+    "answer_hint": "kutipan singkat dari teks anchor (boleh literal di sini, hint bukan query), maksimal 100 karakter",
+    "lexical_substitutions": ["kata_asli_1 -> sinonim_1", "kata_asli_2 -> sinonim_2", "kata_asli_3 -> sinonim_3"]
+  }}
+]
+
+Buat tepat {N} item. Field `lexical_substitutions` membantu validator dan reviewer memeriksa bahwa substitusi memang dilakukan. Wajib minimal 3 entri per item.

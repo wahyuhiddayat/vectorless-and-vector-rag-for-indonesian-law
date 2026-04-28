@@ -31,8 +31,14 @@ RULES_FILE = Path(__file__).resolve().parent / "validate_prompt.txt"
 DEFAULT_LEAF_TEXT_BUDGET = 600
 
 
-def _raw_path(doc_id: str) -> Path:
-    return RAW_DIR / doc_category(doc_id) / f"{doc_id}.json"
+def _raw_filename(doc_id: str, query_type: str) -> str:
+    if query_type == "factual":
+        return f"{doc_id}.json"
+    return f"{doc_id}__{query_type}.json"
+
+
+def _raw_path(doc_id: str, query_type: str = "factual") -> Path:
+    return RAW_DIR / doc_category(doc_id) / _raw_filename(doc_id, query_type)
 
 
 def _build_doc_context(items: list[dict], doc_id: str, text_budget: int) -> list[dict]:
@@ -57,8 +63,8 @@ def _build_doc_context(items: list[dict], doc_id: str, text_budget: int) -> list
     return referenced
 
 
-def assemble_prompt(doc_id: str, text_budget: int) -> tuple[Path, list[dict]]:
-    raw_path = _raw_path(doc_id)
+def assemble_prompt(doc_id: str, text_budget: int, query_type: str = "factual") -> tuple[Path, list[dict]]:
+    raw_path = _raw_path(doc_id, query_type)
     if not raw_path.exists():
         raise FileNotFoundError(
             f"raw GT not found: {raw_path}\n"
@@ -84,7 +90,8 @@ def assemble_prompt(doc_id: str, text_budget: int) -> tuple[Path, list[dict]]:
     )
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = TMP_DIR / f"validate_{doc_id}.txt"
+    suffix = "" if query_type == "factual" else f"__{query_type}"
+    out_path = TMP_DIR / f"validate_{doc_id}{suffix}.txt"
     out_path.write_text(body, encoding="utf-8")
     return out_path, valid_items
 
@@ -92,12 +99,15 @@ def assemble_prompt(doc_id: str, text_budget: int) -> tuple[Path, list[dict]]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--doc-id", required=True)
+    ap.add_argument("--type", "-t", type=str, default="factual",
+                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    help="Query type to validate (default: factual)")
     ap.add_argument("--max-context-chars", type=int, default=DEFAULT_LEAF_TEXT_BUDGET,
                     help=f"Per-leaf text excerpt budget (default: {DEFAULT_LEAF_TEXT_BUDGET})")
     args = ap.parse_args()
 
-    out_path, items = assemble_prompt(args.doc_id, args.max_context_chars)
-    raw_path = _raw_path(args.doc_id)
+    out_path, items = assemble_prompt(args.doc_id, args.max_context_chars, query_type=args.type)
+    raw_path = _raw_path(args.doc_id, args.type)
     print(f"Validation prompt written: {out_path}")
     print(f"  items={len(items)} doc_id={args.doc_id}")
     print()

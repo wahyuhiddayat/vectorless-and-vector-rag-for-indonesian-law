@@ -35,9 +35,14 @@ if sys.stdout.encoding != "utf-8":
 DATA_INDEX = Path("data/index_rincian")
 TMP_DIR = Path("tmp")
 SELECTION_FILE = Path("data/gt_doc_selection.json")
+PROMPTS_DIR = Path("scripts/gt/prompts")
 META_SUFFIX = ".meta.json"
 DEFAULT_PROMPT_CHAR_BUDGET = 45000
 PROMPT_BUDGET_GROWTH = 1.25
+
+VALID_QUERY_TYPES = {"factual", "paraphrased", "multihop", "crossdoc", "adversarial"}
+SINGLE_DOC_TYPES = {"factual", "paraphrased", "multihop", "adversarial"}
+PAIRED_DOC_TYPES = {"crossdoc"}
 
 # Preamble section names to exclude from GT (they are not substantive law text)
 PREAMBLE_KEYWORDS = ["Menimbang", "Mengingat", "Menetapkan", "Pembukaan"]
@@ -45,8 +50,9 @@ PREAMBLE_KEYWORDS = ["Menimbang", "Mengingat", "Menetapkan", "Pembukaan"]
 # Minimum body leaf nodes required for GT generation (short docs produce unavoidable duplicates)
 MIN_LEAF_FOR_GT = 5
 
-# Full prompt template sent verbatim to ChatGPT.
-PROMPT_TEMPLATE = """\
+# Legacy prompt template, kept for reference only. Active templates live in
+# scripts/gt/prompts/<query_type>.txt and are loaded via load_template().
+_LEGACY_PROMPT_TEMPLATE = """\
 Kamu adalah asisten ahli hukum yang membantu membuat dataset evaluasi sistem \
 temu kembali (retrieval) dokumen hukum Indonesia.
 
@@ -244,29 +250,55 @@ Kembalikan HANYA JSON array. Tidak ada teks lain di luar JSON.
 """
 
 
-def prompt_template_version() -> str:
-    """Return the SHA-8 hash of the current PROMPT_TEMPLATE for provenance."""
-    return hashlib.sha256(PROMPT_TEMPLATE.encode("utf-8")).hexdigest()[:8]
+def load_template(query_type: str) -> str:
+    """Load a prompt template file from scripts/gt/prompts/<type>.txt."""
+    path = PROMPTS_DIR / f"{query_type}.txt"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Prompt template for query_type='{query_type}' not found at {path}. "
+            f"Expected one of: {sorted(VALID_QUERY_TYPES)}"
+        )
+    return path.read_text(encoding="utf-8")
 
 
-def write_meta_sidecar(category: str, doc_id: str, n_questions: int, total_parts: int) -> Path:
-    """Write a provenance sidecar next to the raw GT placeholder.
+def prompt_template_version(query_type: str = "factual") -> str:
+    """Return the SHA-8 hash of the current prompt template for provenance."""
+    template = load_template(query_type)
+    return hashlib.sha256(template.encode("utf-8")).hexdigest()[:8]
 
-    The sidecar records the prompt template version, generation timestamp,
-    and placeholders for the annotator and judge model that the author fills
-    in after running each respective LLM call. log_review.py and the eventual
-    skripsi metodologi section read from this sidecar.
+
+def raw_filename(doc_id: str, query_type: str) -> str:
+    """Return the raw GT filename including query type tag.
+
+    Factual files keep the bare doc_id name for backward compatibility with
+    the legacy single-type pipeline. All other types use the suffix pattern
+    so multiple types can coexist for the same doc.
     """
+    if query_type == "factual":
+        return f"{doc_id}.json"
+    return f"{doc_id}__{query_type}.json"
+
+
+def meta_filename(doc_id: str, query_type: str) -> str:
+    """Return the meta sidecar filename matching raw_filename() conventions."""
+    if query_type == "factual":
+        return f"{doc_id}{META_SUFFIX}"
+    return f"{doc_id}__{query_type}{META_SUFFIX}"
+
+
+def write_meta_sidecar(category: str, doc_id: str, n_questions: int, total_parts: int, query_type: str = "factual") -> Path:
+    """Write a provenance sidecar next to the raw GT placeholder."""
     raw_dir = Path("data/ground_truth_raw") / category
     raw_dir.mkdir(parents=True, exist_ok=True)
-    meta_path = raw_dir / f"{doc_id}{META_SUFFIX}"
+    meta_path = raw_dir / meta_filename(doc_id, query_type)
     if meta_path.exists():
         return meta_path
 
     payload = {
         "doc_id": doc_id,
         "category": category,
-        "prompt_version": prompt_template_version(),
+        "query_type": query_type,
+        "prompt_version": prompt_template_version(query_type),
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "n_questions_target": n_questions,
         "n_parts": total_parts,
@@ -292,14 +324,16 @@ def load_selection_for(category: str) -> set[str] | None:
     return {row["doc_id"] for row in entry.get("selected", [])}
 
 
-def default_output_path(doc_id: str) -> Path:
+def default_output_path(doc_id: str, query_type: str = "factual") -> Path:
     """Return the default single-prompt path under the repo-local tmp folder."""
-    return TMP_DIR / f"gt_{doc_id}.txt"
+    suffix = "" if query_type == "factual" else f"__{query_type}"
+    return TMP_DIR / f"gt_{doc_id}{suffix}.txt"
 
 
-def default_output_prefix(doc_id: str) -> Path:
+def default_output_prefix(doc_id: str, query_type: str = "factual") -> Path:
     """Return the default multipart prefix under the repo-local tmp folder."""
-    return TMP_DIR / f"gt_{doc_id}"
+    suffix = "" if query_type == "factual" else f"__{query_type}"
+    return TMP_DIR / f"gt_{doc_id}{suffix}"
 
 
 def manifest_path_from_prefix(prefix: Path) -> Path:
@@ -312,10 +346,12 @@ def part_path_from_prefix(prefix: Path, part_index: int) -> Path:
     return prefix.parent / f"{prefix.name}_part{part_index:02d}.txt"
 
 
-def make_output_target(doc_id: str, out_arg: str | None, multipart: bool) -> Path:
+def make_output_target(doc_id: str, out_arg: str | None, multipart: bool, query_type: str = "factual") -> Path:
     """Resolve output file/prefix for single or multipart prompt generation."""
     if not out_arg:
-        return default_output_prefix(doc_id) if multipart else default_output_path(doc_id)
+        if multipart:
+            return default_output_prefix(doc_id, query_type)
+        return default_output_path(doc_id, query_type)
 
     out_path = Path(out_arg)
     if multipart:
@@ -437,24 +473,52 @@ def render_part_header(part_index: int, total_parts: int, quota: int, leaf_count
     )
 
 
-def build_prompt(doc: dict, leaf_nodes: list[dict], n_questions: int, part_index: int = 1, total_parts: int = 1) -> str:
-    """Build one prompt for a specific part."""
-    prompt = PROMPT_TEMPLATE.format(
-        judul=doc["judul"],
-        doc_id=doc["doc_id"],
-        part_header=render_part_header(part_index, total_parts, n_questions, len(leaf_nodes)),
-        leaf_blocks_grouped=render_grouped_blocks(leaf_nodes),
-        N=n_questions,
-    )
-    return prompt
+def build_prompt(
+    doc: dict,
+    leaf_nodes: list[dict],
+    n_questions: int,
+    part_index: int = 1,
+    total_parts: int = 1,
+    query_type: str = "factual",
+    secondary_doc: dict | None = None,
+    secondary_leaf_nodes: list[dict] | None = None,
+) -> str:
+    """Build one prompt for a specific part using the per-type template.
 
-
-def pack_prompt_parts(doc: dict, leaf_nodes: list[dict], total_questions: int, base_budget: int = DEFAULT_PROMPT_CHAR_BUDGET) -> tuple[list[list[dict]], int]:
+    For crossdoc (paired-doc) the secondary_doc and secondary_leaf_nodes are
+    rendered in additional template placeholders. For all other types those
+    are ignored.
     """
-    Split the document into prompt parts using whole-node packing.
+    template = load_template(query_type)
+    fmt_kwargs = {
+        "judul": doc["judul"],
+        "doc_id": doc["doc_id"],
+        "part_header": render_part_header(part_index, total_parts, n_questions, len(leaf_nodes)),
+        "leaf_blocks_grouped": render_grouped_blocks(leaf_nodes),
+        "N": n_questions,
+    }
+    if query_type == "crossdoc":
+        if secondary_doc is None or secondary_leaf_nodes is None:
+            raise ValueError("crossdoc query_type requires secondary_doc and secondary_leaf_nodes")
+        fmt_kwargs["judul_secondary"] = secondary_doc["judul"]
+        fmt_kwargs["doc_id_secondary"] = secondary_doc["doc_id"]
+        fmt_kwargs["leaf_blocks_grouped_secondary"] = render_grouped_blocks(secondary_leaf_nodes)
+    return template.format(**fmt_kwargs)
 
-    The budget may grow automatically if needed so that each part can still
-    receive at least one question.
+
+def pack_prompt_parts(
+    doc: dict,
+    leaf_nodes: list[dict],
+    total_questions: int,
+    base_budget: int = DEFAULT_PROMPT_CHAR_BUDGET,
+    query_type: str = "factual",
+    secondary_doc: dict | None = None,
+    secondary_leaf_nodes: list[dict] | None = None,
+) -> tuple[list[list[dict]], int]:
+    """Split the primary doc into prompt parts using whole-node packing.
+
+    The secondary doc (for crossdoc) is included in EVERY part because the
+    annotator needs both docs visible to construct comparative queries.
     """
     if not leaf_nodes:
         return [[]], base_budget
@@ -467,8 +531,10 @@ def pack_prompt_parts(doc: dict, leaf_nodes: list[dict], total_questions: int, b
         current: list[dict] = []
         for leaf in leaf_nodes:
             trial = current + [leaf]
-            # Use a placeholder quota of 1 here; final quotas are assigned later.
-            trial_prompt = build_prompt(doc, trial, n_questions=1)
+            trial_prompt = build_prompt(
+                doc, trial, n_questions=1, query_type=query_type,
+                secondary_doc=secondary_doc, secondary_leaf_nodes=secondary_leaf_nodes,
+            )
             if current and len(trial_prompt) > budget:
                 parts.append(current)
                 current = [leaf]
@@ -515,11 +581,26 @@ def allocate_question_quotas(parts: list[list[dict]], total_questions: int) -> l
     return quotas
 
 
-def build_prompt_parts(doc: dict, n_questions: int, char_budget: int = DEFAULT_PROMPT_CHAR_BUDGET) -> tuple[list[dict], int]:
+def build_prompt_parts(
+    doc: dict,
+    n_questions: int,
+    char_budget: int = DEFAULT_PROMPT_CHAR_BUDGET,
+    query_type: str = "factual",
+    secondary_doc: dict | None = None,
+) -> tuple[list[dict], int]:
     """Build single or multipart prompt payloads for one document."""
     leaves = collect_leaf_nodes(doc["structure"])
     leaf_nodes = filter_preamble(leaves)
-    parts, final_budget = pack_prompt_parts(doc, leaf_nodes, n_questions, base_budget=char_budget)
+
+    secondary_leaf_nodes: list[dict] | None = None
+    if secondary_doc is not None:
+        secondary_leaves = collect_leaf_nodes(secondary_doc["structure"])
+        secondary_leaf_nodes = filter_preamble(secondary_leaves)
+
+    parts, final_budget = pack_prompt_parts(
+        doc, leaf_nodes, n_questions, base_budget=char_budget, query_type=query_type,
+        secondary_doc=secondary_doc, secondary_leaf_nodes=secondary_leaf_nodes,
+    )
     quotas = allocate_question_quotas(parts, n_questions)
     total_parts = len(parts)
 
@@ -531,7 +612,13 @@ def build_prompt_parts(doc: dict, n_questions: int, char_budget: int = DEFAULT_P
             "question_quota": quota,
             "leaf_count": len(part_leaves),
             "node_ids": [leaf["node_id"] for leaf in part_leaves],
-            "prompt": build_prompt(doc, part_leaves, n_questions=quota, part_index=idx, total_parts=total_parts),
+            "prompt": build_prompt(
+                doc, part_leaves, n_questions=quota,
+                part_index=idx, total_parts=total_parts,
+                query_type=query_type,
+                secondary_doc=secondary_doc,
+                secondary_leaf_nodes=secondary_leaf_nodes,
+            ),
         })
     return prompt_parts, final_budget
 
@@ -620,6 +707,15 @@ def main() -> None:
         "--allow-unselected", action="store_true",
         help="Allow generating a prompt for a doc that is not in data/gt_doc_selection.json",
     )
+    ap.add_argument(
+        "--type", "-t", type=str, default="factual",
+        choices=sorted(VALID_QUERY_TYPES),
+        help="Query type to generate (factual, paraphrased, multihop, crossdoc, adversarial). Default: factual.",
+    )
+    ap.add_argument(
+        "--paired-doc", type=str, default=None,
+        help="Secondary doc_id for crossdoc generation. Required when --type crossdoc.",
+    )
     args = ap.parse_args()
 
     if args.list or not args.doc_id:
@@ -645,6 +741,21 @@ def main() -> None:
     with open(doc_path, encoding="utf-8") as f:
         doc = json.load(f)
 
+    query_type = args.type
+    secondary_doc: dict | None = None
+    if query_type == "crossdoc":
+        if not args.paired_doc:
+            print("ERROR: --type crossdoc requires --paired-doc <secondary_doc_id>")
+            sys.exit(1)
+        sec_path = find_doc(args.paired_doc)
+        if not sec_path:
+            print(f"ERROR: paired-doc '{args.paired_doc}' not found in {DATA_INDEX}")
+            sys.exit(1)
+        with open(sec_path, encoding="utf-8") as f:
+            secondary_doc = json.load(f)
+    elif args.paired_doc:
+        print(f"WARNING: --paired-doc ignored for --type {query_type}")
+
     leaves = collect_leaf_nodes(doc["structure"])
     leaf_nodes = filter_preamble(leaves)
     adaptive_n = compute_adaptive_n(len(leaf_nodes))
@@ -661,11 +772,17 @@ def main() -> None:
                   f"dokumen terlalu kecil untuk dijadikan GT.")
         sys.exit(0)
 
-    prompt_parts, final_budget = build_prompt_parts(doc, n_questions=n_used, char_budget=args.char_budget)
+    prompt_parts, final_budget = build_prompt_parts(
+        doc, n_questions=n_used, char_budget=args.char_budget,
+        query_type=query_type, secondary_doc=secondary_doc,
+    )
     multipart = len(prompt_parts) > 1
 
     print(f"\nDokumen    : {doc['judul'][:80]}")
     print(f"doc_id     : {doc['doc_id']}")
+    print(f"Query type : {query_type}")
+    if secondary_doc is not None:
+        print(f"Paired doc : {secondary_doc['doc_id']}")
     print(f"Leaf nodes : {len(leaf_nodes)} rincian-index leaf nodes")
     print(f"Target N   : {n_used} pertanyaan (adaptive: {adaptive_n})", end="")
     if args.questions is not None:
@@ -680,20 +797,22 @@ def main() -> None:
         sys.exit(1)
 
     if not multipart:
-        output_path = make_output_target(doc["doc_id"], args.out, multipart=False)
+        output_path = make_output_target(doc["doc_id"], args.out, multipart=False, query_type=query_type)
         output_label = "stdout (copy-paste)" if args.stdout else str(output_path)
         print(f"Output     : {output_label}\n")
 
+        raw_target_name = raw_filename(args.doc_id, query_type)
+
         if args.stdout:
             print("=" * 70)
-            print("COPY PROMPT DI BAWAH INI KE CHATGPT (BUKAN Gemini):")
+            print("COPY PROMPT DI BAWAH INI KE GENERATOR LLM (Claude/GPT, bukan Gemini):")
             print("=" * 70)
             print(prompt_parts[0]["prompt"])
             print("=" * 70)
             print("\nLangkah selanjutnya:")
-            print("  1. Copy prompt di atas -> paste ke ChatGPT")
-            print("  2. Copy JSON output dari ChatGPT")
-            print(f"  3. Simpan ke: data/ground_truth_raw/{args.doc_id}.json")
+            print("  1. Copy prompt di atas, paste ke generator LLM")
+            print("  2. Copy JSON output dari generator")
+            print(f"  3. Simpan ke: data/ground_truth_raw/{category}/{raw_target_name}")
             print("  4. Jalankan: python scripts/gt/collect.py")
             return
 
@@ -702,14 +821,14 @@ def main() -> None:
 
         raw_dir = Path("data/ground_truth_raw") / category
         raw_dir.mkdir(parents=True, exist_ok=True)
-        placeholder = raw_dir / f"{args.doc_id}.json"
+        placeholder = raw_dir / raw_target_name
         if not placeholder.exists():
             placeholder.write_text("[]", encoding="utf-8")
-            print(f"Placeholder : {placeholder}  ← paste output ChatGPT ke sini")
+            print(f"Placeholder : {placeholder}  (paste output annotator ke sini)")
         else:
-            print(f"Target      : {placeholder}  (sudah ada — overwrite dengan output ChatGPT)")
+            print(f"Target      : {placeholder}  (sudah ada, overwrite dengan output annotator)")
 
-        meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1)
+        meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1, query_type=query_type)
         print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
 
         print("\nLangkah selanjutnya:")
@@ -726,7 +845,7 @@ def main() -> None:
         print(f"  8. python scripts/gt/collect.py --file \"{placeholder}\"")
         return
 
-    prefix = make_output_target(doc["doc_id"], args.out, multipart=True)
+    prefix = make_output_target(doc["doc_id"], args.out, multipart=True, query_type=query_type)
     part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget, category=category)
 
     print(f"Output     : {len(part_paths)} part files + manifest")
@@ -743,11 +862,11 @@ def main() -> None:
         if not ph.exists():
             ph.write_text("[]", encoding="utf-8")
             created_placeholders.append(ph)
-    raw_placeholder = Path("data/ground_truth_raw") / category / f"{doc['doc_id']}.json"
+    raw_placeholder = Path("data/ground_truth_raw") / category / raw_filename(doc["doc_id"], query_type)
     (Path("data/ground_truth_raw") / category).mkdir(parents=True, exist_ok=True)
     if created_placeholders:
         print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
-    meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts))
+    meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts), query_type=query_type)
     print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
     print("\nLangkah selanjutnya:")
     print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT/etc — bukan Gemini),")

@@ -33,15 +33,19 @@ RAW_DIR = Path("data/ground_truth_raw")
 SEPARATOR = "---CLEANED---"
 
 
-def raw_path_for(doc_id: str) -> Path:
-    """Return the path to the raw GT file for a doc_id."""
-    return RAW_DIR / doc_category(doc_id) / f"{doc_id}.json"
+def _basename(doc_id: str, query_type: str) -> str:
+    return doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
 
 
-def backup_path_for(doc_id: str) -> Path:
+def raw_path_for(doc_id: str, query_type: str = "factual") -> Path:
+    """Return the path to the raw GT file for a doc_id and query type."""
+    return RAW_DIR / doc_category(doc_id) / f"{_basename(doc_id, query_type)}.json"
+
+
+def backup_path_for(doc_id: str, query_type: str = "factual") -> Path:
     """Return a timestamped backup path for the previous raw GT file."""
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return RAW_DIR / doc_category(doc_id) / ".bak" / f"{doc_id}.{stamp}.json"
+    return RAW_DIR / doc_category(doc_id) / ".bak" / f"{_basename(doc_id, query_type)}.{stamp}.json"
 
 
 def extract_cleaned_array(text: str) -> list[dict]:
@@ -98,12 +102,12 @@ def extract_cleaned_array(text: str) -> list[dict]:
     return data
 
 
-def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool) -> None:
+def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool, query_type: str = "factual") -> None:
     """Validate the cleaned array and overwrite the raw GT file on success."""
-    raw_path = raw_path_for(doc_id)
+    raw_path = raw_path_for(doc_id, query_type)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = Path(tempfile.mkstemp(prefix=f"{doc_id}-", suffix=".json")[1])
+    tmp_path = Path(tempfile.mkstemp(prefix=f"{_basename(doc_id, query_type)}-", suffix=".json")[1])
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cleaned, f, ensure_ascii=False, indent=2)
@@ -125,7 +129,7 @@ def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool) -> None:
         return
 
     if raw_path.exists():
-        bak = backup_path_for(doc_id)
+        bak = backup_path_for(doc_id, query_type)
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(raw_path, bak)
         print(f"Backup saved to {bak}")
@@ -140,6 +144,9 @@ def main() -> None:
     """CLI entrypoint."""
     ap = argparse.ArgumentParser(description="Apply Judge LLM output to raw GT with a struct gate.")
     ap.add_argument("--doc-id", required=True)
+    ap.add_argument("--type", "-t", type=str, default="factual",
+                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    help="Query type to apply (default: factual)")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--judge-file", type=str, default=None,
                      help="Path to a text file containing the Judge LLM output")
@@ -155,7 +162,7 @@ def main() -> None:
         text = Path(args.judge_file).read_text(encoding="utf-8")
 
     cleaned = extract_cleaned_array(text)
-    apply_cleaned(args.doc_id, cleaned, dry_run=args.dry_run)
+    apply_cleaned(args.doc_id, cleaned, dry_run=args.dry_run, query_type=args.type)
 
 
 if __name__ == "__main__":

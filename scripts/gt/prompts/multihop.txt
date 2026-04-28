@@ -1,0 +1,68 @@
+Kamu adalah asisten ahli hukum yang membuat dataset evaluasi retrieval untuk pertanyaan MULTI-HOP yang memerlukan dua leaf node berbeda.
+
+Dokumen: {judul}
+doc_id: {doc_id}
+{part_header}
+=== LEAF NODE INDEX ===
+{leaf_blocks_grouped}
+
+=== TUJUAN TIPE QUERY ===
+
+Tipe `multihop` menguji apakah sistem retrieval dapat menemukan DUA leaf node yang sama-sama diperlukan untuk menjawab satu pertanyaan terintegrasi. Ini menstress-test kemampuan navigasi hierarki (tree retrieval) dan reasoning lintas pasal.
+
+=== INSTRUKSI UTAMA ===
+
+Buat tepat {N} pertanyaan MULTI-HOP dalam bahasa Indonesia. Setiap pertanyaan dijawab oleh DUA leaf node anchor yang BERBEDA dari dokumen yang sama. Kedua anchor wajib BENAR-BENAR DIPERLUKAN, query yang bisa dijawab hanya dengan satu anchor saja INVALID.
+
+POLA YANG BAIK:
+1. Definisi + penerapan: Pasal A mendefinisikan istilah X, Pasal B menggunakan istilah X dengan kondisi/sanksi spesifik. Query: "Apa definisi X dan apa sanksinya jika dilanggar?"
+2. Kewajiban + pengecualian: Pasal A menetapkan kewajiban, Pasal B mendaftar pengecualian. Query: "Siapa yang wajib X dan siapa yang dikecualikan?"
+3. Pelaku + ancaman: Pasal A mendaftar pelaku, Pasal B mendaftar ancaman pidana. Query: "Apa ancaman pidana bagi setiap kategori pelaku Y?"
+4. Komposisi + syarat: Pasal A menetapkan badan terdiri dari N orang, Pasal B mendaftar syarat keanggotaan. Query: "Berapa anggota badan Z dan apa saja syarat mereka?"
+
+POLA YANG DILARANG:
+- Query yang anchor-nya satu pasal tetapi pasal kedua hanya "supporting context": misal "Apa isi Pasal 5?" (anchor 1) yang answer_hint-nya kebetulan menyebut Pasal 7. Itu single-hop dengan referensi, BUKAN multi-hop.
+- Query referential ("Pasal 5 mengatur X, lalu bagaimana di Pasal 7?"). Harus satu pertanyaan terintegrasi, bukan rangkaian.
+- Query yang dua anchor-nya pernyataan repetitif (saling melengkapi tetapi salah satu sudah cukup).
+
+UJI KEPERLUAN:
+Sebelum mengirim, untuk setiap query lakukan single-anchor sufficiency test:
+- Hapus anchor 1, apakah query masih bisa dijawab dari anchor 2 saja? Jika YA, INVALID.
+- Hapus anchor 2, apakah query masih bisa dijawab dari anchor 1 saja? Jika YA, INVALID.
+- Hanya jika kedua anchor diperlukan barulah query VALID multi-hop.
+
+ATURAN UMUM:
+- Self-contained, satu kalimat pertanyaan terintegrasi (bukan dua pertanyaan terpisah dipisah "dan").
+- Hanya body text, tidak metadata/pembukaan.
+- Dua anchor WAJIB di pasal/ayat yang berbeda (tidak boleh dua leaf di parent yang sama).
+
+=== REFERENCE MODE ===
+
+Multi-hop cenderung pakai legal_ref atau both karena alami menyebut beberapa pasal, tetapi BUKAN keharusan. Distribusi sesuai natural. Tidak ada batasan ketat.
+
+=== QUERY STYLE & DIFFICULTY ===
+
+Distribusi formal/colloquial seimbang. Difficulty natural lebih hard untuk multi-hop, tetapi tetap target ~30% easy, ~50% medium, ~20% hard.
+
+=== FORMAT OUTPUT ===
+
+[
+  {{
+    "query": "pertanyaan terintegrasi yang butuh DUA anchor",
+    "query_type": "multihop",
+    "query_style": "formal|colloquial",
+    "difficulty": "easy|medium|hard",
+    "reference_mode": "none|legal_ref|doc_only|both",
+    "gold_anchor_granularity": "rincian",
+    "gold_anchor_node_id": "anchor PRIMER (yang lebih sentral)",
+    "gold_anchor_node_ids": ["anchor_primer", "anchor_sekunder"],
+    "gold_node_id": "sama dengan gold_anchor_node_id (primer)",
+    "gold_doc_id": "{doc_id}",
+    "gold_doc_ids": ["{doc_id}", "{doc_id}"],
+    "navigation_path": "navigation_path anchor primer",
+    "answer_hint": "kutipan singkat menggabungkan kedua anchor, maksimal 150 karakter",
+    "anchor_relation": "definition+sanction|obligation+exception|actor+penalty|composition+requirement|other"
+  }}
+]
+
+Buat tepat {N} item. Setiap item WAJIB punya `gold_anchor_node_ids` dengan tepat 2 entri yang berbeda. `gold_doc_ids` selalu list 2 entri yang sama (kedua anchor di doc yang sama).
