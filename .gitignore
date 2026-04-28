@@ -1,5 +1,6 @@
 data/
 qdrant_local/
+qdrant_local.tgz
 tmp/
 temp/
 status.json
