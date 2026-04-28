@@ -151,6 +151,10 @@ def build_index(
             category = "PERATURAN_BSSN"
         elif low.startswith("peraturan-ojk-"):
             category = "PERATURAN_OJK"
+        elif low.startswith("peraturan-bi-"):
+            category = "PERATURAN_BI"
+        elif low.startswith("perma-"):
+            category = "PERATURAN_MA"
         else:
             category = doc_id.split("-")[0].upper()
         doc_path = source_dir / category / f"{doc_id}.json"
