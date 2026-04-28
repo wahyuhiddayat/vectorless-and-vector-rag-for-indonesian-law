@@ -1,6 +1,12 @@
 # Shared
 python-dotenv>=1.0.0
 google-genai>=1.0.0
+huggingface-hub>=0.20.0
+tqdm
+
+# Scraper
+requests
+beautifulsoup4
 
 # Vectorless RAG (indexing + retrieval)
 pymupdf>=1.26.0
@@ -8,3 +14,4 @@ pymupdf>=1.26.0
 # Vector RAG (retrieval)
 qdrant-client
 rank-bm25
+sentence-transformers>=3.0.0
