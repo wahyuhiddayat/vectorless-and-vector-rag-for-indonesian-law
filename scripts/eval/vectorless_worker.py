@@ -66,7 +66,10 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         from vectorless.retrieval.llm import flat as module
 
         module.save_log = lambda _result: None
-        return module.retrieve(query, verbose=False)
+        # Disable random sampling. With a 70-doc corpus the entire flat list
+        # fits inside Gemini Flash 1M context (rincian peaks at ~760K tokens).
+        # Sampling 100 of >1900 leaves makes recall near-zero by construction.
+        return module.retrieve(query, max_candidates=10**9, verbose=False)
 
     if system == "llm-tree":
         from vectorless.retrieval.llm import tree as module
