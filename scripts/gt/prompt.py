@@ -831,18 +831,24 @@ def main() -> None:
         meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1, query_type=query_type)
         print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
 
+        type_flag = f" --type {query_type}" if query_type != "factual" else ""
+        validate_out = f"tmp/validate_{args.doc_id}" + (f"__{query_type}" if query_type != "factual" else "") + ".txt"
         print("\nLangkah selanjutnya:")
-        print(f"  1. Paste {output_path} ke Generator LLM (Claude/GPT/etc — bukan Gemini)")
+        print(f"  1. Paste {output_path} ke Generator LLM (Claude/GPT, bukan Gemini)")
         print(f"  2. Paste output JSON ke: {placeholder}")
-        print(f"  3. Update {meta_path} field annotator_model dengan model+versi yang dipakai")
-        print(f"  4. python scripts/gt/build_validate.py --doc-id {args.doc_id}")
-        print(f"     → emits tmp/validate_{args.doc_id}.txt (validation prompt)")
-        print(f"  5. Paste validation prompt ke Judge LLM, minta overwrite {placeholder}")
-        print(f"     dengan items hasil cleaned. Atau, simpan output Judge ke file lalu jalankan")
-        print(f"     python scripts/gt/apply_validation.py --doc-id {args.doc_id} --judge-file <path>")
-        print(f"  6. Update {meta_path} field judge_model")
-        print(f"  7. python scripts/gt/log_review.py {args.doc_id}   # author spot-check")
-        print(f"  8. python scripts/gt/collect.py --file \"{placeholder}\"")
+        print(f"  3. Update {meta_path} field annotator_model")
+        if query_type == "paraphrased":
+            print(f"  4. python -m scripts.gt.validators.paraphrase_overlap {placeholder}")
+        elif query_type == "adversarial":
+            print(f"  4. python -m scripts.gt.validators.adversarial_bm25 {placeholder}")
+        else:
+            print(f"  4. (no deterministic validator for {query_type}, skip ke step 5)")
+        print(f"  5. python scripts/gt/build_validate.py --doc-id {args.doc_id}{type_flag}")
+        print(f"     emits {validate_out}")
+        print(f"  6. Paste ke Judge LLM, save output, lalu:")
+        print(f"     python scripts/gt/apply_validation.py --doc-id {args.doc_id}{type_flag} --judge-file <path>")
+        print(f"  7. Update {meta_path} field judge_model")
+        print(f"  8. python scripts/gt/collect.py")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True, query_type=query_type)
@@ -868,19 +874,18 @@ def main() -> None:
         print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
     meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts), query_type=query_type)
     print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
+    type_flag_mp = f" --type {query_type}" if query_type != "factual" else ""
     print("\nLangkah selanjutnya:")
-    print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT/etc — bukan Gemini),")
+    print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT, bukan Gemini),")
     print(f"     paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
     print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']}")
-    print(f"     → menghasilkan: {raw_placeholder}")
+    print(f"     menghasilkan: {raw_placeholder}")
     print(f"  3. Update {meta_path} field annotator_model")
-    print(f"  4. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}")
-    print(f"     → emits tmp/validate_{doc['doc_id']}.txt (validation prompt)")
-    print(f"  5. Paste validation prompt ke Judge LLM, atau simpan output Judge ke file lalu")
-    print(f"     python scripts/gt/apply_validation.py --doc-id {doc['doc_id']} --judge-file <path>")
+    print(f"  4. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}{type_flag_mp}")
+    print(f"  5. Paste ke Judge LLM, save output, lalu:")
+    print(f"     python scripts/gt/apply_validation.py --doc-id {doc['doc_id']}{type_flag_mp} --judge-file <path>")
     print(f"  6. Update {meta_path} field judge_model")
-    print(f"  7. python scripts/gt/log_review.py {doc['doc_id']}   # author spot-check")
-    print(f"  8. python scripts/gt/collect.py --file \"{raw_placeholder}\"")
+    print(f"  7. python scripts/gt/collect.py")
 
 
 if __name__ == "__main__":

@@ -10,9 +10,21 @@ Methodology notes for thesis writeup.
       to mrr@k. Multi-gold queries (multihop, crossdoc) make recall@k a true
       partial-credit metric. The score_ranked_retrieval formula handles both
       cases uniformly via set-overlap. NDCG@k is monotone-equivalent to mrr@k
-      under single-gold (Sakai 2007, IPSJ Trans. Databases 48 SIG9). Headline
-      metrics for the thesis are MRR@k, Recall@k, Hit@k. NDCG@k and MAP@k are
-      reported for completeness only.
+      under single-gold (Sakai 2007, IPSJ Trans. Databases 48 SIG9).
+
+      Primary metric per BEIR convention. Thakur et al. 2021 (NeurIPS D&B,
+      arXiv:2104.08663) establish NDCG@10 as the standard headline metric for
+      modern IR benchmarks because it handles both binary and graded relevance
+      uniformly and is rank-aware. For a thesis Bab 4 narrative, lead with
+      NDCG@10 then report Recall@1/5/10 and MRR@10 as supporting metrics.
+      MAP@k is reported for completeness only.
+
+  N1b. Granularity reporting. Per Faisal et al. 2024 (IJAIN 10(3)) and the
+       construct-validity recommendation in our literature review, we report
+       metrics at all three granularities (pasal, ayat, rincian) so readers
+       can compare strict (rincian) versus lenient (ayat, pasal) outcomes for
+       the same query. The progression from coarse to fine IS the dual or
+       triple-granularity analysis, no extra metric column is needed.
 
   N2. Retrieval may return fewer than k items (LLM-stepwise can stop early).
       Metrics are computed over the actual list. Recall@k for a 3-item list

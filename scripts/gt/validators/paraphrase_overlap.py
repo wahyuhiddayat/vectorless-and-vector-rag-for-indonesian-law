@@ -1,12 +1,16 @@
 """Validate that paraphrased GT queries have low lexical overlap with their anchor.
 
-Computes Jaccard similarity over content unigrams (Indonesian stopwords stripped)
-between the query and the anchor leaf text. Items above the threshold are flagged
-as not sufficiently paraphrased and should be regenerated.
+Computes Jaccard similarity over Indonesian-stemmed content unigrams between
+the query and the anchor leaf text. Items above the threshold are flagged as
+not sufficiently paraphrased and should be regenerated. Stemming uses the
+Sastrawi Indonesian stemmer to handle affixation (membentuk vs dibentuk vs
+pembentukan all reduce to bentuk), without which raw-token Jaccard is
+misleading per Penha et al. (2022, ECIR).
 
 Usage:
     python -m scripts.gt.validators.paraphrase_overlap data/ground_truth_raw/UU/uu-1-2026__paraphrased.json
     python -m scripts.gt.validators.paraphrase_overlap --threshold 0.30 <path>
+    python -m scripts.gt.validators.paraphrase_overlap --no-stem <path>   # diagnostic, raw tokens
 """
 
 import argparse
@@ -15,8 +19,11 @@ import re
 import sys
 from pathlib import Path
 
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+
 DATA_INDEX = Path("data/index_rincian")
 DEFAULT_THRESHOLD = 0.40
+_STEMMER = StemmerFactory().create_stemmer()
 
 INDONESIAN_STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
@@ -32,10 +39,17 @@ INDONESIAN_STOPWORDS = {
 }
 
 
-def tokenize(text: str) -> set[str]:
-    """Return content tokens after lowercase, alpha-only filter, and stopword removal."""
-    lowered = (text or "").lower()
-    tokens = re.findall(r"[a-zA-Z]+", lowered)
+def tokenize(text: str, stem: bool = True) -> set[str]:
+    """Return content tokens. With stem=True, applies Sastrawi Indonesian stemmer.
+
+    Stemming reduces affixed variants (membentuk, dibentuk, pembentukan) to a
+    common stem (bentuk), which is essential for Indonesian Jaccard overlap.
+    Set stem=False only for diagnostic comparison with raw-token behavior.
+    """
+    raw = (text or "").lower()
+    if stem and raw.strip():
+        raw = _STEMMER.stem(raw)
+    tokens = re.findall(r"[a-zA-Z]+", raw)
     return {t for t in tokens if t not in INDONESIAN_STOPWORDS and len(t) > 2}
 
 
@@ -68,7 +82,7 @@ def collect_leaf_text_map(doc: dict) -> dict[str, str]:
     return out
 
 
-def validate_file(path: Path, threshold: float = DEFAULT_THRESHOLD) -> tuple[int, int, list[dict]]:
+def validate_file(path: Path, threshold: float = DEFAULT_THRESHOLD, stem: bool = True) -> tuple[int, int, list[dict]]:
     """Validate a raw GT file. Returns (n_paraphrased, n_flagged, flagged_items)."""
     with open(path, encoding="utf-8") as f:
         items = json.load(f)
@@ -97,7 +111,7 @@ def validate_file(path: Path, threshold: float = DEFAULT_THRESHOLD) -> tuple[int
         if not anchor_text:
             flagged.append({"item_index": i, "reason": f"anchor '{anchor_id}' not in {doc_id}", "score": None})
             continue
-        score = jaccard(tokenize(query), tokenize(anchor_text))
+        score = jaccard(tokenize(query, stem=stem), tokenize(anchor_text, stem=stem))
         if score > threshold:
             flagged.append({
                 "item_index": i,
@@ -115,6 +129,8 @@ def main() -> None:
     ap.add_argument("path", type=str, help="Path to raw GT JSON file")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
                     help=f"Jaccard reject threshold (default {DEFAULT_THRESHOLD})")
+    ap.add_argument("--no-stem", action="store_true",
+                    help="Disable Sastrawi stemming (diagnostic only, do not use as gate)")
     args = ap.parse_args()
 
     path = Path(args.path)
@@ -122,7 +138,8 @@ def main() -> None:
         print(f"ERROR: file not found: {path}")
         sys.exit(1)
 
-    n_par, n_flag, flagged = validate_file(path, threshold=args.threshold)
+    n_par, n_flag, flagged = validate_file(path, threshold=args.threshold, stem=not args.no_stem)
+    print(f"Stemmer: {'Sastrawi (Indonesian)' if not args.no_stem else 'OFF (raw tokens)'}")
     print(f"\nFile: {path}")
     print(f"Paraphrased items inspected: {n_par}")
     print(f"Flagged (overlap > {args.threshold}): {n_flag}")
