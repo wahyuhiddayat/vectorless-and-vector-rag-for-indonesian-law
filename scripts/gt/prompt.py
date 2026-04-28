@@ -268,21 +268,12 @@ def prompt_template_version(query_type: str = "factual") -> str:
 
 
 def raw_filename(doc_id: str, query_type: str) -> str:
-    """Return the raw GT filename including query type tag.
-
-    Factual files keep the bare doc_id name for backward compatibility with
-    the legacy single-type pipeline. All other types use the suffix pattern
-    so multiple types can coexist for the same doc.
-    """
-    if query_type == "factual":
-        return f"{doc_id}.json"
+    """Return the raw GT filename including query type tag."""
     return f"{doc_id}__{query_type}.json"
 
 
 def meta_filename(doc_id: str, query_type: str) -> str:
     """Return the meta sidecar filename matching raw_filename() conventions."""
-    if query_type == "factual":
-        return f"{doc_id}{META_SUFFIX}"
     return f"{doc_id}__{query_type}{META_SUFFIX}"
 
 
@@ -326,14 +317,12 @@ def load_selection_for(category: str) -> set[str] | None:
 
 def default_output_path(doc_id: str, query_type: str = "factual") -> Path:
     """Return the default single-prompt path under the repo-local tmp folder."""
-    suffix = "" if query_type == "factual" else f"__{query_type}"
-    return TMP_DIR / f"gt_{doc_id}{suffix}.txt"
+    return TMP_DIR / f"gt_{doc_id}__{query_type}.txt"
 
 
 def default_output_prefix(doc_id: str, query_type: str = "factual") -> Path:
     """Return the default multipart prefix under the repo-local tmp folder."""
-    suffix = "" if query_type == "factual" else f"__{query_type}"
-    return TMP_DIR / f"gt_{doc_id}{suffix}"
+    return TMP_DIR / f"gt_{doc_id}__{query_type}"
 
 
 def manifest_path_from_prefix(prefix: Path) -> Path:
@@ -831,24 +820,9 @@ def main() -> None:
         meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1, query_type=query_type)
         print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
 
-        type_flag = f" --type {query_type}" if query_type != "factual" else ""
-        validate_out = f"tmp/validate_{args.doc_id}" + (f"__{query_type}" if query_type != "factual" else "") + ".txt"
-        print("\nLangkah selanjutnya:")
-        print(f"  1. Paste {output_path} ke Generator LLM (Claude/GPT, bukan Gemini)")
-        print(f"  2. Paste output JSON ke: {placeholder}")
-        print(f"  3. Update {meta_path} field annotator_model")
-        if query_type == "paraphrased":
-            print(f"  4. python -m scripts.gt.validators.paraphrase_overlap {placeholder}")
-        elif query_type == "adversarial":
-            print(f"  4. python -m scripts.gt.validators.adversarial_bm25 {placeholder}")
-        else:
-            print(f"  4. (no deterministic validator for {query_type}, skip ke step 5)")
-        print(f"  5. python scripts/gt/build_validate.py --doc-id {args.doc_id}{type_flag}")
-        print(f"     emits {validate_out}")
-        print(f"  6. Paste ke Judge LLM, save output, lalu:")
-        print(f"     python scripts/gt/apply_validation.py --doc-id {args.doc_id}{type_flag} --judge-file <path>")
-        print(f"  7. Update {meta_path} field judge_model")
-        print(f"  8. python scripts/gt/collect.py")
+        print("\nNext.")
+        print(f"  1. Paste {output_path} to Generator LLM, paste JSON output to {placeholder}")
+        print(f"  2. python scripts/gt/build_validate.py --doc-id {args.doc_id} --type {query_type}")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True, query_type=query_type)
@@ -874,18 +848,10 @@ def main() -> None:
         print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
     meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts), query_type=query_type)
     print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
-    type_flag_mp = f" --type {query_type}" if query_type != "factual" else ""
-    print("\nLangkah selanjutnya:")
-    print(f"  1. Untuk tiap part, paste prompt ke Generator LLM (Claude/GPT, bukan Gemini),")
-    print(f"     paste output JSON per part ke: {parts_dir}\\part01.json, part02.json, dst.")
+    print("\nNext.")
+    print(f"  1. Paste each part to Generator LLM, save outputs to {parts_dir}/part01.json, part02.json, ...")
     print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']}")
-    print(f"     menghasilkan: {raw_placeholder}")
-    print(f"  3. Update {meta_path} field annotator_model")
-    print(f"  4. python scripts/gt/build_validate.py --doc-id {doc['doc_id']}{type_flag_mp}")
-    print(f"  5. Paste ke Judge LLM, save output, lalu:")
-    print(f"     python scripts/gt/apply_validation.py --doc-id {doc['doc_id']}{type_flag_mp} --judge-file <path>")
-    print(f"  6. Update {meta_path} field judge_model")
-    print(f"  7. python scripts/gt/collect.py")
+    print(f"  3. python scripts/gt/build_validate.py --doc-id {doc['doc_id']} --type {query_type}")
 
 
 if __name__ == "__main__":

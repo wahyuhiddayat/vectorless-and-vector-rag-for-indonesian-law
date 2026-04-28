@@ -35,7 +35,7 @@ VALID_VERDICTS = {"c": "correct", "w": "wrong", "b": "borderline", "s": "skipped
 
 
 def _basename(doc_id: str, query_type: str) -> str:
-    return doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
+    return f"{doc_id}__{query_type}"
 
 
 def raw_path_for(doc_id: str, query_type: str = "factual") -> Path:

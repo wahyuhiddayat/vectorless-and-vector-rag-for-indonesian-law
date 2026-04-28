@@ -54,7 +54,7 @@ QUERY_TYPES = ("factual", "paraphrased", "multihop", "crossdoc", "adversarial")
 
 
 def _basename(doc_id: str, query_type: str) -> str:
-    return doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
+    return f"{doc_id}__{query_type}"
 
 
 def _raw_path(doc_id: str, query_type: str) -> Path:

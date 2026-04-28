@@ -44,8 +44,6 @@ MULTI_ANCHOR_TYPES = {"multihop", "crossdoc"}
 
 
 def _raw_filename(doc_id: str, query_type: str) -> str:
-    if query_type == "factual":
-        return f"{doc_id}.json"
     return f"{doc_id}__{query_type}.json"
 
 
@@ -172,8 +170,7 @@ def assemble_prompt(
     )
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = "" if query_type == "factual" else f"__{query_type}"
-    out_path = TMP_DIR / f"validate_{doc_id}{suffix}.txt"
+    out_path = TMP_DIR / f"validate_{doc_id}__{query_type}.txt"
     out_path.write_text(body, encoding="utf-8")
     return out_path, valid_items
 
@@ -197,20 +194,12 @@ def main() -> None:
         query_type=args.type,
         skip_layer2=args.skip_layer2,
     )
-    print(f"Validation prompt written, {out_path}")
-    print(f"  items={len(items)} doc_id={args.doc_id} type={args.type}")
+    raw_path = _raw_path(args.doc_id, args.type)
+    print(f"Prompt -> {out_path}  ({len(items)} item)")
     print()
     print("Next.")
-    print(f"  1. Open {out_path}, copy all, paste to your chosen Judge LLM")
-    print(f"     (Claude or GPT, NOT Gemini, to keep generator and judge family")
-    print(f"     independent from the Gemini retrieval backbone).")
-    print(f"  2. Save the Judge output (must include the ---CLEANED--- separator) to")
-    print(f"     tmp/judge_{args.doc_id}{('__' + args.type) if args.type != 'factual' else ''}.txt.")
-    print(f"  3. Apply the cleaned items through the struct gate,")
-    type_flag = f" --type {args.type}" if args.type != "factual" else ""
-    suffix = ("__" + args.type) if args.type != "factual" else ""
-    print(f"     python scripts/gt/apply_validation.py --doc-id {args.doc_id}{type_flag} "
-          f"--judge-file tmp/judge_{args.doc_id}{suffix}.txt")
+    print(f"  1. Paste {out_path} to Judge LLM, paste full response over {raw_path}")
+    print(f"  2. python scripts/gt/apply_validation.py --doc-id {args.doc_id} --type {args.type}")
 
 
 if __name__ == "__main__":

@@ -80,10 +80,10 @@ python scripts/gt/prompt.py uu-1-2026 --type adversarial --questions 2
 
 Outputs.
 
-- Single doc, `tmp/gt_<doc_id>(__<type>).txt`
-- Long doc, `tmp/gt_<doc_id>(__<type>)_part01.txt`, `..._part02.txt`, `..._manifest.json`
-- Empty placeholder JSON at `data/ground_truth_raw/<CAT>/<doc_id>(__<type>).json`
-- Provenance sidecar at `data/ground_truth_raw/<CAT>/<doc_id>(__<type>).meta.json`
+- Single doc, `tmp/gt_<doc_id>__<type>.txt`
+- Long doc, `tmp/gt_<doc_id>__<type>_part01.txt`, `..._part02.txt`, `..._manifest.json`
+- Empty placeholder JSON at `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json`
+- Provenance sidecar at `data/ground_truth_raw/<CAT>/<doc_id>__<type>.meta.json`
 
 Notes.
 
@@ -99,18 +99,18 @@ Paste the generated prompt file into Claude or GPT (anything except the Gemini f
 
 Save the JSON array output to:
 
-- Single, `data/ground_truth_raw/<CAT>/<doc_id>(__<type>).json` (overwrite the placeholder).
-- Multipart, `data/ground_truth_parts/<CAT>/<doc_id>(__<type>)/part01.json`, `part02.json`, ...
+- Single, `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json` (overwrite the placeholder).
+- Multipart, `data/ground_truth_parts/<CAT>/<doc_id>__<type>/part01.json`, `part02.json`, ...
 
 Then update the sidecar field `annotator_model` with the model name and version.
 
 ## Step 3. Merge multipart parts (only if multipart)
 
 ```bash
-python scripts/gt/merge_parts.py <doc_id>
+python scripts/gt/merge_parts.py <doc_id> --type <type>
 ```
 
-Output, `data/ground_truth_raw/<CAT>/<doc_id>(__<type>).json`.
+Output, `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json`.
 
 ## Step 4. Build validation prompt (Layer 1 + Layer 2 + Judge prompt)
 
@@ -125,39 +125,42 @@ The script.
 1. Runs Layer 1 struct check from `collect.py`. Hard-gates if any structural error exists.
 2. Runs the per-type Layer 2 deterministic gate, paraphrase Jaccard for `paraphrased`, BM25 cascade rank for `adversarial`. Other types skip Layer 2. Hard-gates on any flag.
 3. Inlines items + leaf-node context for **every** anchor (both anchors for multihop, both docs for crossdoc) into the type-aware rules from `validate_prompt.txt`.
-4. Writes the assembled prompt to `tmp/validate_<doc_id>(__<type>).txt`.
+4. Writes the assembled prompt to `tmp/validate_<doc_id>__<type>.txt`.
 
 Pass `--skip-layer2` only for diagnostic reruns when you intentionally want to bypass the deterministic gate.
 
 ## Step 5. Run the Judge LLM
 
-Paste `tmp/validate_<doc_id>(__<type>).txt` into Claude or GPT (must differ from the Generator and must not be Gemini, cross-family judge per design v2).
+Paste `tmp/validate_<doc_id>__<type>.txt` into Claude or GPT (must differ from the Generator and must not be Gemini, cross-family judge per design v2).
 
-The Judge returns a validation summary, then the `---CLEANED---` separator, then a JSON array of cleaned items, then `---END---`.
+The Judge returns a validation summary, the `---CLEANED---` separator, the JSON array of cleaned items, then `---END---`.
 
-Save the full Judge response to `tmp/judge_<doc_id>(__<type>).txt`.
+Paste the **full Judge response** (framing, JSON, summary prose, all of it) directly over `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json`. Do not strip the framing, the gate handles that.
 
 ## Step 6. Apply Judge output through the gate
 
 ```bash
-python scripts/gt/apply_validation.py \
-    --doc-id uu-1-2026 \
-    --type multihop \
-    --judge-file tmp/judge_uu-1-2026__multihop.txt
+python scripts/gt/apply_validation.py --doc-id uu-1-2026 --type multihop
 ```
 
-The gate.
+The gate reads the dirty raw file, extracts the array after `---CLEANED---`, runs Layer 1 structural validation against `data/index_rincian`, backs up the dirty raw under `.bak/<doc_id>__<type>.<timestamp>.json`, then rewrites the raw file as pure JSON.
 
-1. Extracts the array after `---CLEANED---`.
-2. Runs Layer 1 structural validation against `data/index_rincian`.
-3. On pass, overwrites `data/ground_truth_raw/<CAT>/<doc_id>(__<type>).json` and saves the previous file under `.bak/<doc_id>(__<type>).<timestamp>.json`.
-4. On fail, prints errors and exits 1 without touching the raw file.
+Alternative input modes.
 
-Pass `--dry-run` to validate only. Pass `--stdin` if you prefer pipe input.
+```bash
+# Read from a separate file the Judge wrote to
+python scripts/gt/apply_validation.py --doc-id <id> --type <t> --judge-file tmp/judge_<id>.txt
+
+# Pipe via stdin
+python scripts/gt/apply_validation.py --doc-id <id> --type <t> --stdin < paste.txt
+
+# Validate only, do not write
+python scripts/gt/apply_validation.py --doc-id <id> --type <t> --dry-run
+```
+
+If validation fails the raw file is left untouched, fix the items in the raw file (or rerun the Judge) and try again.
 
 After applying, update sidecar field `judge_model`.
-
-Never overwrite the raw GT file by hand or via the Judge directly. Always go through `apply_validation.py` so the struct gate catches malformed JSON.
 
 ## Step 7. Author spot-check (Layer 4)
 
@@ -176,7 +179,7 @@ For each item the script prints query, every anchor (with its leaf text and navi
 - `s` skipped (recorded explicitly, not silent)
 - `q` quit (saves partial progress, resumable)
 
-Output, `data/gt_audit/<doc_id>(__<type>).json`.
+Output, `data/gt_audit/<doc_id>__<type>.json`.
 
 Aggregate report across all docs and types.
 
@@ -190,7 +193,7 @@ Output, `data/gt_audit/_summary.json`.
 ## Step 8. Collect into the merged GT
 
 ```bash
-python scripts/gt/collect.py --file data/ground_truth_raw/<CAT>/<doc_id>(__<type>).json
+python scripts/gt/collect.py --file data/ground_truth_raw/<CAT>/<doc_id>__<type>.json
 python scripts/gt/collect.py                    # process every raw file
 python scripts/gt/collect.py --check-only       # validate, do not write
 python scripts/gt/collect.py --stats            # show distribution stats
@@ -199,7 +202,7 @@ python scripts/gt/collect.py --stats            # show distribution stats
 Behavior.
 
 - Hard structural validation per item (required fields, anchor exists in `data/index_rincian`, per-type anchor count, `gold_anchor_node_ids` required for multi-anchor types, no within-batch duplicate anchors).
-- Items flagged `wrong` in the matching `data/gt_audit/<doc_id>(__<type>).json` are dropped.
+- Items flagged `wrong` in the matching `data/gt_audit/<doc_id>__<type>.json` are dropped.
 - Cross-batch deduplication of queries (case-insensitive) and anchor key `(doc_id, anchor_node_id, query_type)`. Anchor reuse across types is allowed by design (factual and paraphrased intentionally share anchors).
 - Output, `data/ground_truth.json` keyed by `q001`, `q002`, ...
 

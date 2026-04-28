@@ -6,10 +6,23 @@ same hard structural validation as collect.py, and only overwrites the raw GT
 file when the cleaned array passes. A backup of the previous raw file is kept
 under data/ground_truth_raw/<CAT>/.bak/.
 
+Three input modes, in order of friction.
+
+  default     Read directly from the raw GT file. Paste the entire Judge
+              response (including ---CLEANED--- framing and any prose summary)
+              over the raw file, then run with just --doc-id (and --type if
+              not factual). The script extracts the cleaned array and rewrites
+              the raw file as pure JSON. If the raw file is already pure JSON
+              (no framing), it is validated as-is.
+  --judge-file  Read from a separate file the Judge wrote to.
+  --stdin     Read from a pipe.
+
 Usage:
+    python scripts/gt/apply_validation.py --doc-id uu-13-2025
+    python scripts/gt/apply_validation.py --doc-id uu-13-2025 --type multihop
     python scripts/gt/apply_validation.py --doc-id perma-2-2022 --judge-file tmp/judge_perma-2-2022.txt
     python scripts/gt/apply_validation.py --doc-id perma-2-2022 --stdin < paste.txt
-    python scripts/gt/apply_validation.py --doc-id perma-2-2022 --judge-file tmp/x.txt --dry-run
+    python scripts/gt/apply_validation.py --doc-id perma-2-2022 --dry-run
 """
 
 import argparse
@@ -34,7 +47,7 @@ SEPARATOR = "---CLEANED---"
 
 
 def _basename(doc_id: str, query_type: str) -> str:
-    return doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
+    return f"{doc_id}__{query_type}"
 
 
 def raw_path_for(doc_id: str, query_type: str = "factual") -> Path:
@@ -49,9 +62,20 @@ def backup_path_for(doc_id: str, query_type: str = "factual") -> Path:
 
 
 def extract_cleaned_array(text: str) -> list[dict]:
-    """Pull the JSON array that follows the `---CLEANED---` separator."""
+    """Pull the JSON array that follows the `---CLEANED---` separator.
+
+    If the text has no separator but is already a bare JSON array, return it
+    as-is. This makes the function idempotent so re-applying an
+    already-cleaned raw file is a no-op.
+    """
     idx = text.find(SEPARATOR)
     if idx < 0:
+        stripped = text.strip()
+        if stripped.startswith("["):
+            data = json.loads(stripped)
+            if not isinstance(data, list):
+                raise SystemExit("Input parsed but is not a JSON array")
+            return data
         raise SystemExit(f"Judge output is missing the '{SEPARATOR}' separator")
 
     tail = text[idx + len(SEPARATOR):].strip()
@@ -147,7 +171,7 @@ def main() -> None:
     ap.add_argument("--type", "-t", type=str, default="factual",
                     choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
                     help="Query type to apply (default: factual)")
-    src = ap.add_mutually_exclusive_group(required=True)
+    src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--judge-file", type=str, default=None,
                      help="Path to a text file containing the Judge LLM output")
     src.add_argument("--stdin", action="store_true",
@@ -158,8 +182,13 @@ def main() -> None:
 
     if args.stdin:
         text = sys.stdin.read()
-    else:
+    elif args.judge_file:
         text = Path(args.judge_file).read_text(encoding="utf-8")
+    else:
+        raw_path = raw_path_for(args.doc_id, args.type)
+        if not raw_path.exists():
+            raise SystemExit(f"raw GT not found, {raw_path}")
+        text = raw_path.read_text(encoding="utf-8")
 
     cleaned = extract_cleaned_array(text)
     apply_cleaned(args.doc_id, cleaned, dry_run=args.dry_run, query_type=args.type)

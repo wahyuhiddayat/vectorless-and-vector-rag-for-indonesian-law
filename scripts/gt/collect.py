@@ -308,7 +308,7 @@ def load_audit_dropped_anchors(doc_id: str, query_type: str = "factual") -> set[
     data/gt_audit/<doc_id>__<type>.json for other types. Returns an empty set
     when no log exists so audit logging stays optional.
     """
-    name = doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
+    name = f"{doc_id}__{query_type}"
     audit_path = AUDIT_DIR / f"{name}.json"
     if not audit_path.exists():
         return set()
