@@ -34,19 +34,23 @@ META_SUFFIX = ".meta.json"
 VALID_VERDICTS = {"c": "correct", "w": "wrong", "b": "borderline", "s": "skipped"}
 
 
-def raw_path_for(doc_id: str) -> Path:
-    """Return the path to the raw GT file for a doc_id."""
-    return RAW_DIR / doc_category(doc_id) / f"{doc_id}.json"
+def _basename(doc_id: str, query_type: str) -> str:
+    return doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
 
 
-def audit_path_for(doc_id: str) -> Path:
-    """Return the path to the audit log for a doc_id."""
-    return AUDIT_DIR / f"{doc_id}.json"
+def raw_path_for(doc_id: str, query_type: str = "factual") -> Path:
+    """Return the path to the raw GT file for a (doc_id, query_type)."""
+    return RAW_DIR / doc_category(doc_id) / f"{_basename(doc_id, query_type)}.json"
 
 
-def meta_path_for(doc_id: str) -> Path:
-    """Return the path to the provenance meta sidecar for a doc_id."""
-    return RAW_DIR / doc_category(doc_id) / f"{doc_id}{META_SUFFIX}"
+def audit_path_for(doc_id: str, query_type: str = "factual") -> Path:
+    """Return the path to the audit log for a (doc_id, query_type)."""
+    return AUDIT_DIR / f"{_basename(doc_id, query_type)}.json"
+
+
+def meta_path_for(doc_id: str, query_type: str = "factual") -> Path:
+    """Return the path to the provenance meta sidecar for a (doc_id, query_type)."""
+    return RAW_DIR / doc_category(doc_id) / f"{_basename(doc_id, query_type)}{META_SUFFIX}"
 
 
 def load_items(path: Path) -> list[dict]:
@@ -58,9 +62,9 @@ def load_items(path: Path) -> list[dict]:
     return data
 
 
-def load_meta(doc_id: str) -> dict:
+def load_meta(doc_id: str, query_type: str = "factual") -> dict:
     """Load the provenance sidecar if it exists, else return defaults."""
-    path = meta_path_for(doc_id)
+    path = meta_path_for(doc_id, query_type)
     if not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
@@ -80,9 +84,23 @@ def prompt_verdict(query_label: str) -> tuple[str, str]:
         print("  invalid, try again")
 
 
-def review_doc(doc_id: str, resume: bool) -> dict:
-    """Run the interactive review loop for one doc and return the audit dict."""
-    raw_path = raw_path_for(doc_id)
+def _anchor_pairs(item: dict) -> list[tuple[str, str]]:
+    """Return list of (doc_id, anchor_node_id) covering every anchor on an item."""
+    anchor_ids = item.get("gold_anchor_node_ids")
+    doc_ids = item.get("gold_doc_ids")
+    if isinstance(anchor_ids, list) and anchor_ids:
+        if isinstance(doc_ids, list) and len(doc_ids) == len(anchor_ids):
+            return list(zip(doc_ids, anchor_ids))
+        primary = item.get("gold_doc_id", "")
+        return [(primary, aid) for aid in anchor_ids]
+    nid = item.get("gold_anchor_node_id") or item.get("gold_node_id")
+    did = item.get("gold_doc_id", "")
+    return [(did, nid)] if nid else []
+
+
+def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
+    """Run the interactive review loop for one (doc_id, query_type) and return the audit dict."""
+    raw_path = raw_path_for(doc_id, query_type)
     if not raw_path.exists():
         raise SystemExit(f"raw GT not found, {raw_path}")
 
@@ -90,11 +108,17 @@ def review_doc(doc_id: str, resume: bool) -> dict:
     if not items:
         raise SystemExit(f"raw GT is empty, {raw_path}")
 
-    leaf_map = get_leaf_meta_map(doc_id)
-    if not leaf_map:
+    leaf_map_cache: dict[str, dict[str, dict]] = {}
+
+    def _leaf_map(did: str) -> dict[str, dict]:
+        if did not in leaf_map_cache:
+            leaf_map_cache[did] = get_leaf_meta_map(did)
+        return leaf_map_cache[did]
+
+    if not _leaf_map(doc_id):
         raise SystemExit(f"doc {doc_id} not found in data/index_rincian, cannot resolve anchor text")
 
-    audit_path = audit_path_for(doc_id)
+    audit_path = audit_path_for(doc_id, query_type)
     existing: dict = {}
     if audit_path.exists() and resume:
         with open(audit_path, encoding="utf-8") as f:
@@ -102,9 +126,9 @@ def review_doc(doc_id: str, resume: bool) -> dict:
 
     by_qid = {entry["qid"]: entry for entry in existing.get("items", [])}
 
-    meta = load_meta(doc_id)
+    meta = load_meta(doc_id, query_type)
     print()
-    print(f"Doc, {doc_id}")
+    print(f"Doc, {doc_id}  type={query_type}")
     print(f"Items, {len(items)}")
     if meta:
         print(f"Annotator model, {meta.get('annotator_model', '<unknown>')}")
@@ -113,26 +137,33 @@ def review_doc(doc_id: str, resume: bool) -> dict:
 
     results: list[dict] = []
     for idx, item in enumerate(items, start=1):
-        anchor_id = item.get("gold_anchor_node_id") or item.get("gold_node_id") or "<missing>"
-        leaf = leaf_map.get(anchor_id, {})
-        text = (leaf.get("text") or "").strip()
-        if len(text) > 600:
-            text = text[:600].rstrip() + " ..."
-        nav = leaf.get("navigation_path", "<unknown>")
-
         if idx in by_qid and resume:
             prev = by_qid[idx]
             print(f"[{idx}/{len(items)}] already reviewed as {prev['verdict']}, kept")
             results.append(prev)
             continue
 
-        print(f"[{idx}/{len(items)}] {item.get('query_style', '?')}, {item.get('difficulty', '?')}, {item.get('reference_mode', '?')}")
+        anchors = _anchor_pairs(item)
+        primary_anchor = anchors[0][1] if anchors else "<missing>"
+
+        print(f"[{idx}/{len(items)}] type={item.get('query_type', '?')}, "
+              f"{item.get('query_style', '?')}, {item.get('difficulty', '?')}, "
+              f"{item.get('reference_mode', '?')}")
         print(f"  Query  , {item.get('query', '')}")
-        print(f"  Anchor , {anchor_id}")
-        print(f"  Path   , {nav}")
+        for a_idx, (did, nid) in enumerate(anchors, start=1):
+            leaf = _leaf_map(did).get(nid, {})
+            text = (leaf.get("text") or "").strip()
+            if len(text) > 600:
+                text = text[:600].rstrip() + " ..."
+            nav = leaf.get("navigation_path", "<unknown>")
+            label = f"Anchor {a_idx}" if len(anchors) > 1 else "Anchor "
+            print(f"  {label}, {did} :: {nid}")
+            print(f"  Path   , {nav}")
+            print(f"  Gold   , {text or '<empty>'}")
+        if item.get("distractor_node_id"):
+            print(f"  Distractor, {item['distractor_node_id']}")
         if item.get("answer_hint"):
             print(f"  Hint   , {item['answer_hint']}")
-        print(f"  Gold   , {text or '<empty>'}")
         try:
             verdict, notes = prompt_verdict(f"[{idx}/{len(items)}]")
         except KeyboardInterrupt:
@@ -140,7 +171,8 @@ def review_doc(doc_id: str, resume: bool) -> dict:
             break
         results.append({
             "qid": idx,
-            "anchor_node_id": anchor_id,
+            "anchor_node_id": primary_anchor,
+            "anchor_node_ids": [nid for _, nid in anchors],
             "verdict": verdict,
             "notes": notes,
         })
@@ -148,6 +180,7 @@ def review_doc(doc_id: str, resume: bool) -> dict:
 
     audit = {
         "doc_id": doc_id,
+        "query_type": query_type,
         "category": doc_category(doc_id),
         "reviewed_at": dt.datetime.now().isoformat(timespec="seconds"),
         "annotator_model": meta.get("annotator_model"),
@@ -246,6 +279,9 @@ def main() -> None:
     """CLI entrypoint."""
     ap = argparse.ArgumentParser(description="Interactive per-doc author verification logger.")
     ap.add_argument("doc_id", nargs="?", help="Document ID, e.g. perma-2-2022")
+    ap.add_argument("--type", "-t", type=str, default="factual",
+                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    help="Query type to review (default factual)")
     ap.add_argument("--report", action="store_true", help="Aggregate audit logs into _summary.json")
     ap.add_argument("--json", action="store_true", help="Emit aggregate report as JSON")
     ap.add_argument("--no-resume", action="store_true",
@@ -259,7 +295,7 @@ def main() -> None:
     if not args.doc_id:
         ap.error("doc_id is required unless --report is passed")
 
-    review_doc(args.doc_id, resume=not args.no_resume)
+    review_doc(args.doc_id, query_type=args.type, resume=not args.no_resume)
 
 
 if __name__ == "__main__":

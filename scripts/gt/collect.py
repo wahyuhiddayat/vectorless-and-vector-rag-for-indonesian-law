@@ -11,7 +11,7 @@ Required fields:
   gold_anchor_granularity, gold_anchor_node_id
 
 Semantic checks (cross-ref anchors, referential queries, multi-hop) are
-delegated to the LLM judge step — see scripts/gt/build_validate.py.
+delegated to the LLM judge step, see scripts/gt/build_validate.py.
 
 Output:
   data/ground_truth.json - final merged dataset (keyed by q001, q002, ...)
@@ -161,6 +161,18 @@ def doc_id_from_path(path: Path) -> str:
     return stem
 
 
+def query_type_from_path(path: Path) -> str:
+    """Extract the query type from a raw GT filename stem.
+
+    Files named `<doc_id>.json` map to `factual`. Files named
+    `<doc_id>__<type>.json` map to `<type>`.
+    """
+    stem = path.stem
+    if "__" in stem:
+        return stem.split("__", 1)[1]
+    return "factual"
+
+
 def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
     """Run hard structural validation on a raw GT file.
 
@@ -233,8 +245,9 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
                 f"got '{item.get('reference_mode')}'"
             )
 
-        # query_type is optional for backward compat. Legacy files default to 'factual'.
-        # When present, validate against the allowed set and the per-type anchor count.
+        # query_type is optional for legacy single-type files (default factual). When
+        # present we validate against the allowed set and per-type anchor count.
+        # gold_anchor_node_ids is required for multi-anchor types.
         query_type = item.get("query_type", "factual")
         if query_type not in VALID_QUERY_TYPES:
             item_errors.append(
@@ -242,7 +255,12 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
             )
         else:
             anchor_ids = item.get("gold_anchor_node_ids")
-            if anchor_ids is not None:
+            if query_type in MULTI_ANCHOR_TYPES and anchor_ids is None:
+                item_errors.append(
+                    f"query_type '{query_type}' requires field gold_anchor_node_ids "
+                    f"(list of 2 anchor node ids)"
+                )
+            elif anchor_ids is not None:
                 if not isinstance(anchor_ids, list) or not all(isinstance(a, str) for a in anchor_ids):
                     item_errors.append("gold_anchor_node_ids must be a list of strings when present")
                 elif query_type in SINGLE_ANCHOR_TYPES and len(anchor_ids) != 1:
@@ -263,6 +281,18 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
                                     f"gold_anchor_node_ids entry '{aid}' not found as leaf in this doc"
                                 )
 
+            # gold_doc_ids must mirror the anchor list for multi-doc types.
+            doc_ids_field = item.get("gold_doc_ids")
+            if query_type == "crossdoc":
+                if not isinstance(doc_ids_field, list) or len(doc_ids_field) != 2:
+                    item_errors.append(
+                        "query_type 'crossdoc' requires gold_doc_ids list of 2 doc ids"
+                    )
+                elif item.get("gold_doc_id") not in doc_ids_field:
+                    item_errors.append(
+                        "gold_doc_id must appear in gold_doc_ids for crossdoc"
+                    )
+
         if item_errors:
             hard_errors.append(f"  Item {i} ({label}): {'; '.join(item_errors)}")
         else:
@@ -271,14 +301,15 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
     return valid_items, hard_errors
 
 
-def load_audit_dropped_anchors(doc_id: str) -> set[str]:
-    """Return anchor_node_ids that the author flagged 'wrong' for a doc.
+def load_audit_dropped_anchors(doc_id: str, query_type: str = "factual") -> set[str]:
+    """Return primary anchor_node_ids the author flagged 'wrong' for (doc_id, query_type).
 
-    The set comes from data/gt_audit/<doc_id>.json, which is produced by the
-    interactive log_review.py pass. Returns an empty set when no log exists,
-    so audit logging stays optional.
+    Reads data/gt_audit/<doc_id>.json for factual or
+    data/gt_audit/<doc_id>__<type>.json for other types. Returns an empty set
+    when no log exists so audit logging stays optional.
     """
-    audit_path = AUDIT_DIR / f"{doc_id}.json"
+    name = doc_id if query_type == "factual" else f"{doc_id}__{query_type}"
+    audit_path = AUDIT_DIR / f"{name}.json"
     if not audit_path.exists():
         return set()
     with open(audit_path, encoding="utf-8") as f:
@@ -453,8 +484,15 @@ def main() -> None:
     existing_gt = load_existing_gt()
     existing_queries = {item["query"].lower() for item in existing_gt.values()}
     existing_doc_ids = {item["gold_doc_id"] for item in existing_gt.values()}
-    existing_anchors: dict[tuple[str, str], str] = {
-        (item["gold_doc_id"], item.get("gold_anchor_node_id", item.get("gold_node_id", ""))): qid
+    # Anchor dedup keys on (doc_id, anchor_node_id, query_type) so v2 designs that
+    # legitimately reuse an anchor across types (factual + paraphrased share the
+    # same leaf by design) do not silently drop the second item.
+    existing_anchors: dict[tuple[str, str, str], str] = {
+        (
+            item["gold_doc_id"],
+            item.get("gold_anchor_node_id", item.get("gold_node_id", "")),
+            item.get("query_type", "factual"),
+        ): qid
         for qid, item in existing_gt.items()
     }
 
@@ -467,9 +505,10 @@ def main() -> None:
     audit_drops_total = 0
     for raw_path in raw_files:
         doc_id = doc_id_from_path(raw_path)
+        query_type_for_path = query_type_from_path(raw_path)
         valid_items, hard_errors = validate_raw_file(raw_path)
 
-        dropped_anchors = load_audit_dropped_anchors(doc_id)
+        dropped_anchors = load_audit_dropped_anchors(doc_id, query_type_for_path)
         if dropped_anchors:
             kept = [it for it in valid_items if it.get("gold_anchor_node_id") not in dropped_anchors]
             n_dropped = len(valid_items) - len(kept)
@@ -482,12 +521,16 @@ def main() -> None:
         dup_errors: list[str] = []
         for item in valid_items:
             q_lower = item["query"].lower()
-            anchor_key = (item.get("gold_doc_id", ""), item.get("gold_anchor_node_id", ""))
+            anchor_key = (
+                item.get("gold_doc_id", ""),
+                item.get("gold_anchor_node_id", ""),
+                item.get("query_type", "factual"),
+            )
             if q_lower in existing_queries:
                 dup_errors.append(f"  Duplicate query: '{item['query'][:60]}'")
             elif anchor_key[1] and anchor_key in existing_anchors:
                 dup_errors.append(
-                    f"  Duplicate anchor ({anchor_key[0]}, {anchor_key[1]}) "
+                    f"  Duplicate anchor ({anchor_key[0]}, {anchor_key[1]}, type={anchor_key[2]}) "
                     f"already in GT as {existing_anchors[anchor_key]}"
                 )
             else:
@@ -499,7 +542,7 @@ def main() -> None:
         all_errors_for_file = hard_errors + dup_errors
 
         if already_in_gt and not hard_errors and not accepted:
-            print(f"  → {doc_id} [skip — sudah ada di GT]")
+            print(f"  -> {doc_id} [skip, sudah ada di GT]")
         else:
             status = "✓" if not all_errors_for_file else "✗"
             already = " [sudah ada di GT]" if already_in_gt else ""
@@ -516,11 +559,11 @@ def main() -> None:
     print(f"\nTotal: {len(all_valid)} pertanyaan valid, {total_hard_errors} hard errors, {audit_drops_total} dropped via audit")
 
     if total_hard_errors > 0 and not args.force_merge:
-        print("\nAda hard errors — perbaiki sebelum merge atau gunakan --force-merge.")
+        print("\nAda hard errors. Perbaiki sebelum merge atau gunakan --force-merge.")
         sys.exit(1)
 
     if total_hard_errors > 0 and args.force_merge:
-        print("\n[force-merge aktif — item ber-error tidak akan di-merge]")
+        print("\n[force-merge aktif, item ber-error tidak akan di-merge]")
 
     if args.check_only:
         print("\n[check-only] Tidak menulis output.")

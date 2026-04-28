@@ -182,10 +182,10 @@ diatur dalam Pasal 81 ayat (7)?"
 2. colloquial - bahasa sehari-hari orang awam yang tidak berlatar hukum. Boleh \
 informal, boleh pakai singkatan, boleh colloquial Indonesian.
    DILARANG menggunakan kata atau frasa yang sama persis dengan teks yang akan kamu \
-jadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda — bayangkan \
+jadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda. Bayangkan \
 seseorang yang belum membaca dokumen ini mencari informasinya, mereka tidak tahu \
 istilah teknisnya. Jika istilah teknis spesifik benar-benar tidak ada sinonimnya, \
-boleh disebut — tapi JANGAN menyalin struktur kalimat dari teks node.
+boleh disebut, tapi JANGAN menyalin struktur kalimat dari teks node.
    TETAPI tetap self-contained dan uniquely answerable by ONE leaf node.
    `colloquial` TIDAK berarti conversational, underspecified, atau referential.
    Jika query colloquial masih bisa cocok ke lebih dari satu leaf node dalam dokumen \
@@ -216,8 +216,8 @@ sama yang bisa menjawab query secara plausibel tapi SALAH. Jika tidak ada siblin
 yang bisa tertukar, gunakan "medium" saja.
    CATATAN: Pertanyaan hard tetap harus dijawab oleh SATU leaf node anchor.
    Contoh VALID: Node 0005_a2_h1 vs 0005_a2_h2 sama-sama tentang persyaratan peserta \
-dengan kondisi berbeda — query spesifik ke salah satunya.
-   Contoh INVALID: "Hard" hanya karena jawabannya panjang atau banyak item — itu medium.
+dengan kondisi berbeda, query spesifik ke salah satunya.
+   Contoh INVALID: "Hard" hanya karena jawabannya panjang atau banyak item, itu medium.
 
 === FORMAT OUTPUT ===
 
@@ -410,7 +410,7 @@ def compute_adaptive_n(leaf_count: int) -> int:
     """
     Compute the adaptive question count based on number of rincian-index leaf nodes.
 
-    Returns 0 if leaf_count < MIN_LEAF_FOR_GT — doc too small for meaningful GT.
+    Returns 0 if leaf_count < MIN_LEAF_FOR_GT, doc too small for meaningful GT.
     Otherwise returns min(leaf_count, 5): cap at 5 keeps annotation diverse;
     n <= leaf_count guarantees no forced anchor reuse.
     """
@@ -766,7 +766,7 @@ def main() -> None:
         print(f"doc_id     : {doc['doc_id']}")
         print(f"Leaf nodes : {len(leaf_nodes)} body leaf nodes (setelah filter preamble)")
         if len(leaf_nodes) == 0:
-            print(f"\n[SKIP] Tidak ada body leaf nodes — kemungkinan hanya preamble.")
+            print(f"\n[SKIP] Tidak ada body leaf nodes, kemungkinan hanya preamble.")
         else:
             print(f"\n[SKIP] Hanya {len(leaf_nodes)} leaf nodes (< {MIN_LEAF_FOR_GT}); "
                   f"dokumen terlalu kecil untuk dijadikan GT.")
