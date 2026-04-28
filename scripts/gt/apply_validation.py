@@ -127,10 +127,49 @@ def extract_cleaned_array(text: str) -> list[dict]:
     return data
 
 
+def _normalize_schema(items: list[dict]) -> tuple[list[dict], list[str]]:
+    """Re-assert fixed schema fields so Judge 'corrections' do not break Layer 1.
+
+    The Judge sometimes rewrites convention fields (e.g. changes
+    `gold_anchor_granularity` from "rincian" to "pasal" because the leaf
+    happens to be a pasal-level node). This pass restores the canonical
+    values and back-fills the singular/jamak mirror fields so the array
+    survives the struct gate. Returns (items, log_lines).
+    """
+    log: list[str] = []
+    for i, item in enumerate(items, 1):
+        if not isinstance(item, dict):
+            continue
+        if item.get("gold_anchor_granularity") != "rincian":
+            log.append(f"item {i}, gold_anchor_granularity {item.get('gold_anchor_granularity')!r} -> 'rincian'")
+            item["gold_anchor_granularity"] = "rincian"
+        anchor_id = item.get("gold_anchor_node_id") or item.get("gold_node_id")
+        if anchor_id and item.get("gold_node_id") != anchor_id:
+            item["gold_node_id"] = anchor_id
+        if anchor_id and not item.get("gold_anchor_node_id"):
+            item["gold_anchor_node_id"] = anchor_id
+        anchors = item.get("gold_anchor_node_ids")
+        if (not isinstance(anchors, list) or not anchors) and anchor_id:
+            item["gold_anchor_node_ids"] = [anchor_id]
+        primary_doc = item.get("gold_doc_id")
+        doc_ids = item.get("gold_doc_ids")
+        if (not isinstance(doc_ids, list) or not doc_ids) and primary_doc:
+            item["gold_doc_ids"] = [primary_doc]
+        elif isinstance(doc_ids, list) and doc_ids and not primary_doc:
+            item["gold_doc_id"] = doc_ids[0]
+    return items, log
+
+
 def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool, query_type: str = "factual") -> None:
     """Validate the cleaned array and overwrite the raw GT file on success."""
     raw_path = raw_path_for(doc_id, query_type)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cleaned, fixups = _normalize_schema(cleaned)
+    if fixups:
+        print("Schema normalize,")
+        for line in fixups:
+            print(f"  {line}")
 
     fd, tmp_str = tempfile.mkstemp(prefix=f"{_basename(doc_id, query_type)}-", suffix=".json")
     os.close(fd)

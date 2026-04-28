@@ -225,6 +225,55 @@ python scripts/gt/load_testset.py --query "<keyword>"
 
 `--stats` prints reference_mode and per-category cross-tab so you can spot starved sub-tasks early.
 
+## Optional: auto-annotate via OpenAI API (Step 1 + 2)
+
+When the manual paste-paste cycle for the annotator step gets tedious,
+`auto_annotate.py` calls the OpenAI Chat Completions API for every (doc, type)
+in the allocation. The annotator side is automated, the **Judge side stays
+manual via Copilot Sonnet 4.6** so the cross-family rule from design v2 holds.
+
+Setup once,
+
+```bash
+echo "OPENAI_API_KEY=sk-..." >> .env
+pip install 'openai>=1.50'
+```
+
+Usage,
+
+```bash
+# Preview cost only, do not call API
+python scripts/gt/auto_annotate.py --category UU --dry-run
+
+# Real run
+python scripts/gt/auto_annotate.py --category UU
+
+# Single item
+python scripts/gt/auto_annotate.py --doc-id uu-13-2025 --type paraphrased
+
+# Pin to a snapshot
+python scripts/gt/auto_annotate.py --category UU --model gpt-5.5-2026-04-23
+
+# Raise the safety cap
+python scripts/gt/auto_annotate.py --category UU --max-cost 5
+```
+
+Defaults, model `gpt-5.5`, cost cap `$1.00`. Items already annotated are
+skipped unless `--force` is passed. Multipart docs (too long for single
+prompt) are skipped with a clear log, run them via `prompt.py` manually.
+
+After auto-annotate,
+
+```bash
+python scripts/gt/run_allocation.py --build --category UU
+# Paste each tmp/validate_*.txt to Copilot (Sonnet 4.6, cross-family from gpt-5.5)
+# Paste full Judge response over the matching raw GT file
+python scripts/gt/run_allocation.py --apply --category UU
+# log_review per (doc, type), then collect.py + finalize.py
+```
+
+Cost estimate for pilot UU 25 items, around `$0.40-1.00` with caching.
+
 ## Batch orchestrator (Step 4 + Step 6 over the whole allocation)
 
 When the Judge runs in your IDE (Copilot, Codex, Claude Code), it can process
