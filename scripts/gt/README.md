@@ -222,6 +222,32 @@ python scripts/gt/load_testset.py --query "<keyword>"
 
 `--stats` prints reference_mode and per-category cross-tab so you can spot starved sub-tasks early.
 
+## Batch orchestrator (Step 4 + Step 6 over the whole allocation)
+
+When the Judge runs in your IDE (Copilot, Codex, Claude Code), it can process
+many prompt files in one workspace pass. `run_allocation.py` walks
+`gt_allocation.json` and runs the build phase then the apply phase in bulk.
+
+```bash
+# State matrix for every (doc, type) in the plan
+python scripts/gt/run_allocation.py
+python scripts/gt/run_allocation.py --category UU
+
+# Build all Judge prompts at once (Layer 1 + Layer 2 + emit prompt)
+python scripts/gt/run_allocation.py --build --category UU
+
+# (manual) Tell the IDE Judge to process every tmp/validate_*.txt and write
+#         the cleaned output to tmp/judge_<same-name>.txt next to it.
+
+# Apply every tmp/judge_*.txt through the struct gate
+python scripts/gt/run_allocation.py --apply --category UU
+```
+
+Filter by `--type <factual|paraphrased|multihop|crossdoc|adversarial>` to scope
+either phase. Both phases continue past per-item failures and report counts at
+the end. State is derived from filesystem, so the orchestrator is safely
+re-runnable.
+
 ## Files in this directory
 
 | File | Role |
@@ -239,6 +265,7 @@ python scripts/gt/load_testset.py --query "<keyword>"
 | `log_review.py` | Author spot-check logger (Step 7) |
 | `collect.py` | Struct-validate + merge (Step 8) |
 | `finalize.py` | Roll-up to 3 granularities (Step 9) |
+| `run_allocation.py` | Batch orchestrator over Step 4 + Step 6 |
 | `load_testset.py` | Inspect the final pkl |
 | `build_catalog.py` | Filter index catalogs to GT-only doc set |
 
