@@ -475,7 +475,11 @@ def main() -> None:
             print(f"Raw directory not found: {RAW_DIR}")
             print("Simpan output ChatGPT ke data/ground_truth_raw/<KATEGORI>/<doc_id>.json")
             return
-        raw_files = sorted(p for p in RAW_DIR.rglob("*.json") if not p.name.endswith(".meta.json"))
+        raw_files = sorted(
+            p for p in RAW_DIR.rglob("*.json")
+            if not p.name.endswith(".meta.json")
+            and ".bak" not in p.parts
+        )
 
     if not raw_files:
         print(f"Tidak ada file di {RAW_DIR}")

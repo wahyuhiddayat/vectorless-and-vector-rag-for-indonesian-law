@@ -65,36 +65,55 @@ def _validate_path(doc_id: str, query_type: str) -> Path:
     return TMP_DIR / f"validate_{_basename(doc_id, query_type)}.txt"
 
 
-def _judge_path(doc_id: str, query_type: str) -> Path:
-    return TMP_DIR / f"judge_{_basename(doc_id, query_type)}.txt"
+def _read_raw_text(raw_path: Path) -> str | None:
+    """Return raw file content as text, or None if missing."""
+    if not raw_path.exists():
+        return None
+    return raw_path.read_text(encoding="utf-8")
 
 
 def _has_real_items(raw_path: Path) -> bool:
     """True when the raw GT file is a non-empty JSON array (not the placeholder)."""
-    if not raw_path.exists():
+    text = _read_raw_text(raw_path)
+    if text is None:
         return False
     try:
-        with open(raw_path, encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(text)
     except json.JSONDecodeError:
         return False
     return isinstance(data, list) and len(data) > 0
 
 
 def _state(doc_id: str, query_type: str) -> str:
-    """Derive pipeline state for one (doc_id, query_type) from filesystem mtimes."""
+    """Derive pipeline state for one (doc_id, query_type) from raw content + tmp.
+
+    States.
+      not-annotated  raw missing or empty placeholder
+      annotated      raw is bare JSON array, no validate prompt yet
+      built          raw is bare JSON array AND tmp/validate_*.txt exists
+      judged         raw contains the ---CLEANED--- separator (Judge response
+                     pasted, awaiting apply gate)
+      applied        raw is bare JSON array AND tmp/validate_*.txt exists
+                     AND raw mtime > validate mtime (apply ran after build)
+    """
     raw = _raw_path(doc_id, query_type)
-    if not _has_real_items(raw):
+    text = _read_raw_text(raw)
+    if text is None:
+        return "not-annotated"
+    if "---CLEANED---" in text:
+        return "judged"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return "not-annotated"
+    if not isinstance(data, list) or not data:
         return "not-annotated"
     val = _validate_path(doc_id, query_type)
-    judge = _judge_path(doc_id, query_type)
-    if judge.exists():
-        if raw.stat().st_mtime > judge.stat().st_mtime:
-            return "applied"
-        return "judged"
-    if val.exists():
-        return "built"
-    return "annotated"
+    if not val.exists():
+        return "annotated"
+    if raw.stat().st_mtime > val.stat().st_mtime:
+        return "applied"
+    return "built"
 
 
 def iter_plan(allocation: dict, category: str | None, query_type: str | None):
@@ -158,20 +177,32 @@ def cmd_build(allocation: dict, category: str | None, query_type: str | None,
 
     print(f"\nBuilt {n_built}, skipped {n_skipped}, failed {n_failed}")
     if n_built:
-        print("Next, ask your IDE Judge to process every tmp/validate_*.txt and write the")
-        print("cleaned output to tmp/judge_<same-name>.txt, then re-run with --apply.")
+        print()
+        print("Next.")
+        print("  1. Ask the IDE Judge to process each tmp/validate_*.txt and paste the")
+        print("     full response (with ---CLEANED--- framing) over the matching raw GT file.")
+        print("  2. python scripts/gt/run_allocation.py --apply --category <cat>")
 
 
 def cmd_apply(allocation: dict, category: str | None, query_type: str | None) -> None:
-    """Apply each tmp/judge_*.txt for items in the plan through the struct gate."""
-    n_applied = n_missing = n_failed = 0
+    """Apply each Judge response (from raw file) in the plan through the struct gate.
+
+    Reads the raw GT file directly. The Judge is expected to have pasted its
+    full response (with ---CLEANED--- framing) over the raw file. Items where
+    the raw is still bare JSON (no framing) are treated as already-applied
+    when a tmp/validate prompt exists, otherwise skipped.
+    """
+    n_applied = n_skipped = n_failed = 0
     for cat, doc_id, qt, _ in iter_plan(allocation, category, query_type):
-        judge = _judge_path(doc_id, qt)
-        if not judge.exists():
-            n_missing += 1
+        st = _state(doc_id, qt)
+        if st in ("not-annotated", "annotated", "built", "applied"):
+            n_skipped += 1
+            print(f"  skip  {doc_id}  type={qt}  (state={st})")
             continue
+        # state == "judged": raw contains ---CLEANED---
+        raw = _raw_path(doc_id, qt)
         try:
-            text = judge.read_text(encoding="utf-8")
+            text = raw.read_text(encoding="utf-8")
             cleaned = extract_cleaned_array(text)
             apply_cleaned(doc_id, cleaned, dry_run=False, query_type=qt)
             target = raw_path_for_apply(doc_id, qt)
@@ -184,7 +215,13 @@ def cmd_apply(allocation: dict, category: str | None, query_type: str | None) ->
             print(f"  FAIL  {doc_id}  type={qt}  ({type(e).__name__}, {e})")
             n_failed += 1
 
-    print(f"\nApplied {n_applied}, missing judge file {n_missing}, failed {n_failed}")
+    print(f"\nApplied {n_applied}, skipped {n_skipped}, failed {n_failed}")
+    if n_applied:
+        print()
+        print("Next.")
+        print("  1. Run author spot-check per (doc, type),")
+        print("     python scripts/gt/log_review.py <doc> --type <type>")
+        print("  2. After all items reviewed, python scripts/gt/collect.py && python scripts/gt/finalize.py")
 
 
 def main() -> None:

@@ -239,17 +239,31 @@ python scripts/gt/run_allocation.py --category UU
 # Build all Judge prompts at once (Layer 1 + Layer 2 + emit prompt)
 python scripts/gt/run_allocation.py --build --category UU
 
-# (manual) Tell the IDE Judge to process every tmp/validate_*.txt and write
-#         the cleaned output to tmp/judge_<same-name>.txt next to it.
+# (manual) Tell the IDE Judge to process every tmp/validate_*.txt and paste
+#         the full response (with ---CLEANED--- framing) over the matching
+#         raw GT file in data/ground_truth_raw/<CAT>/<doc>__<type>.json.
 
-# Apply every tmp/judge_*.txt through the struct gate
+# Apply every Judge response through the struct gate
 python scripts/gt/run_allocation.py --apply --category UU
 ```
 
 Filter by `--type <factual|paraphrased|multihop|crossdoc|adversarial>` to scope
 either phase. Both phases continue past per-item failures and report counts at
-the end. State is derived from filesystem, so the orchestrator is safely
-re-runnable.
+the end.
+
+State derivation. The orchestrator infers each (doc, type) state from the raw
+file content plus tmp/validate mtime:
+
+| State | Meaning |
+|---|---|
+| `not-annotated` | raw missing or empty placeholder |
+| `annotated` | raw is bare JSON, build_validate not run yet |
+| `built` | raw is bare JSON AND tmp/validate_*.txt exists |
+| `judged` | raw contains `---CLEANED---` (Judge response pasted, awaiting apply) |
+| `applied` | raw is bare JSON AND raw mtime > validate mtime (apply ran after build) |
+
+Re-runnable safely: `--build` skips items that don't have a raw yet,
+`--apply` skips items not in `judged` state.
 
 ## Files in this directory
 

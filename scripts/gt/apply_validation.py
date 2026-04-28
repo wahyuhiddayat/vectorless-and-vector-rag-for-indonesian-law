@@ -28,6 +28,7 @@ Usage:
 import argparse
 import datetime as dt
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -131,7 +132,9 @@ def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool, query_type: s
     raw_path = raw_path_for(doc_id, query_type)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = Path(tempfile.mkstemp(prefix=f"{_basename(doc_id, query_type)}-", suffix=".json")[1])
+    fd, tmp_str = tempfile.mkstemp(prefix=f"{_basename(doc_id, query_type)}-", suffix=".json")
+    os.close(fd)
+    tmp_path = Path(tmp_str)
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cleaned, f, ensure_ascii=False, indent=2)
@@ -152,16 +155,17 @@ def apply_cleaned(doc_id: str, cleaned: list[dict], dry_run: bool, query_type: s
         print("[dry-run] not writing to disk")
         return
 
+    print("\nApplied.")
     if raw_path.exists():
         bak = backup_path_for(doc_id, query_type)
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(raw_path, bak)
-        print(f"Backup saved to {bak}")
+        print(f"  Backup -> {bak}")
 
     with open(raw_path, "w", encoding="utf-8") as f:
         json.dump(cleaned, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    print(f"Wrote {raw_path}")
+    print(f"  Wrote  -> {raw_path}")
 
 
 def main() -> None:
@@ -192,6 +196,12 @@ def main() -> None:
 
     cleaned = extract_cleaned_array(text)
     apply_cleaned(args.doc_id, cleaned, dry_run=args.dry_run, query_type=args.type)
+
+    if not args.dry_run:
+        print()
+        print("Next.")
+        print(f"  1. python scripts/gt/log_review.py {args.doc_id} --type {args.type}")
+        print(f"  (or proceed to the next allocation item)")
 
 
 if __name__ == "__main__":

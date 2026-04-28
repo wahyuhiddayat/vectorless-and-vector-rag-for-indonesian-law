@@ -96,8 +96,11 @@ def main() -> None:
         text += "\n"
     output_path.write_text(text, encoding="utf-8")
 
-    print(f"Merged {len(part_files)} part file(s) into: {output_path}")
-    print(f"Total GT items: {len(merged)}")
+    print(f"\nMerged.")
+    print(f"  {len(part_files)} part(s) -> {output_path}  ({len(merged)} items)")
+    print()
+    print("Next.")
+    print(f"  1. python scripts/gt/build_validate.py --doc-id {args.doc_id} --type {args.type}")
 
 
 if __name__ == "__main__":

@@ -195,11 +195,13 @@ def main() -> None:
         skip_layer2=args.skip_layer2,
     )
     raw_path = _raw_path(args.doc_id, args.type)
-    print(f"Prompt -> {out_path}  ({len(items)} item)")
+    print(f"\nCreated.")
+    print(f"  Judge prompt -> {out_path}  ({len(items)} item)")
     print()
     print("Next.")
     print(f"  1. Paste {out_path} to Judge LLM, paste full response over {raw_path}")
     print(f"  2. python scripts/gt/apply_validation.py --doc-id {args.doc_id} --type {args.type}")
+    print(f"  3. python scripts/gt/log_review.py {args.doc_id} --type {args.type}")
 
 
 if __name__ == "__main__":

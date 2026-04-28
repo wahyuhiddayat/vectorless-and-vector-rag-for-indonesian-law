@@ -767,18 +767,12 @@ def main() -> None:
     )
     multipart = len(prompt_parts) > 1
 
-    print(f"\nDokumen    : {doc['judul'][:80]}")
-    print(f"doc_id     : {doc['doc_id']}")
-    print(f"Query type : {query_type}")
-    if secondary_doc is not None:
-        print(f"Paired doc : {secondary_doc['doc_id']}")
-    print(f"Leaf nodes : {len(leaf_nodes)} rincian-index leaf nodes")
-    print(f"Target N   : {n_used} pertanyaan (adaptive: {adaptive_n})", end="")
-    if args.questions is not None:
-        print(f"  [override: --questions {args.questions}]", end="")
-    print()
-    print(f"Prompt mode: {'multipart full-text' if multipart else 'single full-text'}")
-    print(f"Budget     : {final_budget} chars")
+    paired = f", paired={secondary_doc['doc_id']}" if secondary_doc is not None else ""
+    override = f" override" if args.questions is not None else ""
+    mode = "multipart" if multipart else "single"
+    print(f"\n{doc['doc_id']} type={query_type}{paired}, "
+          f"{len(leaf_nodes)} leaves, N={n_used}{override} (adaptive {adaptive_n}), "
+          f"{mode}, budget={final_budget}")
 
     if multipart and args.stdout:
         print("\nERROR: Prompt multipart terlalu besar untuk --stdout.")
@@ -787,10 +781,11 @@ def main() -> None:
 
     if not multipart:
         output_path = make_output_target(doc["doc_id"], args.out, multipart=False, query_type=query_type)
-        output_label = "stdout (copy-paste)" if args.stdout else str(output_path)
-        print(f"Output     : {output_label}\n")
-
         raw_target_name = raw_filename(args.doc_id, query_type)
+        raw_dir = Path("data/ground_truth_raw") / category
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        placeholder = raw_dir / raw_target_name
+        meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1, query_type=query_type)
 
         if args.stdout:
             print("=" * 70)
@@ -798,60 +793,59 @@ def main() -> None:
             print("=" * 70)
             print(prompt_parts[0]["prompt"])
             print("=" * 70)
-            print("\nLangkah selanjutnya:")
-            print("  1. Copy prompt di atas, paste ke generator LLM")
-            print("  2. Copy JSON output dari generator")
-            print(f"  3. Simpan ke: data/ground_truth_raw/{category}/{raw_target_name}")
-            print("  4. Jalankan: python scripts/gt/collect.py")
+            print(f"\nRaw target -> {placeholder}")
+            print("\nNext.")
+            print(f"  1. Paste output JSON to {placeholder}")
+            print(f"  2. python scripts/gt/build_validate.py --doc-id {args.doc_id} --type {query_type}")
+            print(f"  3. Paste tmp/validate_{args.doc_id}__{query_type}.txt to Judge LLM, paste full response over {placeholder}")
+            print(f"  4. python scripts/gt/apply_validation.py --doc-id {args.doc_id} --type {query_type}")
+            print(f"  5. python scripts/gt/log_review.py {args.doc_id} --type {query_type}")
             return
 
         write_single_prompt(output_path, prompt_parts[0]["prompt"])
-        print(f"Prompt disimpan ke: {output_path}")
-
-        raw_dir = Path("data/ground_truth_raw") / category
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        placeholder = raw_dir / raw_target_name
         if not placeholder.exists():
             placeholder.write_text("[]", encoding="utf-8")
-            print(f"Placeholder : {placeholder}  (paste output annotator ke sini)")
-        else:
-            print(f"Target      : {placeholder}  (sudah ada, overwrite dengan output annotator)")
 
-        meta_path = write_meta_sidecar(category, args.doc_id, n_used, total_parts=1, query_type=query_type)
-        print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
-
+        print("\nCreated.")
+        print(f"  Annotator prompt -> {output_path}")
+        print(f"  Raw placeholder  -> {placeholder}")
+        print(f"  Provenance       -> {meta_path}")
         print("\nNext.")
         print(f"  1. Paste {output_path} to Generator LLM, paste JSON output to {placeholder}")
         print(f"  2. python scripts/gt/build_validate.py --doc-id {args.doc_id} --type {query_type}")
+        print(f"  3. Paste tmp/validate_{args.doc_id}__{query_type}.txt to Judge LLM, paste full response over {placeholder}")
+        print(f"  4. python scripts/gt/apply_validation.py --doc-id {args.doc_id} --type {query_type}")
+        print(f"  5. python scripts/gt/log_review.py {args.doc_id} --type {query_type}")
         return
 
     prefix = make_output_target(doc["doc_id"], args.out, multipart=True, query_type=query_type)
     part_paths, manifest_path = write_multipart_prompts(prefix, doc, prompt_parts, total_questions=n_used, final_budget=final_budget, category=category)
 
-    print(f"Output     : {len(part_paths)} part files + manifest")
-    for part, path in zip(prompt_parts, part_paths):
-        print(f"  - part {part['part_index']:02d}: {path}  [{part['question_quota']} pertanyaan, {part['leaf_count']} leaf]")
-    print(f"  - manifest: {manifest_path}")
-
-    parts_dir = Path("data/ground_truth_parts") / category / doc["doc_id"]
+    parts_basename = f"{doc['doc_id']}__{query_type}"
+    parts_dir = Path("data/ground_truth_parts") / category / parts_basename
     parts_dir.mkdir(parents=True, exist_ok=True)
-    # Auto-create empty part JSON placeholders so annotator can paste directly.
-    created_placeholders = []
     for part in prompt_parts:
         ph = parts_dir / f"part{part['part_index']:02d}.json"
         if not ph.exists():
             ph.write_text("[]", encoding="utf-8")
-            created_placeholders.append(ph)
     raw_placeholder = Path("data/ground_truth_raw") / category / raw_filename(doc["doc_id"], query_type)
     (Path("data/ground_truth_raw") / category).mkdir(parents=True, exist_ok=True)
-    if created_placeholders:
-        print(f"Placeholders: {len(created_placeholders)} empty part JSON(s) created in {parts_dir}")
     meta_path = write_meta_sidecar(category, doc["doc_id"], n_used, total_parts=len(prompt_parts), query_type=query_type)
-    print(f"Provenance  : {meta_path}  (isi annotator_model + judge_model setelah run)")
+    print("\nCreated.")
+    print(f"  Multipart prompts -> {len(part_paths)} files in {prefix.parent}")
+    for part, path in zip(prompt_parts, part_paths):
+        print(f"    - part {part['part_index']:02d}: {path}  ({part['question_quota']} pertanyaan, {part['leaf_count']} leaf)")
+    print(f"  Manifest          -> {manifest_path}")
+    print(f"  Part placeholders -> {parts_dir}/part01.json ..")
+    print(f"  Raw target        -> {raw_placeholder}")
+    print(f"  Provenance        -> {meta_path}")
     print("\nNext.")
     print(f"  1. Paste each part to Generator LLM, save outputs to {parts_dir}/part01.json, part02.json, ...")
-    print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']}")
+    print(f"  2. python scripts/gt/merge_parts.py {doc['doc_id']} --type {query_type}")
     print(f"  3. python scripts/gt/build_validate.py --doc-id {doc['doc_id']} --type {query_type}")
+    print(f"  4. Paste tmp/validate_{doc['doc_id']}__{query_type}.txt to Judge LLM, paste full response over {raw_placeholder}")
+    print(f"  5. python scripts/gt/apply_validation.py --doc-id {doc['doc_id']} --type {query_type}")
+    print(f"  6. python scripts/gt/log_review.py {doc['doc_id']} --type {query_type}")
 
 
 if __name__ == "__main__":

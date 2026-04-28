@@ -195,7 +195,13 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
     with open(audit_path, "w", encoding="utf-8") as f:
         json.dump(audit, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    print(f"Wrote {audit_path}")
+    print(f"\nReviewed.")
+    print(f"  Audit -> {audit_path}  ({len(results)} of {len(items)})")
+    print()
+    print("Next.")
+    print(f"  Continue with the next allocation item, or after all (doc, type) are done,")
+    print(f"    python scripts/gt/collect.py")
+    print(f"    python scripts/gt/finalize.py")
     return audit
 
 
