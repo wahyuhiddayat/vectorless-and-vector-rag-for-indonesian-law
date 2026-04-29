@@ -48,10 +48,35 @@ def select_queries(
     doc_id: str | None,
     query_limit: int | None,
     random_seed: int | None = None,
+    query_types: list[str] | None = None,
+    per_type_limit: int | None = None,
 ) -> list[tuple[str, dict]]:
+    """Select a query subset for evaluation.
+
+    Filtering precedence, doc_id -> query_types -> per_type_limit -> query_limit.
+    per_type_limit picks N items per query_type (stratified). When combined
+    with random_seed the selection within each type is sampled rather than
+    head-of-list.
+    """
     items = sorted(testset.items(), key=lambda kv: kv[0])
     if doc_id:
         items = [(qid, item) for qid, item in items if item.get("gold_doc_id") == doc_id]
+    if query_types:
+        types_set = set(query_types)
+        items = [(qid, item) for qid, item in items if item.get("query_type", "factual") in types_set]
+    if per_type_limit is not None:
+        import random
+        buckets: dict[str, list[tuple[str, dict]]] = {}
+        for qid, item in items:
+            buckets.setdefault(item.get("query_type", "factual"), []).append((qid, item))
+        rng = random.Random(random_seed) if random_seed is not None else None
+        picked: list[tuple[str, dict]] = []
+        for bucket in buckets.values():
+            sample = bucket if len(bucket) <= per_type_limit else (
+                rng.sample(bucket, per_type_limit) if rng else bucket[:per_type_limit]
+            )
+            picked.extend(sample)
+        items = sorted(picked, key=lambda kv: kv[0])
     if random_seed is not None and query_limit is not None:
         import random
         rng = random.Random(random_seed)

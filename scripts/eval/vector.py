@@ -257,6 +257,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--query-limit", type=int, default=None)
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--doc-id", type=str, default=None)
+    ap.add_argument("--query-types", type=str, default=None,
+                    help="Comma-separated query types (factual, paraphrased, multihop, crossdoc, adversarial)")
+    ap.add_argument("--per-type-limit", type=int, default=None,
+                    help="Stratified sample, pick N items per query_type")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     ap.add_argument("--worker-timeout-s", type=int, default=PROCESS_TIMEOUT_S)
     ap.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
@@ -299,7 +303,11 @@ def main() -> int:  # noqa: C901
     cutoffs = sorted(set(cutoffs))
 
     testset = eval_io.load_testset(TESTSET_FILE)
-    selected_queries = eval_io.select_queries(testset, args.doc_id, args.query_limit, args.random_seed)
+    qtypes = [t.strip() for t in args.query_types.split(",")] if args.query_types else None
+    selected_queries = eval_io.select_queries(
+        testset, args.doc_id, args.query_limit, args.random_seed,
+        query_types=qtypes, per_type_limit=args.per_type_limit,
+    )
     if not selected_queries:
         raise SystemExit("No queries matched the requested filters.")
 
