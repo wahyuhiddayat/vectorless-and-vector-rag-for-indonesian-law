@@ -29,8 +29,8 @@ from ..common import (
 from .tree import doc_search
 
 
-MAX_ACTIONS = 15
-MAX_READS = 8
+MAX_ACTIONS = 25
+MAX_READS = 12
 READ_TEXT_CAP = 1500
 OBSERVATION_RENDER_CAP = 1800
 SCRATCHPAD_RECENT_FULL = 2
