@@ -81,13 +81,7 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         from vectorless.retrieval.llm import agentic as module
 
         module.save_log = lambda _result: None
-        return module.retrieve(query, mode="doc", verbose=False)
-
-    if system == "llm-agentic-corpus":
-        from vectorless.retrieval.llm import agentic as module
-
-        module.save_log = lambda _result: None
-        return module.retrieve(query, mode="corpus", verbose=False)
+        return module.retrieve(query, verbose=False)
 
     raise ValueError(f"Unsupported system: {system}")
 
@@ -107,7 +101,7 @@ def main() -> int:
         "bm25-flat", "bm25-tree",
         "hybrid-flat", "hybrid-tree",
         "llm-flat", "llm-tree",
-        "llm-agentic-doc", "llm-agentic-corpus",
+        "llm-agentic-doc",
     ])
     ap.add_argument("--granularity", required=True, choices=["pasal", "ayat", "rincian"])
     ap.add_argument("--query", required=True)

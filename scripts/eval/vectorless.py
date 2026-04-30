@@ -47,13 +47,13 @@ SYSTEMS = [
     "bm25-flat", "bm25-tree",
     "hybrid-flat", "hybrid-tree",
     "llm-flat", "llm-tree",
-    "llm-agentic-doc", "llm-agentic-corpus",
+    "llm-agentic-doc",
 ]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 LLM_SYSTEMS = {
     "hybrid-flat", "hybrid-tree",
     "llm-flat", "llm-tree",
-    "llm-agentic-doc", "llm-agentic-corpus",
+    "llm-agentic-doc",
 }
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900
