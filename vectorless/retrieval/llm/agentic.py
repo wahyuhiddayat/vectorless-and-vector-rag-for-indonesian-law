@@ -1,8 +1,11 @@
 """Agentic LLM retrieval for Indonesian legal QA, PageIndex-style.
 
-The LLM acts as an agent. Each step it picks one of inspect_doc, expand,
-read, or submit, observes the result, then plans the next step. This
-contrasts with llm-tree which forces a fixed level-by-level drill.
+The LLM acts as an agent. The full document outline (titles and summaries
+without leaf text) is exposed in the prompt context so the agent always
+sees the complete map of the active document. Each step the agent picks
+one of inspect_doc, expand, read, or submit, observes the result, then
+plans the next step. This contrasts with llm-tree which forces a fixed
+level-by-level drill.
 
 doc_search picks one document from the catalog first, then the agent
 navigates inside that document. This mirrors PageIndex, which scopes its
@@ -35,24 +38,44 @@ VALID_ACTIONS = ("inspect_doc", "expand", "read", "submit")
 
 
 def _node_view(node: dict) -> dict:
-    """Render one node as a compact dict, no text body."""
+    """Render one node and its descendants, titles and summaries only."""
     out = {
         "node_id": node.get("node_id", ""),
         "title": node.get("title", ""),
-        "has_children": bool(node.get("nodes")),
     }
     if node.get("summary"):
         out["summary"] = node["summary"]
+    children = node.get("nodes") or []
+    if children:
+        out["nodes"] = [_node_view(c) for c in children]
     return out
 
 
 def _tool_inspect_doc(doc: dict) -> dict:
-    """Top-level structure of a document, no leaf text."""
+    """Full recursive tree structure of a document, no leaf text."""
     return {
         "doc_id": doc.get("doc_id", ""),
         "judul": doc.get("judul", ""),
-        "top_level": [_node_view(n) for n in doc.get("structure", [])],
+        "structure": [_node_view(n) for n in doc.get("structure", [])],
     }
+
+
+def _render_tree_outline(nodes: list[dict], depth: int = 0) -> str:
+    """Render the full document tree as an indented outline for the prompt."""
+    lines: list[str] = []
+    indent = "  " * depth
+    for n in nodes:
+        node_id = n.get("node_id", "")
+        title = (n.get("title") or "").strip()
+        summary = (n.get("summary") or "").strip()
+        head = f"{indent}- [{node_id}] {title}" if title else f"{indent}- [{node_id}]"
+        if summary:
+            head += f" :: {summary}"
+        lines.append(head)
+        children = n.get("nodes") or []
+        if children:
+            lines.append(_render_tree_outline(children, depth + 1))
+    return "\n".join(lines)
 
 
 def _tool_expand(doc: dict, node_id: str) -> dict:
@@ -126,18 +149,20 @@ def _render_scratchpad(scratchpad: list[dict]) -> str:
 
 def _build_prompt(query: str, scratchpad: list[dict],
                   actions_left: int, reads_left: int,
-                  primary_doc_id: str) -> str:
+                  primary_doc_id: str, primary_doc_title: str,
+                  tree_outline: str) -> str:
     """Build the next-step prompt for the agent."""
     tools = [
-        "- inspect_doc()                            struktur top-level dokumen yang aktif",
-        "- expand(node_id)                          anak satu node internal",
+        "- inspect_doc()                            ulang struktur lengkap dokumen aktif",
+        "- expand(node_id)                          anak satu node, berguna jika outline terlalu padat",
         "- read(node_id)                            teks lengkap satu leaf, hemat anggaran",
         '- submit(node_ids, reasoning)              finalisasi pilihan, contoh node_ids ["pasal_3", "pasal_5_ayat_1"]',
     ]
 
     rules = [
         "- Setiap balasan WAJIB JSON valid berisi field thinking, action, args.",
-        "- Pakai inspect_doc dan expand untuk menavigasi, gunakan read hanya saat perlu cek isi.",
+        "- Outline lengkap dokumen sudah disertakan di bawah. Pakai langsung untuk memilih node.",
+        "- Pakai read hanya saat butuh memverifikasi isi sebuah leaf sebelum submit.",
         f"- Sisa anggaran action = {actions_left}, sisa anggaran read = {reads_left}.",
         "- Submit segera setelah node yang dipilih cukup untuk menjawab pertanyaan.",
         "- Jangan ulangi action persis sama dengan langkah sebelumnya.",
@@ -146,9 +171,12 @@ def _build_prompt(query: str, scratchpad: list[dict],
 
     return (
         "Kamu adalah agen retrieval dokumen hukum Indonesia. Pilih node yang paling "
-        "relevan untuk menjawab pertanyaan dari katalog UU.\n\n"
+        "relevan untuk menjawab pertanyaan dari satu peraturan.\n\n"
         f"Pertanyaan: {query}\n\n"
-        f"Dokumen aktif: {primary_doc_id}. Semua tool memakai dokumen ini secara implisit.\n\n"
+        f"Dokumen aktif: {primary_doc_id} - {primary_doc_title}. "
+        "Semua tool memakai dokumen ini secara implisit.\n\n"
+        "Struktur dokumen aktif (titles + summaries, tanpa teks isi).\n"
+        f"{tree_outline}\n\n"
         "Tools.\n" + "\n".join(tools) + "\n\n"
         "Aturan.\n" + "\n".join(rules) + "\n\n"
         "Riwayat tindakan.\n" + _render_scratchpad(scratchpad) + "\n\n"
@@ -276,17 +304,13 @@ def retrieve(query: str,
         }
     primary_doc_id = doc_ids[0]
     primary_doc = _get_doc(primary_doc_id)
+    primary_doc_title = primary_doc.get("judul", "")
+    tree_outline = _render_tree_outline(primary_doc.get("structure", []))
     scratchpad.append({
         "step": 0,
         "action": "doc_search",
         "args": {},
-        "observation": {"doc_id": primary_doc_id, "judul": primary_doc.get("judul", "")},
-    })
-    scratchpad.append({
-        "step": 1,
-        "action": "inspect_doc",
-        "args": {"doc_id": primary_doc_id},
-        "observation": _tool_inspect_doc(primary_doc),
+        "observation": {"doc_id": primary_doc_id, "judul": primary_doc_title},
     })
 
     snap = snapshot_counters()
@@ -304,6 +328,8 @@ def retrieve(query: str,
             actions_left=max_actions - actions_used,
             reads_left=max_reads - reads_used,
             primary_doc_id=primary_doc_id,
+            primary_doc_title=primary_doc_title,
+            tree_outline=tree_outline,
         )
 
         try:
