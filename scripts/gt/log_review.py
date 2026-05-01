@@ -172,19 +172,19 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
 
         print(f"[{idx}/{len(items)}] type={item.get('query_type', '?')}, "
               f"{item.get('query_style', '?')}, {item.get('reference_mode', '?')}")
-        print(f"  Query  , {item.get('query', '')}")
+        print(f"  {'Query':<8}: {item.get('query', '')}")
         for a_idx, (did, nid) in enumerate(anchors, start=1):
             leaf = _leaf_map(did).get(nid, {})
             text = (leaf.get("text") or "").strip()
             if len(text) > 600:
                 text = text[:600].rstrip() + " ..."
             nav = leaf.get("navigation_path", "<unknown>")
-            label = f"Anchor {a_idx}" if len(anchors) > 1 else "Anchor "
-            print(f"  {label}, {did} :: {nid}")
-            print(f"  Path   , {nav}")
-            print(f"  Gold   , {text or '<empty>'}")
+            label = f"Anchor {a_idx}" if len(anchors) > 1 else "Anchor"
+            print(f"  {label:<8}: {did} :: {nid}")
+            print(f"  {'Path':<8}: {nav}")
+            print(f"  {'Gold':<8}: {text or '<empty>'}")
         if item.get("answer_hint"):
-            print(f"  Hint   , {item['answer_hint']}")
+            print(f"  {'Hint':<8}: {item['answer_hint']}")
         try:
             verdict, notes = prompt_verdict(f"[{idx}/{len(items)}]")
         except KeyboardInterrupt:
