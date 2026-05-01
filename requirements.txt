@@ -1,10 +1,14 @@
 # Shared
 python-dotenv>=1.0.0
-google-genai>=1.0.0
-google-auth>=2.30.0
+openai>=1.60.0
 huggingface-hub>=0.20.0
 tqdm
 brotli>=1.1.0
+
+# Legacy: kept only for the Gemini embedding path in vector/common.py
+# (unused in current eval matrix, see CLAUDE.md). Drop once confirmed unused.
+google-genai>=1.0.0
+google-auth>=2.30.0
 
 # Scraper
 requests
@@ -20,9 +24,6 @@ sentence-transformers>=3.0.0
 
 # GT typed-query validation
 Sastrawi>=1.0.1
-
-# GT auto-annotate
-openai>=1.50.0
 
 # GT auto-judge
 anthropic>=0.40.0

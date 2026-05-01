@@ -1,4 +1,4 @@
-"""Shared Gemini client + token accounting for indexing and retrieval."""
+"""Shared OpenAI client + token accounting for indexing and retrieval."""
 
 import json
 import os
@@ -23,27 +23,23 @@ _lock = threading.Lock()
 
 
 def client():
-    """Lazy-init Gemini client on Vertex AI with a 5min HTTP deadline."""
+    """Lazy-init OpenAI client with a 5min HTTP deadline."""
     global _client
     if _client is None:
-        from google import genai
-        from google.genai import types as gtypes
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "skripsi-gavin")
-        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-        _client = genai.Client(
-            vertexai=True,
-            project=project,
-            location=location,
-            http_options=gtypes.HttpOptions(api_version="v1", timeout=300_000),
-        )
+        from openai import OpenAI
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("ERROR: OPENAI_API_KEY not set.")
+            sys.exit(1)
+        _client = OpenAI(api_key=api_key, timeout=300.0, max_retries=0)
     return _client
 
 
-def _track(usage) -> None:
+def _track(input_tokens: int, output_tokens: int) -> None:
     global _input_tokens, _output_tokens, _calls
     with _lock:
-        _input_tokens += usage.prompt_token_count or 0
-        _output_tokens += usage.candidates_token_count or 0
+        _input_tokens += input_tokens or 0
+        _output_tokens += output_tokens or 0
         _calls += 1
 
 
@@ -83,43 +79,59 @@ def step_metrics(t_start: float, snap_before: dict) -> dict:
 
 
 _RETRYABLE_TOKENS = (
-    "rate", "429", "503", "500", "quota", "resource_exhausted",
-    "deadline_exceeded", "service unavailable", "overloaded",
-    "timeout", "timed out", "connection",
+    "rate", "429", "503", "500", "502", "504",
+    "quota", "resource_exhausted", "insufficient_quota",
+    "rate_limit_exceeded", "server_error", "service unavailable",
+    "overloaded", "timeout", "timed out", "connection",
+    "apiconnectionerror", "apitimeouterror", "internalservererror",
 )
 
 
-def call(prompt: str, *, model: str = MODEL, max_retries: int = 3,
+def _supports_reasoning(model: str) -> bool:
+    """Return True if the model accepts reasoning_effort parameter."""
+    return model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3")
+
+
+def call(prompt: str, *, model: str = MODEL, max_retries: int = 8,
+         max_completion_tokens: int = 16384,
          return_usage: bool = False) -> dict | tuple[dict, dict]:
-    """Send prompt; return parsed JSON. Retries transient errors and non-JSON responses.
+    """Send prompt to OpenAI, return parsed JSON. Retries transient errors and non-JSON responses.
 
     With return_usage=True, returns (json_dict, usage_dict) for caller-local accounting.
+    Uses response_format={'type':'json_object'} so the response is always JSON.
     """
-    from google.genai import types as gtypes
     cli = client()
 
-    # temperature=0.0 for run-to-run determinism (eval reproducibility).
-    # Residual non-determinism from server-side floating-point ordering still
-    # exists, see Threats to Validity in Notes/design/Retrieval Experiments.md.
-    cfg_kwargs: dict = {"temperature": 0.0}
-    # gemini-2.5.x supports thinking_budget=0 to skip the thinking phase; 3.x rejects it.
-    if model.startswith("gemini-2.5"):
-        cfg_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "max_completion_tokens": max_completion_tokens,
+    }
+    # gpt-5 family supports reasoning_effort; "minimal" is the cheapest tier
+    # (analog of Gemini thinking_budget=0). gpt-4.1 family does not accept it.
+    if _supports_reasoning(model):
+        kwargs["reasoning_effort"] = "minimal"
+    else:
+        # gpt-4.1 family supports temperature; reasoning models reject it.
+        kwargs["temperature"] = 0.0
 
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
-            resp = cli.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(**cfg_kwargs),
-            )
-            _track(resp.usage_metadata)
+            resp = cli.chat.completions.create(**kwargs)
 
-            text = resp.text.strip()
+            usage = resp.usage
+            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage, "completion_tokens", 0) or 0
+            _track(input_tokens, output_tokens)
+
+            text = (resp.choices[0].message.content or "").strip()
+            # Strip markdown fences in case the model wraps despite json_object mode.
             if text.startswith("```"):
                 lines = text.split("\n")
                 text = "\n".join(lines[1:-1])
+
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError as json_err:
@@ -127,17 +139,16 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 3,
                 if attempt < max_retries - 1:
                     wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                     sys.stderr.write(
-                        f"  Gemini returned non-JSON (attempt {attempt+1}), retrying in {wait:.0f}s...\n"
+                        f"  OpenAI returned non-JSON (attempt {attempt+1}), retrying in {wait:.0f}s...\n"
                     )
                     time.sleep(wait)
                     continue
                 raise
 
             if return_usage:
-                u = resp.usage_metadata
                 return parsed, {
-                    "input_tokens": u.prompt_token_count or 0,
-                    "output_tokens": u.candidates_token_count or 0,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
                     "calls": 1,
                 }
             return parsed
@@ -150,7 +161,7 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 3,
             if any(tok in err for tok in _RETRYABLE_TOKENS) and attempt < max_retries - 1:
                 wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                 sys.stderr.write(
-                    f"  Gemini error (attempt {attempt+1}): {e!r} — retrying in {wait:.0f}s...\n"
+                    f"  OpenAI error (attempt {attempt+1}): {e!r} - retrying in {wait:.0f}s...\n"
                 )
                 time.sleep(wait)
             else:

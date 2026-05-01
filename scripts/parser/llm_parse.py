@@ -1,4 +1,4 @@
-"""Build pasal-level index JSON with Gemini as the structure parser."""
+"""Build pasal-level index JSON with OpenAI as the structure parser."""
 from __future__ import annotations
 
 import argparse
@@ -22,57 +22,36 @@ from scripts.parser._common import (  # noqa: E402
     count_pasals_in_tree,
     format_pdf_pages,
     load_pdf_pages,
-    parse_llm_json,
     _normalize_keys,
 )
 
 import time  # noqa: E402
 
-from vectorless.llm import client as gemini_client  # noqa: E402
+from vectorless.llm import call as llm_call  # noqa: E402
 from vectorless.models import PARSE_MODEL as MODEL_NAME  # noqa: E402
 
-MAX_RETRIES = 3
 
+def call_llm(prompt: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
+    """Call the configured LLM for structured JSON parse output.
 
-def call_gemini(prompt: str, max_output_tokens: int = 65536) -> tuple[str, dict]:
-    """Call Gemini for structured JSON parse output."""
-    from google.genai import types as gtypes
-    cli = gemini_client()
-
-    config_kwargs = dict(
-        temperature=0.0,
-        max_output_tokens=max_output_tokens,
-        response_mime_type="application/json",
-    )
-    # Only 2.5 Flash supports skipping the thinking phase. Pro requires thinking
-    # mode; 3.x rejects the budget setting outright.
-    if MODEL_NAME == "gemini-2.5-flash":
-        config_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
-
-    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
+    Returns (parsed_obj, usage). Retries (transient errors and JSON parse
+    failures) are handled inside vectorless.llm.call.
+    """
     t0 = time.time()
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = cli.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(**config_kwargs),
-            )
-            usage["calls"] += 1
-            meta = getattr(resp, "usage_metadata", None)
-            if meta is not None:
-                usage["input_tokens"] += getattr(meta, "prompt_token_count", 0) or 0
-                usage["output_tokens"] += getattr(meta, "candidates_token_count", 0) or 0
-                usage["total_tokens"] += getattr(meta, "total_token_count", 0) or 0
-            text = getattr(resp, "text", None) or ""
-            if text.strip():
-                usage["elapsed_s"] = round(time.time() - t0, 3)
-                return text, usage
-        except Exception as exc:
-            if attempt == MAX_RETRIES:
-                raise
-            print(f"  retry {attempt}/{MAX_RETRIES}: {type(exc).__name__}: {exc}", flush=True)
-    raise RuntimeError("LLM returned empty response after retries")
+    parsed, base_usage = llm_call(
+        prompt,
+        model=MODEL_NAME,
+        max_completion_tokens=max_output_tokens,
+        return_usage=True,
+    )
+    usage = {
+        "input_tokens": base_usage["input_tokens"],
+        "output_tokens": base_usage["output_tokens"],
+        "total_tokens": base_usage["input_tokens"] + base_usage["output_tokens"],
+        "calls": base_usage["calls"],
+        "elapsed_s": round(time.time() - t0, 3),
+    }
+    return parsed, usage
 from vectorless.indexing.metadata import build_metadata  # noqa: E402
 
 INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
@@ -895,15 +874,15 @@ def _pasals_in_page_range(
 
 
 def _run_llm(prompt: str) -> tuple[dict | None, dict, str | None]:
-    """Single Gemini call + JSON parse. Returns (obj, usage, error)."""
+    """Single LLM call + JSON normalization. Returns (obj, usage, error).
+
+    JSON parsing and transient retries are handled inside call_llm. Caller
+    only normalizes alias keys (e.g. 'name' -> 'title').
+    """
     try:
-        raw, usage = call_gemini(prompt)
+        obj, usage = call_llm(prompt)
     except Exception as exc:
         return None, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}, f"llm call: {exc}"
-    try:
-        obj = parse_llm_json(raw)
-    except Exception as exc:
-        return None, usage, f"json parse: {exc} (preview: {raw[:200]!r})"
     _normalize_keys(obj)
     return obj, usage, None
 

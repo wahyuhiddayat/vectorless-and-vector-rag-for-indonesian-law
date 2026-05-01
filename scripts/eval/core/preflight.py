@@ -61,39 +61,31 @@ def check_index_coverage(
     return missing_by_gran
 
 
-def check_gemini_reachable(timeout_s: float = 10.0) -> tuple[bool, str]:
-    """Ping Gemini with a tiny request. Returns (ok, message)."""
+def check_llm_reachable(timeout_s: float = 10.0) -> tuple[bool, str]:
+    """Ping the configured LLM with a tiny JSON request. Returns (ok, message)."""
     import os
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except ImportError:
         pass
+    if not os.environ.get("OPENAI_API_KEY"):
+        return False, "OPENAI_API_KEY not set"
     try:
-        import google.auth
-        google.auth.default()
-    except Exception as exc:
-        return False, f"ADC not configured (run gcloud auth application-default login): {exc}"
-    try:
-        from google.genai import types as genai_types
-        from vectorless.llm import MODEL, client as gemini_client
+        from vectorless.llm import MODEL, call as llm_call
     except ImportError as exc:
         return False, f"import failed: {exc}"
     try:
-        cfg_kwargs: dict = {"max_output_tokens": 8, "temperature": 0.0}
-        if MODEL.startswith("gemini-2.5"):
-            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
         t0 = time.time()
-        response = gemini_client().models.generate_content(
-            model=MODEL,
-            contents="ping",
-            config=genai_types.GenerateContentConfig(**cfg_kwargs),
-        )
-        _ = response.text
+        _ = llm_call('Reply with {"ok": true}', model=MODEL, max_completion_tokens=64, max_retries=1)
         elapsed_ms = int((time.time() - t0) * 1000)
         return True, f"{elapsed_ms}ms"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+# Back-compat alias used by older callers.
+check_gemini_reachable = check_llm_reachable
 
 
 def check_qdrant_reachable(

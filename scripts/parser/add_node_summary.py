@@ -145,7 +145,7 @@ def annotate_doc(doc_id: str, granularity: str = "pasal",
     counter["skipped"] = len(leaf_skipped)
 
     if todo:
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=1) as ex:
             futures = {ex.submit(_summarise_leaf, leaf, usage_acc, lock): leaf for leaf in todo}
             for fut in as_completed(futures):
                 leaf = futures[fut]

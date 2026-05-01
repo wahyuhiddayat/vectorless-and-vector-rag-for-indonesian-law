@@ -69,7 +69,14 @@ _total_calls = 0
 
 
 def _get_genai_client():
-    """Create the Google GenAI client on Vertex AI on first use."""
+    """Create the Google GenAI client on Vertex AI on first use.
+
+    DEPRECATED. The indexing and answer-generation pipelines now use OpenAI
+    via vectorless.llm. This factory is retained only for the legacy Gemini
+    embedding path (gemini-embedding-001) which is not used in the current
+    eval matrix. Vector RAG uses local sentence-transformer models per
+    CLAUDE.md (BGE-M3, IndoBERT, multilingual-e5).
+    """
     global _genai_client
     if _genai_client is None:
         from google import genai

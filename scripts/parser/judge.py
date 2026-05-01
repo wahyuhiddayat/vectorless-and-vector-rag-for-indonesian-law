@@ -2,16 +2,15 @@
 
 Compares raw PDF text against the parsed pasal-level JSON and produces a
 per-doc report of coverage gaps, structural issues, and OCR corruption.
-Runs on Gemini 2.5 Pro (stronger tier than the indexer) for independent review.
+Runs on OpenAI gpt-5 (configured in vectorless/models.py) for independent review.
 
-Output: data/judge_report.json. Requires Vertex AI ADC (gcloud auth application-default login).
+Output: data/judge_report.json. Requires OPENAI_API_KEY.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -32,7 +31,7 @@ REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 
 MAX_OUTPUT_TOKENS = 16384
 
-# Gemini 2.5 Pro pricing per 1M tokens (context <=200K). Used for cost logs.
+# OpenAI gpt-5 pricing per 1M tokens. Used for cost logs.
 PRICE_INPUT_PER_M = 1.25
 PRICE_OUTPUT_PER_M = 10.0
 
@@ -50,7 +49,7 @@ is_perubahan : {is_perubahan}
 === RAW PDF TEXT (body pages, plain text) ===
 {pdf_text}
 
-=== PARSED STRUCTURE (JSON, produced by Gemini 2.5 Flash) ===
+=== PARSED STRUCTURE (JSON, produced by the indexing LLM) ===
 {structure_json}
 
 === YOUR TASK ===
@@ -146,54 +145,24 @@ def _pdf_body_text(doc_id: str, body_end: int | None) -> str:
     return "\n".join(out)
 
 
-def _parse_judge_output(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    i = text.find("{")
-    if i == -1:
-        raise ValueError(f"no JSON in judge output: {text[:200]!r}")
-    depth = 0
-    end = -1
-    for j in range(i, len(text)):
-        if text[j] == "{":
-            depth += 1
-        elif text[j] == "}":
-            depth -= 1
-            if depth == 0:
-                end = j + 1
-                break
-    if end == -1:
-        raise ValueError("unbalanced JSON in judge output")
-    return json.loads(text[i:end])
+def _call_judge(prompt: str) -> tuple[dict, dict]:
+    """Invoke the judge model via the central LLM wrapper.
 
+    Returns (parsed_report, usage_meta). JSON parsing and transient retries
+    are handled inside vectorless.llm.call.
+    """
+    from vectorless.llm import call as llm_call
 
-def _call_gemini(prompt: str) -> tuple[str, dict]:
-    """Invoke the judge model and return (response_text, usage_meta)."""
-    from google.genai import types as gtypes
-    from vectorless.llm import client as gemini_client
-
-    cli = gemini_client()
     t0 = time.time()
-    resp = cli.models.generate_content(
+    parsed, base_usage = llm_call(
+        prompt,
         model=JUDGE_MODEL,
-        contents=prompt,
-        config=gtypes.GenerateContentConfig(
-            temperature=0.0,
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-            response_mime_type="application/json",
-        ),
+        max_completion_tokens=MAX_OUTPUT_TOKENS,
+        return_usage=True,
     )
     elapsed = time.time() - t0
-    text = getattr(resp, "text", None) or ""
-    if not text.strip():
-        raise RuntimeError("Gemini returned empty response")
-
-    meta = getattr(resp, "usage_metadata", None)
-    input_tokens = getattr(meta, "prompt_token_count", 0) or 0 if meta else 0
-    output_tokens = getattr(meta, "candidates_token_count", 0) or 0 if meta else 0
-    total_tokens = getattr(meta, "total_token_count", 0) or 0 if meta else 0
+    input_tokens = base_usage["input_tokens"]
+    output_tokens = base_usage["output_tokens"]
     cost = (
         input_tokens * PRICE_INPUT_PER_M / 1_000_000
         + output_tokens * PRICE_OUTPUT_PER_M / 1_000_000
@@ -201,11 +170,11 @@ def _call_gemini(prompt: str) -> tuple[str, dict]:
     usage = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
+        "total_tokens": input_tokens + output_tokens,
         "cost_usd": round(cost, 4),
         "elapsed_s": round(elapsed, 2),
     }
-    return text, usage
+    return parsed, usage
 
 
 def judge_doc(doc_id: str) -> dict:
@@ -227,8 +196,7 @@ def judge_doc(doc_id: str) -> dict:
     )
 
     t0 = datetime.now(timezone.utc)
-    raw, usage = _call_gemini(prompt)
-    report = _parse_judge_output(raw)
+    report, usage = _call_judge(prompt)
     report["judged_at"] = t0.isoformat()
     report["judge_model"] = JUDGE_MODEL
     report["usage"] = usage

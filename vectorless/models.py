@@ -1,4 +1,4 @@
-"""Single source of truth for Gemini model selection per role.
+"""Single source of truth for OpenAI model selection per role.
 
 Each role pins one model. Switch a role here and every call site picks it up.
 
@@ -10,8 +10,8 @@ Roles.
   RETRIEVAL_MODEL  LLM nav and hybrid rerank at query time.
 """
 
-PARSE_MODEL = "gemini-2.5-pro"
-SUMMARY_MODEL = "gemini-2.5-flash-lite"
-OCR_CLEAN_MODEL = "gemini-2.5-flash-lite"
-JUDGE_MODEL = "gemini-2.5-pro"
-RETRIEVAL_MODEL = "gemini-2.5-flash-lite"
+PARSE_MODEL = "gpt-5"
+SUMMARY_MODEL = "gpt-4.1-nano"
+OCR_CLEAN_MODEL = "gpt-4.1-nano"
+JUDGE_MODEL = "gpt-5"
+RETRIEVAL_MODEL = "gpt-4.1-nano"
