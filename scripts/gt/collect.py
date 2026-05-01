@@ -4,7 +4,11 @@ Ground Truth Collector and Validator.
 Runs structural validation on raw GT files (LLM-generated, then judged via
 build_validate.py / external judge LLM) and merges accepted items into
 data/ground_truth.json. The benchmark is leaf-anchored: each accepted item
-must point to exactly one leaf node from data/index_rincian.
+must point to one or more leaf nodes from data/index_rincian.
+
+Per design v3 (3-type stratified): allowed query types are factual,
+paraphrased, multihop. factual + paraphrased = single anchor. multihop = 2
+anchors in the same doc.
 
 Required fields:
   query, reference_mode, gold_node_id, gold_doc_id, navigation_path,
@@ -39,9 +43,9 @@ DATA_INDEX = Path("data/index_rincian")
 AUDIT_DIR = Path("data/gt_audit")
 
 VALID_REFERENCE_MODES = {"none", "legal_ref", "doc_only", "both"}
-VALID_QUERY_TYPES = {"factual", "paraphrased", "multihop", "crossdoc", "adversarial"}
-SINGLE_ANCHOR_TYPES = {"factual", "paraphrased", "adversarial"}
-MULTI_ANCHOR_TYPES = {"multihop", "crossdoc"}
+VALID_QUERY_TYPES = {"factual", "paraphrased", "multihop"}
+SINGLE_ANCHOR_TYPES = {"factual", "paraphrased"}
+MULTI_ANCHOR_TYPES = {"multihop"}
 REQUIRED_FIELDS = {
     "query",
     "reference_mode",
@@ -177,7 +181,8 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
     """Run hard structural validation on a raw GT file.
 
     Returns (valid_items, hard_errors). Semantic checks (cross-ref anchors,
-    referential queries, multi-hop) are delegated to the LLM judge step.
+    referential queries, multi-hop sufficiency) are delegated to the LLM
+    judge step.
     """
     doc_id = doc_id_from_path(path)
     hard_errors: list[str] = []
@@ -247,7 +252,7 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
 
         # query_type is optional for legacy single-type files (default factual). When
         # present we validate against the allowed set and per-type anchor count.
-        # gold_anchor_node_ids is required for multi-anchor types.
+        # gold_anchor_node_ids is required for multi-anchor types (multihop = 2 anchors).
         query_type = item.get("query_type", "factual")
         if query_type not in VALID_QUERY_TYPES:
             item_errors.append(
@@ -274,23 +279,23 @@ def validate_raw_file(path: Path) -> tuple[list[dict], list[str]]:
                 else:
                     for aid in anchor_ids:
                         if aid not in leaf_map and aid != anchor_node_id:
-                            # Cross-doc secondary anchor lives in a different doc and cannot be
-                            # validated here. We accept it now and let finalize.py verify.
-                            if query_type != "crossdoc":
-                                item_errors.append(
-                                    f"gold_anchor_node_ids entry '{aid}' not found as leaf in this doc"
-                                )
+                            # Multihop has both anchors in the same doc, so all
+                            # anchor_ids must resolve in this doc's leaf_map.
+                            item_errors.append(
+                                f"gold_anchor_node_ids entry '{aid}' not found as leaf in this doc"
+                            )
 
-            # gold_doc_ids must mirror the anchor list for multi-doc types.
+            # gold_doc_ids: for single-anchor mirror primary; for multihop mirror
+            # primary doc twice (both anchors live in the same doc).
             doc_ids_field = item.get("gold_doc_ids")
-            if query_type == "crossdoc":
+            if query_type in MULTI_ANCHOR_TYPES and doc_ids_field is not None:
                 if not isinstance(doc_ids_field, list) or len(doc_ids_field) != 2:
                     item_errors.append(
-                        "query_type 'crossdoc' requires gold_doc_ids list of 2 doc ids"
+                        f"query_type '{query_type}' requires gold_doc_ids list of 2 doc ids"
                     )
-                elif item.get("gold_doc_id") not in doc_ids_field:
+                elif any(d != doc_id for d in doc_ids_field):
                     item_errors.append(
-                        "gold_doc_id must appear in gold_doc_ids for crossdoc"
+                        f"query_type '{query_type}' requires both gold_doc_ids entries to match '{doc_id}'"
                     )
 
         if item_errors:
@@ -370,7 +375,6 @@ def print_stats(gt: dict) -> None:
 
     doc_counts: dict[str, int] = {}
     style_counts: dict[str, int] = {}
-    difficulty_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
     reference_mode_counts: dict[str, int] = {}
     query_type_counts: dict[str, int] = {}
@@ -381,9 +385,6 @@ def print_stats(gt: dict) -> None:
 
         style = item.get("query_style") or "(missing)"
         style_counts[style] = style_counts.get(style, 0) + 1
-
-        diff = item.get("difficulty") or "(missing)"
-        difficulty_counts[diff] = difficulty_counts.get(diff, 0) + 1
 
         anchor = item.get("gold_anchor_granularity") or "(missing)"
         anchor_counts[anchor] = anchor_counts.get(anchor, 0) + 1
@@ -399,7 +400,7 @@ def print_stats(gt: dict) -> None:
     print(f"  Documents covered : {len(doc_counts)}")
 
     print("\n  Query type distribution:")
-    for qtype in ["factual", "paraphrased", "multihop", "crossdoc", "adversarial", "(missing)"]:
+    for qtype in ["factual", "paraphrased", "multihop", "(missing)"]:
         count = query_type_counts.get(qtype, 0)
         if count == 0:
             continue
@@ -425,14 +426,6 @@ def print_stats(gt: dict) -> None:
             continue
         pct = count / total * 100
         print(f"    {ref_mode:15s}  {count:4d}  ({pct:.1f}%)")
-
-    print("\n  Difficulty distribution:")
-    for diff in ["easy", "medium", "hard", "(missing)"]:
-        count = difficulty_counts.get(diff, 0)
-        if count == 0:
-            continue
-        pct = count / total * 100
-        print(f"    {diff:15s}  {count:4d}  ({pct:.1f}%)")
 
     print("\n  Per document:")
     for doc_id, count in sorted(doc_counts.items()):
@@ -473,12 +466,11 @@ def main() -> None:
     else:
         if not RAW_DIR.exists():
             print(f"Raw directory not found: {RAW_DIR}")
-            print("Simpan output ChatGPT ke data/ground_truth_raw/<KATEGORI>/<doc_id>.json")
+            print("Simpan output annotator ke data/ground_truth_raw/<KATEGORI>/<doc_id>.json")
             return
         raw_files = sorted(
             p for p in RAW_DIR.rglob("*.json")
-            if not p.name.endswith(".meta.json")
-            and ".bak" not in p.parts
+            if ".bak" not in p.parts
         )
 
     if not raw_files:
@@ -488,7 +480,7 @@ def main() -> None:
     existing_gt = load_existing_gt()
     existing_queries = {item["query"].lower() for item in existing_gt.values()}
     existing_doc_ids = {item["gold_doc_id"] for item in existing_gt.values()}
-    # Anchor dedup keys on (doc_id, anchor_node_id, query_type) so v2 designs that
+    # Anchor dedup keys on (doc_id, anchor_node_id, query_type) so designs that
     # legitimately reuse an anchor across types (factual + paraphrased share the
     # same leaf by design) do not silently drop the second item.
     existing_anchors: dict[tuple[str, str, str], str] = {
@@ -548,7 +540,7 @@ def main() -> None:
         if already_in_gt and not hard_errors and not accepted:
             print(f"  -> {doc_id} [skip, sudah ada di GT]")
         else:
-            status = "✓" if not all_errors_for_file else "✗"
+            status = "OK" if not all_errors_for_file else "FAIL"
             already = " [sudah ada di GT]" if already_in_gt else ""
             print(
                 f"  {status} {doc_id}{already}: "
@@ -587,7 +579,6 @@ def main() -> None:
             "query": item["query"],
             "query_type": query_type,
             "query_style": item.get("query_style", ""),
-            "difficulty": item.get("difficulty", ""),
             "reference_mode": item["reference_mode"],
             "gold_anchor_granularity": item["gold_anchor_granularity"],
             "gold_anchor_node_id": item["gold_anchor_node_id"],
@@ -604,7 +595,7 @@ def main() -> None:
         json.dump(merged_gt, f, ensure_ascii=False, indent=2)
 
     added = len(merged_gt) - len(existing_gt)
-    print(f"\n✓ Disimpan ke {GT_FILE}")
+    print(f"\nDisimpan ke {GT_FILE}")
     print(f"  Sebelumnya : {len(existing_gt)} pertanyaan")
     print(f"  Ditambahkan: {added} pertanyaan")
     print(f"  Total      : {len(merged_gt)} pertanyaan")

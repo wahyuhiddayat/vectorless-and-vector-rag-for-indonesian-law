@@ -34,12 +34,8 @@ Setiap item HARUS punya `reference_mode`, salah satu dari none, legal_ref, doc_o
 
 Distribusi target ~50% formal, ~50% colloquial.
 
-1. formal, bahasa hukum resmi.
-2. colloquial, bahasa sehari-hari. DILARANG menggunakan kata atau frasa yang sama persis dengan teks yang akan dijadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda.
-
-=== TINGKAT KESULITAN (difficulty) ===
-
-Distribusi target 40% easy, 40% medium, 20% hard. "Hard" wajib ada leaf sibling yang bisa tertukar di parent yang sama.
+1. formal, bahasa hukum resmi (praktisi hukum, dokumen resmi). Diksi presisi.
+2. colloquial, bahasa sehari-hari orang awam. DILARANG menggunakan kata atau frasa yang sama persis dengan teks yang akan dijadikan answer_hint. Parafrasakan dengan sinonim atau ungkapan berbeda. Tetap self-contained dan uniquely answerable by ONE leaf node.
 
 === FORMAT OUTPUT ===
 
@@ -50,7 +46,6 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan.
     "query": "pertanyaan dalam bahasa Indonesia",
     "query_type": "factual",
     "query_style": "formal|colloquial",
-    "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
     "gold_anchor_granularity": "rincian",
     "gold_anchor_node_id": "node_id leaf PALING SPESIFIK",
@@ -63,4 +58,4 @@ Kembalikan HANYA JSON array berikut, tanpa markdown, tanpa penjelasan tambahan.
   }}
 ]
 
-Buat tepat {N} item. Pastikan semua query self-contained, single-hop, faktual eksplisit, dan anchor di level paling spesifik.
+Buat tepat {N} item. Pastikan semua query self-contained, single-hop, faktual eksplisit, anchor di level paling spesifik, dan distribusi formal/colloquial seimbang ~50/50.

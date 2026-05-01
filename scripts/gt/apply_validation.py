@@ -212,7 +212,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Apply Judge LLM output to raw GT with a struct gate.")
     ap.add_argument("--doc-id", required=True)
     ap.add_argument("--type", "-t", type=str, default="factual",
-                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    choices=["factual", "paraphrased", "multihop"],
                     help="Query type to apply (default: factual)")
     src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--judge-file", type=str, default=None,

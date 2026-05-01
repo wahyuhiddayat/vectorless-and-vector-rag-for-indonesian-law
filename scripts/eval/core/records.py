@@ -93,7 +93,6 @@ def build_per_query_record(
         "gold_doc_ids": list(item.get("gold_doc_ids", [item.get("gold_doc_id", "")])),
         "query_type": item.get("query_type", "factual"),
         "query_style": item.get("query_style", ""),
-        "difficulty": item.get("difficulty", ""),
         "reference_mode": item.get("reference_mode", ""),
         "answer_hint": item.get("answer_hint", ""),
         "gold_anchor_node_id": item.get("gold_anchor_node_id", ""),

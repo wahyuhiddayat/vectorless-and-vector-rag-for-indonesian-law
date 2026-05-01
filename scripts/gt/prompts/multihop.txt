@@ -12,7 +12,7 @@ Tipe `multihop` menguji apakah sistem retrieval dapat menemukan DUA leaf node ya
 
 === INSTRUKSI UTAMA ===
 
-Buat tepat {N} pertanyaan MULTI-HOP dalam bahasa Indonesia. Setiap pertanyaan dijawab oleh DUA leaf node anchor yang BERBEDA dari dokumen yang sama. Kedua anchor wajib BENAR-BENAR DIPERLUKAN, query yang bisa dijawab hanya dengan satu anchor saja INVALID.
+Buat tepat {N} pertanyaan MULTI-HOP dalam bahasa Indonesia. Setiap pertanyaan dijawab oleh TEPAT 2 leaf node anchor yang BERBEDA dari dokumen yang sama. Kedua anchor wajib BENAR-BENAR DIPERLUKAN, query yang bisa dijawab hanya dengan satu anchor saja INVALID.
 
 POLA YANG BAIK:
 1. Definisi + penerapan: Pasal A mendefinisikan istilah X, Pasal B menggunakan istilah X dengan kondisi/sanksi spesifik. Query: "Apa definisi X dan apa sanksinya jika dilanggar?"
@@ -25,7 +25,7 @@ POLA YANG DILARANG:
 - Query referential ("Pasal 5 mengatur X, lalu bagaimana di Pasal 7?"). Harus satu pertanyaan terintegrasi, bukan rangkaian.
 - Query yang dua anchor-nya pernyataan repetitif (saling melengkapi tetapi salah satu sudah cukup).
 
-UJI KEPERLUAN:
+UJI KEPERLUAN (disconnected-reasoning filter):
 Sebelum mengirim, untuk setiap query lakukan single-anchor sufficiency test:
 - Hapus anchor 1, apakah query masih bisa dijawab dari anchor 2 saja? Jika YA, INVALID.
 - Hapus anchor 2, apakah query masih bisa dijawab dari anchor 1 saja? Jika YA, INVALID.
@@ -35,14 +35,15 @@ ATURAN UMUM:
 - Self-contained, satu kalimat pertanyaan terintegrasi (bukan dua pertanyaan terpisah dipisah "dan").
 - Hanya body text, tidak metadata/pembukaan.
 - Dua anchor WAJIB di pasal/ayat yang berbeda (tidak boleh dua leaf di parent yang sama).
+- Tepat 2 anchor (bukan 3+). Anchor count locked at 2 sesuai design v3.
 
 === REFERENCE MODE ===
 
 Multi-hop cenderung pakai legal_ref atau both karena alami menyebut beberapa pasal, tetapi BUKAN keharusan. Distribusi sesuai natural. Tidak ada batasan ketat.
 
-=== QUERY STYLE & DIFFICULTY ===
+=== QUERY STYLE ===
 
-Distribusi formal/colloquial seimbang. Difficulty natural lebih hard untuk multi-hop, tetapi tetap target ~30% easy, ~50% medium, ~20% hard.
+Multi-hop cenderung formal karena integrasi multi-clause sulit dipertahankan informalitasnya tanpa kehilangan presisi. Tidak target eksplisit 50/50, tapi colloquial tetap dianjurkan kalau pertanyaan tetap presisi.
 
 === FORMAT OUTPUT ===
 
@@ -51,7 +52,6 @@ Distribusi formal/colloquial seimbang. Difficulty natural lebih hard untuk multi
     "query": "pertanyaan terintegrasi yang butuh DUA anchor",
     "query_type": "multihop",
     "query_style": "formal|colloquial",
-    "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
     "gold_anchor_granularity": "rincian",
     "gold_anchor_node_id": "anchor PRIMER (yang lebih sentral)",

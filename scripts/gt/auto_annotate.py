@@ -4,11 +4,15 @@ Replaces the manual paste step from prompt.py for the annotator stage. Loops
 over gt_allocation.json, calls the configured LLM per item with the same
 prompt that prompt.py emits, and writes the JSON array straight to the raw
 GT file. GT judge stays cross-family (defaults to OpenAI gpt-5 when
-annotator is Anthropic Sonnet) per design v2.
+annotator is Anthropic Sonnet) per design v3.
 
 Default annotator is Anthropic Sonnet 4.6 because it is the cross-family
 counterpart to the Vertex Gemini retrieval LLM and the OpenAI gpt-5 GT
 judge. Switch provider via --provider openai for OpenAI fallback.
+
+Per design v3 (3-type stratified): supported query types are factual,
+paraphrased, multihop. Provenance is centralized di data/gt_provenance.json
+(refreshed by prompt.py); per-call detail logs di data/gt_annotate_logs/.
 
 Resume-aware. Skips items whose raw file is already non-empty. State after
 this script runs equals "annotated" in run_allocation, so build_validate.py
@@ -51,7 +55,7 @@ from scripts.gt.prompt import (
     filter_preamble,
     find_doc,
     raw_filename,
-    write_meta_sidecar,
+    update_provenance,
 )
 from scripts.gt.run_allocation import iter_plan, _state, _raw_path
 from scripts.gt.apply_validation import _normalize_schema
@@ -69,8 +73,8 @@ DEFAULT_MAX_COST = 1.00
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEED = 42
 # API context windows are far larger than the manual paste budget (45K).
-# 500K chars ~ 125K tokens, fits all corpus docs in a single call including
-# crossdoc pairs. Bump higher only if a doc exceeds this.
+# 500K chars ~ 125K tokens, fits all corpus docs in a single call.
+# Bump higher only if a doc exceeds this.
 DEFAULT_CHAR_BUDGET = 500_000
 
 # Pricing per 1M tokens, USD.
@@ -199,7 +203,6 @@ def extract_json_array(text: str) -> list[dict]:
 
 
 def build_one_prompt(doc_id: str, query_type: str, n_questions: int,
-                     paired_doc_id: str | None,
                      char_budget: int = DEFAULT_CHAR_BUDGET) -> tuple[str, int]:
     """Resolve doc, build the annotator prompt, return (prompt_text, n_used).
 
@@ -211,21 +214,13 @@ def build_one_prompt(doc_id: str, query_type: str, n_questions: int,
         raise SystemExit(f"doc '{doc_id}' not found in data/index_rincian")
     doc = json.loads(doc_path.read_text(encoding="utf-8"))
 
-    secondary_doc = None
-    if paired_doc_id:
-        sec_path = find_doc(paired_doc_id)
-        if not sec_path:
-            raise SystemExit(f"paired doc '{paired_doc_id}' not found")
-        secondary_doc = json.loads(sec_path.read_text(encoding="utf-8"))
-
     leaves = filter_preamble(collect_leaf_nodes(doc["structure"]))
     n_used = min(compute_adaptive_n(len(leaves)) or 0, n_questions)
     if n_used <= 0:
         raise SystemExit(f"doc '{doc_id}' has too few leaves ({len(leaves)}) for GT")
 
     parts, _ = build_prompt_parts(
-        doc, n_questions=n_used, char_budget=char_budget,
-        query_type=query_type, secondary_doc=secondary_doc,
+        doc, n_questions=n_used, char_budget=char_budget, query_type=query_type,
     )
     if len(parts) > 1:
         raise SystemExit(
@@ -234,15 +229,6 @@ def build_one_prompt(doc_id: str, query_type: str, n_questions: int,
             f"or raise --char-budget."
         )
     return parts[0]["prompt"], n_used
-
-
-def crossdoc_pair(allocation: dict, doc_id: str) -> str | None:
-    """Look up the crossdoc paired-doc for a given primary doc_id."""
-    for payload in allocation.values():
-        for entry in payload.get("per_doc_allocation", []):
-            if entry["doc_id"] == doc_id:
-                return entry.get("crossdoc_paired_with")
-    return None
 
 
 def call_openai(client, model: str, prompt: str, temperature: float, seed: int) -> tuple[str, dict]:
@@ -322,11 +308,11 @@ def write_call_detail(stamp: str, doc_id: str, query_type: str, payload: dict) -
 
 
 def annotate_one(provider: str, client, model: str, pricing: dict, cat: str, doc_id: str,
-                 query_type: str, n_questions: int, paired_doc_id: str | None,
+                 query_type: str, n_questions: int,
                  dry_run: bool, temperature: float, seed: int,
                  char_budget: int) -> tuple[float, int, str]:
     """Build prompt, call API, write raw file. Return (cost, n_items, status)."""
-    prompt, n_used = build_one_prompt(doc_id, query_type, n_questions, paired_doc_id, char_budget)
+    prompt, n_used = build_one_prompt(doc_id, query_type, n_questions, char_budget)
     if dry_run:
         est = estimate_cost(prompt, n_used, pricing)
         return est, 0, f"dry-run estimate ${est:.4f}"
@@ -344,7 +330,6 @@ def annotate_one(provider: str, client, model: str, pricing: dict, cat: str, doc
         "category": cat,
         "provider": provider,
         "model": model,
-        "paired_doc_id": paired_doc_id,
         "n_questions_target": n_used,
         "started_at": started.isoformat(timespec="seconds"),
         "elapsed_s": round(elapsed, 2),
@@ -368,11 +353,8 @@ def annotate_one(provider: str, client, model: str, pricing: dict, cat: str, doc
     raw_path = raw_dir / raw_filename(doc_id, query_type)
     raw_path.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    meta_path = write_meta_sidecar(cat, doc_id, n_used, total_parts=1, query_type=query_type)
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["annotator_provider"] = provider
-    meta["annotator_model"] = model
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # Refresh data/gt_provenance.json (prompt SHA-8s + default models)
+    update_provenance()
 
     detail = write_call_detail(stamp, doc_id, query_type, {**base_log, "status": "ok", "n_items_returned": len(items), "schema_fixups": fixups, "prompt": prompt, "response": text, "items": items})
     append_log({**base_log, "status": "ok", "n_items_returned": len(items), "schema_fixups_count": len(fixups), "raw_path": str(raw_path), "detail_path": str(detail)})
@@ -387,7 +369,7 @@ def main() -> None:
     ap.add_argument("--doc-id", type=str, default=None,
                     help="Single doc_id, requires --type")
     ap.add_argument("--type", "-t", type=str, default=None,
-                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"])
+                    choices=["factual", "paraphrased", "multihop"])
     ap.add_argument("--provider", type=str, default=None,
                     choices=["openai", "anthropic"],
                     help=f"LLM provider (default {DEFAULT_PROVIDER}; inferred from --model prefix)")
@@ -450,9 +432,8 @@ def main() -> None:
     print(f"\nEstimating cost for {len(work)} item(s)...")
     estimates: list[float] = []
     for cat, doc_id, qt, n in work:
-        paired = crossdoc_pair(allocation, doc_id) if qt == "crossdoc" else None
         try:
-            prompt, n_used = build_one_prompt(doc_id, qt, n, paired, args.char_budget)
+            prompt, n_used = build_one_prompt(doc_id, qt, n, args.char_budget)
             est = estimate_cost(prompt, n_used, pricing)
             estimates.append(est)
         except SystemExit as e:
@@ -495,10 +476,9 @@ def main() -> None:
     total_cost = 0.0
     n_ok = n_fail = 0
     for cat, doc_id, qt, n in work:
-        paired = crossdoc_pair(allocation, doc_id) if qt == "crossdoc" else None
         try:
             cost, n_items, status = annotate_one(
-                provider, client, model, pricing, cat, doc_id, qt, n, paired,
+                provider, client, model, pricing, cat, doc_id, qt, n,
                 dry_run=False, temperature=args.temperature, seed=args.seed,
                 char_budget=args.char_budget,
             )

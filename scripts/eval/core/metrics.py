@@ -6,11 +6,11 @@ harnesses so RQ1, RQ2, and RQ3 numbers are computed identically.
 Methodology notes for thesis writeup.
 
   N1. Gold sets may have one or multiple members. Single-gold queries
-      (factual, paraphrased, adversarial) collapse recall@k to hit@k and map@k
-      to mrr@k. Multi-gold queries (multihop, crossdoc) make recall@k a true
-      partial-credit metric. The score_ranked_retrieval formula handles both
-      cases uniformly via set-overlap. NDCG@k is monotone-equivalent to mrr@k
-      under single-gold (Sakai 2007, IPSJ Trans. Databases 48 SIG9).
+      (factual, paraphrased) collapse recall@k to hit@k and map@k to mrr@k.
+      Multi-gold queries (multihop) make recall@k a true partial-credit
+      metric. The score_ranked_retrieval formula handles both cases uniformly
+      via set-overlap. NDCG@k is monotone-equivalent to mrr@k under single-
+      gold (Sakai 2007, IPSJ Trans. Databases 48 SIG9).
 
       Primary metric per BEIR convention. Thakur et al. 2021 (NeurIPS D&B,
       arXiv:2104.08663) establish NDCG@10 as the standard headline metric for
@@ -63,7 +63,7 @@ GOLD_KEY_BY_GRANULARITY = {
     "rincian": "gold_rincian_node_ids",
 }
 
-SLICE_FIELDS = ["reference_mode", "query_style", "difficulty", "gold_doc_id", "query_type"]
+SLICE_FIELDS = ["reference_mode", "query_style", "gold_doc_id", "query_type"]
 
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",

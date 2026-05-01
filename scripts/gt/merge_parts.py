@@ -55,7 +55,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Merge multipart GT raw files into one document-level raw JSON")
     ap.add_argument("doc_id", type=str, help="Document ID, e.g. permenaker-13-2025")
     ap.add_argument("--type", "-t", type=str, default="factual",
-                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    choices=["factual", "paraphrased", "multihop"],
                     help="Query type (default factual)")
     ap.add_argument("--parts-dir", type=str, default=str(DEFAULT_PARTS_DIR), help="Base directory for multipart raw outputs")
     ap.add_argument("--out", type=str, default=None, help="Output file path (default data/ground_truth_raw/<CAT>/<doc_id>__<type>.json)")

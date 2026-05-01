@@ -17,7 +17,7 @@ Buat tepat {N} pertanyaan PARAFRASED dalam bahasa Indonesia. Setiap pertanyaan d
 ATURAN LEKSIKAL WAJIB (yang membedakan paraphrased dari factual):
 1. WAJIB: Ganti minimal 3 kata kunci konten (noun/verb/adjective utama) dari teks anchor dengan SINONIM atau abstraksi.
 2. DILARANG: menyalin frasa kata-benda 2 kata atau lebih VERBATIM dari teks anchor leaf. Misalnya jika anchor mengatakan "kepala daerah", query tidak boleh memuat "kepala daerah" persis, gunakan "pimpinan pemerintahan daerah" atau "gubernur/bupati/walikota".
-3. DILARANG: query yang Jaccard overlap-nya dengan teks anchor di atas 0.40 (dihitung pada token konten, stopword diabaikan). Validator otomatis akan reject.
+3. DILARANG: query yang Jaccard overlap-nya dengan teks anchor di atas 0.40 (dihitung pada token konten setelah Sastrawi stemming, stopword diabaikan). Validator otomatis akan reject.
 4. BOLEH: ubah struktur kalimat (deklaratif <-> interogatif), pasif/aktif, urutan klausa.
 5. WAJIB: jawaban tetap ada di anchor secara semantik, walau kata-katanya berbeda.
 
@@ -34,9 +34,9 @@ CONTOH:
 
 Mayoritas paraphrased seharusnya `none` atau `doc_only` karena merujuk legal_ref eksplisit cenderung mengembalikan kata-kata literal. Target distribusi: none 60-80%, doc_only 10-20%, legal_ref 0-15%, both 0-10%.
 
-=== QUERY STYLE & DIFFICULTY ===
+=== QUERY STYLE ===
 
-Sama seperti factual: ~50% formal vs ~50% colloquial, distribusi difficulty 40/40/20. Untuk paraphrased, colloquial cenderung lebih natural karena orang awam memang tidak tahu istilah teknis.
+Distribusi target ~50% formal, ~50% colloquial. Untuk paraphrased, colloquial cenderung lebih natural karena orang awam memang tidak tahu istilah teknis.
 
 === FORMAT OUTPUT ===
 
@@ -45,7 +45,6 @@ Sama seperti factual: ~50% formal vs ~50% colloquial, distribusi difficulty 40/4
     "query": "pertanyaan paraphrased dalam bahasa Indonesia",
     "query_type": "paraphrased",
     "query_style": "formal|colloquial",
-    "difficulty": "easy|medium|hard",
     "reference_mode": "none|legal_ref|doc_only|both",
     "gold_anchor_granularity": "rincian",
     "gold_anchor_node_id": "node_id leaf paling spesifik",

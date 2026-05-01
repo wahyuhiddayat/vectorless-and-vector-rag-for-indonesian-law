@@ -3,16 +3,15 @@
 Given a category, a global type distribution target, and the seed-locked GT-
 source doc list from gt_doc_selection.json, produce a deterministic per-doc
 allocation matrix. The matrix tells you exactly how many queries of each type
-to generate per doc, plus which docs to pair for crossdoc.
+to generate per doc.
 
 Algorithm. Largest-quota-first greedy with rotating offsets per type. For
 each type, fill docs round-robin starting at a per-type seeded offset, capped
 at ceil(quota / n_docs) per doc. The starting offset rotation balances loads
 across docs so no doc gets all the extras of the biggest types.
 
-Crossdoc pairing. For each doc that hosts a crossdoc query, pair it with the
-next selected doc (round-robin, seeded shift). Pairs are deterministic from
-the seed.
+Distribusi default mengikuti design v3 (3-type stratified, equal split):
+factual 9, paraphrased 8, multihop 8 (sum=25 = ceiling alami 5 docs x 5 q/doc).
 
 Usage:
     python scripts/gt/allocate_quotas.py --category UU
@@ -32,16 +31,13 @@ if hasattr(sys.stdout, "reconfigure"):
 
 SELECTION_FILE = Path("data/gt_doc_selection.json")
 ALLOCATION_FILE = Path("data/gt_allocation.json")
-CATALOG_FILE = Path("data/index_pasal/catalog.json")
 
 DEFAULT_DISTRIBUTION = {
-    "factual": 8,
-    "paraphrased": 6,
-    "multihop": 6,
-    "crossdoc": 3,
-    "adversarial": 2,
+    "factual": 9,
+    "paraphrased": 8,
+    "multihop": 8,
 }
-TYPE_PRIORITY = ["factual", "paraphrased", "multihop", "crossdoc", "adversarial"]
+TYPE_PRIORITY = ["factual", "paraphrased", "multihop"]
 
 
 def load_selected_docs(category: str) -> list[str]:
@@ -113,117 +109,17 @@ def allocate(distribution: dict[str, int], n_docs: int, seed: int) -> list[dict[
     return allocation
 
 
-def load_catalog_topics(doc_ids: list[str]) -> dict[str, dict[str, str]]:
-    """Return {doc_id: {bidang, subjek, judul}} for the requested docs."""
-    if not CATALOG_FILE.exists():
-        return {}
-    with open(CATALOG_FILE, encoding="utf-8") as f:
-        catalog = json.load(f)
-    by_id = {entry["doc_id"]: entry for entry in catalog if "doc_id" in entry}
-    out: dict[str, dict[str, str]] = {}
-    for did in doc_ids:
-        entry = by_id.get(did, {})
-        out[did] = {
-            "bidang": entry.get("bidang", ""),
-            "subjek": entry.get("subjek", ""),
-            "judul": entry.get("judul", ""),
-        }
-    return out
-
-
-def assign_crossdoc_pairs(
-    doc_ids: list[str],
-    allocation: list[dict[str, int]],
-    seed: int,
-    manual_pairs: dict[str, str] | None = None,
-) -> tuple[list[str | None], list[str]]:
-    """Pick a paired doc for each doc that hosts crossdoc queries.
-
-    Pairing priority.
-    1. Manual override via --manual-pairs.
-    2. Same `subjek` partner (most semantically aligned, e.g. both APBN).
-    3. Same `bidang` partner (broader category match).
-    4. Arbitrary partner via seed-locked round-robin (last resort).
-
-    Returns (pair_list, rationale_list) so the caller can surface why a pair
-    was chosen. Pairs are deterministic from the seed when no manual override.
-    """
-    n = len(doc_ids)
-    rationales: list[str] = [""] * n
-    pairs: list[str | None] = [None] * n
-    if n < 2:
-        return pairs, rationales
-
-    manual_pairs = manual_pairs or {}
-    topics = load_catalog_topics(doc_ids)
-
-    rng = random.Random(seed + 1)
-    fallback_shift = 1 + rng.randrange(n - 1)
-
-    crossdoc_indices = [i for i, a in enumerate(allocation) if a.get("crossdoc", 0) > 0]
-
-    for i in crossdoc_indices:
-        host = doc_ids[i]
-        if host in manual_pairs:
-            partner = manual_pairs[host]
-            if partner not in doc_ids:
-                raise SystemExit(
-                    f"manual pair '{host}' -> '{partner}' but '{partner}' not in selected docs"
-                )
-            if partner == host:
-                raise SystemExit(f"manual pair points doc '{host}' to itself")
-            pairs[i] = partner
-            rationales[i] = "manual"
-            continue
-
-        host_subjek = topics.get(host, {}).get("subjek", "")
-        host_bidang = topics.get(host, {}).get("bidang", "")
-
-        # Tier 2, same subjek
-        candidates = [
-            doc_ids[j] for j in range(n)
-            if j != i and topics.get(doc_ids[j], {}).get("subjek", "") == host_subjek
-            and host_subjek
-        ]
-        if candidates:
-            pick = rng.choice(sorted(candidates))
-            pairs[i] = pick
-            rationales[i] = f"same subjek ({host_subjek})"
-            continue
-
-        # Tier 3, same bidang
-        candidates = [
-            doc_ids[j] for j in range(n)
-            if j != i and topics.get(doc_ids[j], {}).get("bidang", "") == host_bidang
-            and host_bidang
-        ]
-        if candidates:
-            pick = rng.choice(sorted(candidates))
-            pairs[i] = pick
-            rationales[i] = f"same bidang ({host_bidang})"
-            continue
-
-        # Tier 4, arbitrary round-robin
-        pairs[i] = doc_ids[(i + fallback_shift) % n]
-        rationales[i] = "arbitrary (no topic match)"
-
-    return pairs, rationales
-
-
-def render_commands(category: str, doc_ids: list[str], allocation: list[dict[str, int]], pairs: list[str | None]) -> list[str]:
+def render_commands(doc_ids: list[str], allocation: list[dict[str, int]]) -> list[str]:
     """Produce shell commands matching the allocation."""
     commands: list[str] = []
-    for doc_id, alloc, paired in zip(doc_ids, allocation, pairs):
+    for doc_id, alloc in zip(doc_ids, allocation):
         for type_name in TYPE_PRIORITY:
             n = alloc.get(type_name, 0)
             if n == 0:
                 continue
-            base = f"python scripts/gt/prompt.py {doc_id} --type {type_name} --questions {n}"
-            if type_name == "crossdoc":
-                if not paired:
-                    raise SystemExit(f"doc {doc_id} has crossdoc>0 but no pair assigned")
-                base += f" --paired-doc {paired}"
-            commands.append(base)
+            commands.append(
+                f"python scripts/gt/prompt.py {doc_id} --type {type_name} --questions {n}"
+            )
     return commands
 
 
@@ -233,30 +129,26 @@ def main() -> None:
     ap.add_argument("--total", type=int, default=None,
                     help="Total queries (defaults to sum of --distribution)")
     ap.add_argument("--distribution", type=str, default=None,
-                    help='JSON dict of type quotas, e.g. \'{"factual":8,"paraphrased":6,"multihop":6,"crossdoc":3,"adversarial":2}\'')
+                    help='JSON dict of type quotas, e.g. \'{"factual":9,"paraphrased":8,"multihop":8}\'')
     ap.add_argument("--seed", type=int, default=42, help="Seed for reproducibility (default 42)")
     ap.add_argument("--emit-commands", action="store_true", help="Print prompt.py commands")
     ap.add_argument("--out", type=str, default=str(ALLOCATION_FILE),
                     help=f"Output allocation JSON (default {ALLOCATION_FILE})")
-    ap.add_argument("--manual-pairs", type=str, default=None,
-                    help='Override crossdoc pairings, format: "host1=partner1,host2=partner2"')
     args = ap.parse_args()
-
-    manual_pairs: dict[str, str] = {}
-    if args.manual_pairs:
-        for entry in args.manual_pairs.split(","):
-            entry = entry.strip()
-            if not entry:
-                continue
-            if "=" not in entry:
-                raise SystemExit(f"--manual-pairs entry '{entry}' must be host=partner")
-            host, partner = entry.split("=", 1)
-            manual_pairs[host.strip()] = partner.strip()
 
     if args.distribution:
         distribution = json.loads(args.distribution)
     else:
         distribution = dict(DEFAULT_DISTRIBUTION)
+
+    # Validate distribution keys against allowed types.
+    unknown = set(distribution) - set(TYPE_PRIORITY)
+    if unknown:
+        raise SystemExit(
+            f"unknown query type(s) in --distribution: {sorted(unknown)}. "
+            f"Allowed types: {TYPE_PRIORITY}"
+        )
+
     if args.total is not None and args.total != sum(distribution.values()):
         raise SystemExit(
             f"--total {args.total} does not match sum of distribution {sum(distribution.values())}"
@@ -267,9 +159,6 @@ def main() -> None:
         raise SystemExit(f"no selected docs for category {args.category}")
 
     allocation = allocate(distribution, len(doc_ids), seed=args.seed)
-    pairs, rationales = assign_crossdoc_pairs(
-        doc_ids, allocation, seed=args.seed, manual_pairs=manual_pairs,
-    )
 
     payload = {
         "category": args.category,
@@ -281,11 +170,9 @@ def main() -> None:
             {
                 "doc_id": doc_id,
                 **alloc,
-                "crossdoc_paired_with": paired,
-                "crossdoc_pair_rationale": rationale,
                 "total": sum(alloc.values()),
             }
-            for doc_id, alloc, paired, rationale in zip(doc_ids, allocation, pairs, rationales)
+            for doc_id, alloc in zip(doc_ids, allocation)
         ],
     }
 
@@ -302,24 +189,21 @@ def main() -> None:
     print(f"Allocation saved to {out_path}")
 
     print(f"\nAllocation matrix for category={args.category} seed={args.seed}:\n")
-    header = ["doc_id"] + TYPE_PRIORITY + ["total", "paired", "rationale"]
+    header = ["doc_id"] + TYPE_PRIORITY + ["total"]
     widths = [max(len(h), 12) for h in header]
     print("  " + "  ".join(h.ljust(w) for h, w in zip(header, widths)))
-    for doc_id, alloc, paired, rationale in zip(doc_ids, allocation, pairs, rationales):
-        row = [doc_id] + [str(alloc.get(t, 0)) for t in TYPE_PRIORITY] + [
-            str(sum(alloc.values())), paired or "-", rationale or "-",
-        ]
+    for doc_id, alloc in zip(doc_ids, allocation):
+        row = [doc_id] + [str(alloc.get(t, 0)) for t in TYPE_PRIORITY] + [str(sum(alloc.values()))]
         print("  " + "  ".join(c.ljust(w) for c, w in zip(row, widths)))
     totals = ["TOTAL"]
     for t in TYPE_PRIORITY:
         totals.append(str(sum(a.get(t, 0) for a in allocation)))
     totals.append(str(sum(sum(a.values()) for a in allocation)))
-    totals.extend(["-", "-"])
     print("  " + "  ".join(c.ljust(w) for c, w in zip(totals, widths)))
 
     if args.emit_commands:
         print("\nCommands to run:\n")
-        for cmd in render_commands(args.category, doc_ids, allocation, pairs):
+        for cmd in render_commands(doc_ids, allocation):
             print(f"  {cmd}")
 
 

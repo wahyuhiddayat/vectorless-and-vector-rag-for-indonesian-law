@@ -1,4 +1,4 @@
-# Ground Truth Workflow (v2, typed-query benchmark)
+# Ground Truth Workflow (v3, 3-type stratified benchmark)
 
 Operational guide for building the GT testset used in retrieval evaluation.
 
@@ -8,14 +8,14 @@ Run all commands from the project root.
 cd "d:/Fasilkom UI/Kuliah/Semester 8/TA - Skripsi/02 Codebase/vectorless-and-vector-rag-for-indonesian-law"
 ```
 
-For the design rationale (5 query types, 4-layer validation, multi-anchor rollup), see [`Notes/02-ground-truth/design_v2.md`](../../../Notes/02-ground-truth/design_v2.md).
+For the design rationale (3 query types, 4-layer validation, multi-anchor rollup), see [`Notes/02-ground-truth/design_v3.md`](../../../Notes/02-ground-truth/design_v3.md). The v2 → v3 scope-down decision is documented in [`Notes/06-decisions/2026-05-01-3type-gt-benchmark.md`](../../../Notes/06-decisions/2026-05-01-3type-gt-benchmark.md).
 
 ## Pipeline at a glance
 
 ```
 0. SELECT       select_gt_docs.py        pick 5 of 10 docs per category (stratified random)
 0.5 ALLOCATE    allocate_quotas.py       distribute per-type quotas across selected docs
-1. PROMPT       prompt.py --type <t>     emit annotator prompt + provenance sidecar
+1. PROMPT       prompt.py --type <t>     emit annotator prompt; refresh prompt SHA-8 di data/gt_provenance.json
 2. ANNOTATE     Generator LLM (manual)   paste prompt, save JSON output
 3. MERGE        merge_parts.py           combine multipart outputs (only if parts > 1)
 4. VALIDATE     build_validate.py        Layer 1 struct + Layer 2 deterministic + Judge prompt
@@ -28,17 +28,15 @@ For the design rationale (5 query types, 4-layer validation, multi-anchor rollup
 
 Steps 2 and 5 are external LLM calls. All other steps are scripts.
 
-## Five query types
+## Three query types
 
-| Type | Anchor count | Stress-tests |
-|---|:-:|---|
-| `factual` | 1 | Literal lookup baseline |
-| `paraphrased` | 1 | Dense embedding vs BM25 separation |
-| `multihop` | 2 (same doc, different pasal) | Hierarchical tree navigation |
-| `crossdoc` | 2 (different docs in same category) | Catalog-level retrieval |
-| `adversarial` | 1 target + distractor | Cross-encoder reranking |
+| Type | Anchor count | Stress-tests | Target ratio |
+|---|:-:|---|:-:|
+| `factual` | 1 | Literal lookup baseline | ~33% (9 of 25) |
+| `paraphrased` | 1 | Dense embedding vs BM25 separation | ~33% (8 of 25) |
+| `multihop` | 2 (same doc, different pasal) | Hierarchical tree navigation | ~34% (8 of 25) |
 
-Per-type rules and gates are detailed in `Notes/02-ground-truth/design_v2.md`.
+Per-type rules and gates are detailed in `Notes/02-ground-truth/design_v3.md`. `crossdoc` and `adversarial` (from v2) dropped per ADR-002 — adversarial requires deferred reranker, crossdoc adds limited retrieval-skill information beyond multihop.
 
 ## GT policy summary
 
@@ -46,7 +44,7 @@ Per-type rules and gates are detailed in `Notes/02-ground-truth/design_v2.md`.
 - Single-anchor queries roll up to gold size 1 at every granularity.
 - Multi-anchor queries roll up to gold size 1..N (collapses if anchors share parent).
 - Body text only. Preamble (`Menimbang`, `Mengingat`, `Menetapkan`, `Pembukaan`) and top-level metadata are out of scope.
-- Annotator and Judge LLM must be a different model family from the Gemini retrieval backbone, and ideally different from each other (cross-family judge per design v2).
+- Annotator and Judge LLM must be a different model family from the Gemini retrieval backbone, and different from each other (cross-family judge per design v3). Default: annotator Claude Sonnet 4.6, judge GPT-5.
 
 ## Step 0. Select GT-source docs
 
@@ -66,16 +64,14 @@ Output, `data/gt_doc_selection.json`. The 5 picked docs are GT sources, the 5 un
 python scripts/gt/allocate_quotas.py --category UU --seed 42 --emit-commands
 ```
 
-Reads selected docs from Step 0. Greedy fill with rotating per-type offsets. Crossdoc pairing 4-tier priority (manual override, same `subjek`, same `bidang`, round-robin). Output, `data/gt_allocation.json`. With `--emit-commands` the script prints ready-to-paste invocations for Step 1.
+Reads selected docs from Step 0. Greedy fill with rotating per-type offsets, per-doc cap 5 queries. Type ratio target equal split ~33/33/34 (factual 9 / paraphrased 8 / multihop 8 of 25 per category), turunkan kuota per-type kalau doc affordance tidak mendukung dan compensate dengan type lain. Output, `data/gt_allocation.json` mencatat realized distribution. With `--emit-commands` the script prints ready-to-paste invocations for Step 1.
 
 ## Step 1. Generate annotator prompt
 
 ```bash
-python scripts/gt/prompt.py uu-1-2026 --type factual --questions 8
-python scripts/gt/prompt.py uu-1-2026 --type paraphrased --questions 6
-python scripts/gt/prompt.py uu-1-2026 --type multihop --questions 6
-python scripts/gt/prompt.py uu-1-2026 --type crossdoc --paired-doc uu-2-2026 --questions 3
-python scripts/gt/prompt.py uu-1-2026 --type adversarial --questions 2
+python scripts/gt/prompt.py uu-1-2026 --type factual --questions 2
+python scripts/gt/prompt.py uu-1-2026 --type paraphrased --questions 2
+python scripts/gt/prompt.py uu-1-2026 --type multihop --questions 1
 ```
 
 Outputs.
@@ -83,15 +79,14 @@ Outputs.
 - Single doc, `tmp/gt_<doc_id>__<type>.txt`
 - Long doc, `tmp/gt_<doc_id>__<type>_part01.txt`, `..._part02.txt`, `..._manifest.json`
 - Empty placeholder JSON at `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json`
-- Provenance sidecar at `data/ground_truth_raw/<CAT>/<doc_id>__<type>.meta.json`
+- Refresh `prompt_versions.<type>` SHA-8 di `data/gt_provenance.json` (auto kalau template berubah)
 
 Notes.
 
 - Reads from `data/index_rincian`.
 - Doc must appear in `gt_doc_selection.json` for its category. Pass `--allow-unselected` to bypass.
 - Templates live under `scripts/gt/prompts/<type>.txt`.
-- `prompt_version` in the sidecar is the SHA-8 of the resolved template. If you edit the template, the hash changes and old GT becomes a different version.
-- `--type crossdoc` requires `--paired-doc <secondary_doc_id>`.
+- `prompt_versions.<type>` di `data/gt_provenance.json` = SHA-8 resolved template. Kalau edit template, hash berubah → GT lama linguistic-version berbeda dari yang baru di-generate.
 
 ## Step 2. Run the Generator LLM
 
@@ -102,7 +97,7 @@ Save the JSON array output to:
 - Single, `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json` (overwrite the placeholder).
 - Multipart, `data/ground_truth_parts/<CAT>/<doc_id>__<type>/part01.json`, `part02.json`, ...
 
-Then update the sidecar field `annotator_model` with the model name and version.
+Default annotator model (Claude Sonnet 4.6) sudah pinned di `data/gt_provenance.json` — tidak perlu update per-file. Kalau swap model untuk batch tertentu, tambah entry ke `gt_provenance.json` `overrides` array.
 
 ## Step 3. Merge multipart parts (only if multipart)
 
@@ -117,21 +112,21 @@ Output, `data/ground_truth_raw/<CAT>/<doc_id>__<type>.json`.
 ```bash
 python scripts/gt/build_validate.py --doc-id uu-1-2026 --type factual
 python scripts/gt/build_validate.py --doc-id uu-1-2026 --type paraphrased
-python scripts/gt/build_validate.py --doc-id uu-1-2026 --type adversarial
+python scripts/gt/build_validate.py --doc-id uu-1-2026 --type multihop
 ```
 
 The script.
 
 1. Runs Layer 1 struct check from `collect.py`. Hard-gates if any structural error exists.
-2. Runs the per-type Layer 2 deterministic gate, paraphrase Jaccard for `paraphrased`, BM25 cascade rank for `adversarial`. Other types skip Layer 2. Hard-gates on any flag.
-3. Inlines items + leaf-node context for **every** anchor (both anchors for multihop, both docs for crossdoc) into the type-aware rules from `validate_prompt.txt`.
+2. Runs the per-type Layer 2 deterministic gate, paraphrase Jaccard for `paraphrased`. Other types skip Layer 2. Hard-gates on any flag.
+3. Inlines items + leaf-node context for **every** anchor (both anchors for multihop) into the type-aware rules from `validate_prompt.txt`.
 4. Writes the assembled prompt to `tmp/validate_<doc_id>__<type>.txt`.
 
 Pass `--skip-layer2` only for diagnostic reruns when you intentionally want to bypass the deterministic gate.
 
 ## Step 5. Run the Judge LLM
 
-Paste `tmp/validate_<doc_id>__<type>.txt` into Claude or GPT (must differ from the Generator and must not be Gemini, cross-family judge per design v2).
+Paste `tmp/validate_<doc_id>__<type>.txt` into GPT-5 (judge default, cross-family from Claude annotator and from Gemini retrieval backbone).
 
 The Judge returns a validation summary, the `---CLEANED---` separator, the JSON array of cleaned items, then `---END---`.
 
@@ -160,7 +155,7 @@ python scripts/gt/apply_validation.py --doc-id <id> --type <t> --dry-run
 
 If validation fails the raw file is left untouched, fix the items in the raw file (or rerun the Judge) and try again.
 
-After applying, update sidecar field `judge_model`.
+Default judge model (GPT-5) sudah pinned di `data/gt_provenance.json` — tidak perlu update per-file. Kalau swap model untuk batch tertentu, tambah entry ke `gt_provenance.json` `overrides` array.
 
 ## Step 7. Author spot-check (Layer 4)
 
@@ -171,7 +166,7 @@ python scripts/gt/log_review.py uu-1-2026 --type factual
 python scripts/gt/log_review.py uu-1-2026 --type multihop
 ```
 
-For each item the script prints query, every anchor (with its leaf text and navigation path), distractor (if adversarial), answer hint, then prompts for a verdict.
+For each item the script prints query, every anchor (with its leaf text and navigation path), answer hint, then prompts for a verdict.
 
 - `c` correct
 - `w` wrong (will be dropped at collect step)
@@ -228,9 +223,9 @@ python scripts/gt/load_testset.py --query "<keyword>"
 ## Optional: auto-annotate via OpenAI API (Step 1 + 2)
 
 When the manual paste-paste cycle for the annotator step gets tedious,
-`auto_annotate.py` calls the OpenAI Chat Completions API for every (doc, type)
-in the allocation. The annotator side is automated, the **Judge side stays
-manual via Copilot Sonnet 4.6** so the cross-family rule from design v2 holds.
+`auto_annotate.py` calls the Anthropic API (Claude Sonnet 4.6) for every (doc, type)
+in the allocation. Default annotator is Sonnet 4.6, judge is GPT-5 (cross-family
+per design v3 — see `Notes/03-pipeline/llm-distribution.md`).
 
 Setup once,
 
@@ -266,7 +261,7 @@ After auto-annotate,
 
 ```bash
 python scripts/gt/run_allocation.py --build --category UU
-# Paste each tmp/validate_*.txt to Copilot (Sonnet 4.6, cross-family from gpt-5.5)
+# Paste each tmp/validate_*.txt to GPT-5 (cross-family from Claude annotator)
 # Paste full Judge response over the matching raw GT file
 python scripts/gt/run_allocation.py --apply --category UU
 # log_review per (doc, type), then collect.py + finalize.py
@@ -296,7 +291,7 @@ python scripts/gt/run_allocation.py --build --category UU
 python scripts/gt/run_allocation.py --apply --category UU
 ```
 
-Filter by `--type <factual|paraphrased|multihop|crossdoc|adversarial>` to scope
+Filter by `--type <factual|paraphrased|multihop>` to scope
 either phase. Both phases continue past per-item failures and report counts at
 the end.
 
@@ -319,13 +314,12 @@ Re-runnable safely: `--build` skips items that don't have a raw yet,
 | File | Role |
 |---|---|
 | `select_gt_docs.py` | Stratified random doc selection (Step 0) |
-| `allocate_quotas.py` | Per-type quota allocation and crossdoc pairing (Step 0.5) |
-| `prompt.py` | Generator prompt + provenance sidecar (Step 1) |
-| `prompts/<type>.txt` | Per-type annotator templates |
+| `allocate_quotas.py` | Per-type quota allocation, ratio target equal split ~33/33/34, per-doc cap 5 (Step 0.5) |
+| `prompt.py` | Generator prompt; refresh `data/gt_provenance.json` prompt SHA-8 (Step 1) |
+| `prompts/<type>.txt` | Per-type annotator templates (factual, paraphrased, multihop) |
 | `merge_parts.py` | Combine multipart outputs (Step 3) |
 | `build_validate.py` | Layer 1 + Layer 2 + Judge prompt assembly (Step 4) |
 | `validators/paraphrase_overlap.py` | Layer 2 Jaccard gate for `paraphrased` |
-| `validators/adversarial_bm25.py` | Layer 2 BM25 cascade gate for `adversarial` |
 | `validate_prompt.txt` | Type-aware semantic rules used by Judge (Step 5) |
 | `apply_validation.py` | Judge output gate (Step 6) |
 | `log_review.py` | Author spot-check logger (Step 7) |
@@ -342,7 +336,7 @@ Re-runnable safely: `--build` skips items that don't have a raw yet,
 echo {} > data/ground_truth.json
 
 # Full reset, keep selection and allocation
-rm -rf data/ground_truth_raw/*/*.json data/ground_truth_raw/*/*.meta.json
+rm -rf data/ground_truth_raw/*/*.json
 rm -rf data/ground_truth_parts data/gt_audit
 echo {} > data/ground_truth.json
 rm -f data/validated_testset.pkl
@@ -356,9 +350,8 @@ rm -f data/gt_doc_selection.json data/gt_allocation.json
 ```json
 {
   "query": "...",
-  "query_type": "factual|paraphrased|multihop|crossdoc|adversarial",
+  "query_type": "factual|paraphrased|multihop",
   "query_style": "formal|colloquial",
-  "difficulty": "easy|medium|hard",
   "reference_mode": "none|legal_ref|doc_only|both",
   "gold_anchor_granularity": "rincian",
   "gold_anchor_node_id": "...",
@@ -367,12 +360,11 @@ rm -f data/gt_doc_selection.json data/gt_allocation.json
   "gold_doc_id": "...",
   "gold_doc_ids": ["..."],
   "navigation_path": "...",
-  "answer_hint": "...",
-  "distractor_node_id": "..."
+  "answer_hint": "..."
 }
 ```
 
-`gold_anchor_node_ids` is **required** for `multihop` and `crossdoc`, optional otherwise (defaults to `[gold_anchor_node_id]`). `gold_doc_ids` mirrors `gold_anchor_node_ids`. `distractor_node_id` is required for `adversarial`. `answer_hint` is an evidence snippet for reviewer sanity checking, not a full canonical answer.
+`gold_anchor_node_ids` is **required** for `multihop` (size 2), optional otherwise (defaults to `[gold_anchor_node_id]`). `gold_doc_ids` mirrors `gold_anchor_node_ids`. `answer_hint` is an evidence snippet for reviewer sanity checking, not a full canonical answer. (`difficulty` field dari v1/v2 dropped di v3.)
 
 ## Habits
 

@@ -50,7 +50,7 @@ from scripts.gt.apply_validation import (
 ALLOCATION_FILE = Path("data/gt_allocation.json")
 RAW_DIR = Path("data/ground_truth_raw")
 TMP_DIR = Path("tmp")
-QUERY_TYPES = ("factual", "paraphrased", "multihop", "crossdoc", "adversarial")
+QUERY_TYPES = ("factual", "paraphrased", "multihop")
 
 
 def _basename(doc_id: str, query_type: str) -> str:

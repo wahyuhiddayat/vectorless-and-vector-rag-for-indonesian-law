@@ -226,13 +226,13 @@ def query_distribution(testset: dict[str, dict], qids: list[str]) -> dict:
     docs = {item.get("gold_doc_id", "") for item in selected}
     categories = Counter(doc_category(item.get("gold_doc_id", "")) for item in selected)
     ref_mode = Counter(item.get("reference_mode", "") for item in selected)
-    difficulty = Counter(item.get("difficulty", "") for item in selected)
     query_style = Counter(item.get("query_style", "") for item in selected)
+    query_type = Counter(item.get("query_type", "") for item in selected)
     return {
         "num_queries": len(selected),
         "num_docs": len(docs),
         "reference_mode": dict(ref_mode),
         "category": dict(categories),
-        "difficulty": dict(difficulty),
         "query_style": dict(query_style),
+        "query_type": dict(query_type),
     }

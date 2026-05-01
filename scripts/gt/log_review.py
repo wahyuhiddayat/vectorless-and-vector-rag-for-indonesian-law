@@ -3,11 +3,16 @@
 Author runs this once per doc after the Judge LLM step. The script walks
 through each query in the cleaned raw GT, shows the anchor leaf text, and
 records a verdict per item, correct, wrong, borderline, or skip. Output
-goes to data/gt_audit/<doc_id>.json so the manual review pass leaves a
-reproducible trail.
+goes to data/gt_audit/<doc_id>__<type>.json so the manual review pass leaves
+a reproducible trail.
+
+Per design v3 (3-type stratified): supported query types are factual,
+paraphrased, multihop. Provenance metadata (annotator/judge models, prompt
+SHA-8) lives di data/gt_provenance.json, bukan per-file sidecar.
 
 Usage:
-    python scripts/gt/log_review.py <doc_id>
+    python scripts/gt/log_review.py uu-13-2025
+    python scripts/gt/log_review.py uu-13-2025 --type paraphrased
     python scripts/gt/log_review.py --report
     python scripts/gt/log_review.py --report --json
 """
@@ -29,7 +34,8 @@ if sys.stdout.encoding != "utf-8":
 
 RAW_DIR = Path("data/ground_truth_raw")
 AUDIT_DIR = Path("data/gt_audit")
-META_SUFFIX = ".meta.json"
+PROVENANCE_FILE = Path("data/gt_provenance.json")
+QUERY_TYPES = ("factual", "paraphrased", "multihop")
 
 VALID_VERDICTS = {"c": "correct", "w": "wrong", "b": "borderline", "s": "skipped"}
 
@@ -48,9 +54,34 @@ def audit_path_for(doc_id: str, query_type: str = "factual") -> Path:
     return AUDIT_DIR / f"{_basename(doc_id, query_type)}.json"
 
 
-def meta_path_for(doc_id: str, query_type: str = "factual") -> Path:
-    """Return the path to the provenance meta sidecar for a (doc_id, query_type)."""
-    return RAW_DIR / doc_category(doc_id) / f"{_basename(doc_id, query_type)}{META_SUFFIX}"
+def load_provenance() -> dict:
+    """Load data/gt_provenance.json if present, else return empty defaults."""
+    if not PROVENANCE_FILE.exists():
+        return {}
+    with open(PROVENANCE_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def resolve_provenance(provenance: dict, doc_id: str, query_type: str) -> dict:
+    """Pick effective provenance for a (doc_id, type), checking overrides first."""
+    if not provenance:
+        return {}
+    overrides = provenance.get("overrides", []) or []
+    for entry in overrides:
+        if entry.get("doc_id") == doc_id and entry.get("type") == query_type:
+            return {
+                "annotator_model": entry.get("annotator_model"),
+                "judge_model": entry.get("judge_model"),
+                "prompt_version": (provenance.get("prompt_versions") or {}).get(query_type),
+                "generated_at": entry.get("generated_at"),
+            }
+    models = provenance.get("models", {})
+    return {
+        "annotator_model": models.get("annotator"),
+        "judge_model": models.get("judge"),
+        "prompt_version": (provenance.get("prompt_versions") or {}).get(query_type),
+        "generated_at": None,
+    }
 
 
 def load_items(path: Path) -> list[dict]:
@@ -60,15 +91,6 @@ def load_items(path: Path) -> list[dict]:
     if not isinstance(data, list):
         raise SystemExit(f"{path} top-level must be a JSON array")
     return data
-
-
-def load_meta(doc_id: str, query_type: str = "factual") -> dict:
-    """Load the provenance sidecar if it exists, else return defaults."""
-    path = meta_path_for(doc_id, query_type)
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
 
 
 def prompt_verdict(query_label: str) -> tuple[str, str]:
@@ -126,13 +148,15 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
 
     by_qid = {entry["qid"]: entry for entry in existing.get("items", [])}
 
-    meta = load_meta(doc_id, query_type)
+    provenance = load_provenance()
+    effective = resolve_provenance(provenance, doc_id, query_type)
     print()
     print(f"Doc, {doc_id}  type={query_type}")
     print(f"Items, {len(items)}")
-    if meta:
-        print(f"Annotator model, {meta.get('annotator_model', '<unknown>')}")
-        print(f"Judge model    , {meta.get('judge_model', '<unknown>')}")
+    if effective:
+        print(f"Annotator model, {effective.get('annotator_model') or '<unknown>'}")
+        print(f"Judge model    , {effective.get('judge_model') or '<unknown>'}")
+        print(f"Prompt version , {effective.get('prompt_version') or '<unknown>'}")
     print()
 
     results: list[dict] = []
@@ -147,8 +171,7 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
         primary_anchor = anchors[0][1] if anchors else "<missing>"
 
         print(f"[{idx}/{len(items)}] type={item.get('query_type', '?')}, "
-              f"{item.get('query_style', '?')}, {item.get('difficulty', '?')}, "
-              f"{item.get('reference_mode', '?')}")
+              f"{item.get('query_style', '?')}, {item.get('reference_mode', '?')}")
         print(f"  Query  , {item.get('query', '')}")
         for a_idx, (did, nid) in enumerate(anchors, start=1):
             leaf = _leaf_map(did).get(nid, {})
@@ -160,8 +183,6 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
             print(f"  {label}, {did} :: {nid}")
             print(f"  Path   , {nav}")
             print(f"  Gold   , {text or '<empty>'}")
-        if item.get("distractor_node_id"):
-            print(f"  Distractor, {item['distractor_node_id']}")
         if item.get("answer_hint"):
             print(f"  Hint   , {item['answer_hint']}")
         try:
@@ -183,9 +204,9 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
         "query_type": query_type,
         "category": doc_category(doc_id),
         "reviewed_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "annotator_model": meta.get("annotator_model"),
-        "judge_model": meta.get("judge_model"),
-        "prompt_version": meta.get("prompt_version"),
+        "annotator_model": effective.get("annotator_model"),
+        "judge_model": effective.get("judge_model"),
+        "prompt_version": effective.get("prompt_version"),
         "n_items": len(items),
         "n_reviewed": len(results),
         "items": results,
@@ -284,9 +305,9 @@ def aggregate_report(json_out: bool) -> None:
 def main() -> None:
     """CLI entrypoint."""
     ap = argparse.ArgumentParser(description="Interactive per-doc author verification logger.")
-    ap.add_argument("doc_id", nargs="?", help="Document ID, e.g. perma-2-2022")
+    ap.add_argument("doc_id", nargs="?", help="Document ID, e.g. uu-13-2025")
     ap.add_argument("--type", "-t", type=str, default="factual",
-                    choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"],
+                    choices=list(QUERY_TYPES),
                     help="Query type to review (default factual)")
     ap.add_argument("--report", action="store_true", help="Aggregate audit logs into _summary.json")
     ap.add_argument("--json", action="store_true", help="Emit aggregate report as JSON")

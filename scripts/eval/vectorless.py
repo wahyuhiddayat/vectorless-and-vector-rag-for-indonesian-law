@@ -73,7 +73,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="With --query-limit, random-sample N queries using this seed")
     ap.add_argument("--doc-id", type=str, default=None, help="Restrict evaluation to one gold_doc_id")
     ap.add_argument("--query-types", type=str, default=None,
-                    help="Comma-separated query types (factual, paraphrased, multihop, crossdoc, adversarial)")
+                    help="Comma-separated query types (factual, paraphrased, multihop)")
     ap.add_argument("--per-type-limit", type=int, default=None,
                     help="Stratified sample, pick N items per query_type")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR),

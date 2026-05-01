@@ -5,22 +5,18 @@ chain. Loops over gt_allocation.json, for each annotated item assembles the
 Judge prompt (Layer 1 + Layer 2 already enforced inside assemble_prompt),
 calls the chosen API, then runs the cleaned array through the struct gate.
 
-Cross-family rule (design v2). Annotator and Judge must be from different
-model families relative to the Gemini retrieval backbone. With OpenAI
-gpt-5.5 as annotator, the natural Judge is Anthropic Claude. OpenAI Judge
-(e.g. gpt-4o) is acceptable as a temporary smoke test only, declare in
-threats-to-validity if used for canonical results.
+Cross-family rule (design v3). Annotator and Judge must be from different
+model families relative to the Gemini retrieval backbone. Default annotator
+is Anthropic Claude Sonnet 4.6, default judge is OpenAI gpt-5.
+
+Per design v3 (3-type stratified): supported query types are factual,
+paraphrased, multihop.
 
 Usage:
-    # Smoke test
-    python scripts/gt/auto_judge.py --category UU --provider openai --model gpt-4o --dry-run
-    python scripts/gt/auto_judge.py --category UU --provider openai --model gpt-4o
-
-    # Canonical (after Anthropic balance ready)
-    python scripts/gt/auto_judge.py --category UU --provider anthropic --model claude-sonnet-4-5
-
-    # Force overwrite previous judge run
-    python scripts/gt/auto_judge.py --category UU --provider anthropic --force
+    python scripts/gt/auto_judge.py --category UU --dry-run
+    python scripts/gt/auto_judge.py --category UU
+    python scripts/gt/auto_judge.py --doc-id uu-13-2025 --type multihop
+    python scripts/gt/auto_judge.py --category UU --force
 """
 
 import argparse
@@ -50,7 +46,7 @@ from scripts.gt.run_allocation import iter_plan, _state
 ALLOCATION_FILE = Path("data/gt_allocation.json")
 LOG_FILE = Path("data/gt_judge_log.json")
 LOG_DIR = Path("data/gt_judge_logs")
-QUERY_TYPES = ("factual", "paraphrased", "multihop", "crossdoc", "adversarial")
+QUERY_TYPES = ("factual", "paraphrased", "multihop")
 DEFAULT_MAX_COST = 1.00
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEED = 42

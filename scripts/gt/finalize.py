@@ -9,10 +9,10 @@ rincian.
 DESIGN. Anchor at finest granularity, roll UP across one or more anchors.
 
 Each GT question anchors at one or more leaves in the rincian index. Single-
-anchor types (factual, paraphrased, adversarial) have one anchor. Multi-
-anchor types (multihop, crossdoc) have two anchors. Gold sets for coarser
-granularities are derived by rolling each anchor up to its parent in the
-target index, then unioning into a set.
+anchor types (factual, paraphrased) have one anchor. Multi-anchor types
+(multihop) have two anchors. Gold sets for coarser granularities are derived
+by rolling each anchor up to its parent in the target index, then unioning
+into a set.
 
   rincian. gold = set(anchors)
   ayat.    gold = set of parent_ayat per anchor
@@ -121,9 +121,9 @@ def get_anchor_node_id(item: dict) -> str:
 def get_anchor_node_ids(item: dict) -> list[str]:
     """Return the full list of leaf anchor node IDs from a merged GT item.
 
-    For single-anchor types this is a single-element list. For multihop and
-    crossdoc the list has two elements. Falls back to wrapping the singular
-    field for legacy items that predate the typed-query schema.
+    For single-anchor types (factual, paraphrased) this is a single-element
+    list. For multihop the list has two elements. Falls back to wrapping the
+    singular field for legacy items that predate the typed-query schema.
     """
     if isinstance(item.get("gold_anchor_node_ids"), list) and item["gold_anchor_node_ids"]:
         return list(item["gold_anchor_node_ids"])
@@ -273,7 +273,6 @@ def finalize(check_only: bool = False) -> dict:
             "query": item["query"],
             "query_type": query_type,
             "query_style": item.get("query_style", ""),
-            "difficulty": item.get("difficulty", ""),
             "reference_mode": reference_mode,
             "gold_doc_id": primary_doc_id,
             "gold_doc_ids": list(anchor_doc_ids),
@@ -335,7 +334,6 @@ def print_stats() -> None:
     total = len(testset)
     doc_counts: dict[str, int] = {}
     style_counts: dict[str, int] = {}
-    diff_counts: dict[str, int] = {}
     anchor_counts: dict[str, int] = {}
     reference_mode_counts: dict[str, int] = {}
     query_type_counts: dict[str, int] = {}
@@ -346,9 +344,6 @@ def print_stats() -> None:
 
         style = item.get("query_style") or "(missing)"
         style_counts[style] = style_counts.get(style, 0) + 1
-
-        diff = item.get("difficulty") or "(missing)"
-        diff_counts[diff] = diff_counts.get(diff, 0) + 1
 
         anchor = item.get("gold_anchor_granularity") or "(missing)"
         anchor_counts[anchor] = anchor_counts.get(anchor, 0) + 1
@@ -364,7 +359,7 @@ def print_stats() -> None:
     print(f"  Documents covered : {len(doc_counts)}")
 
     print("\n  Query type distribution:")
-    for qtype in ["factual", "paraphrased", "multihop", "crossdoc", "adversarial", "(missing)"]:
+    for qtype in ["factual", "paraphrased", "multihop", "(missing)"]:
         count = query_type_counts.get(qtype, 0)
         if count == 0:
             continue
@@ -385,12 +380,6 @@ def print_stats() -> None:
         count = reference_mode_counts.get(ref_mode, 0)
         if count:
             print(f"    {ref_mode:15s}  {count:4d}  ({count/total*100:.1f}%)")
-
-    print("\n  Difficulty distribution:")
-    for diff in ["easy", "medium", "tricky", "(missing)"]:
-        count = diff_counts.get(diff, 0)
-        if count:
-            print(f"    {diff:15s}  {count:4d}  ({count/total*100:.1f}%)")
 
     rincian_sizes = [len(item["gold_rincian_node_ids"]) for item in testset.values()]
     ayat_sizes = [len(item["gold_ayat_node_ids"]) for item in testset.values()]
