@@ -2,9 +2,10 @@
 
 Compares raw PDF text against the parsed pasal-level JSON and produces a
 per-doc report of coverage gaps, structural issues, and OCR corruption.
-Runs on OpenAI gpt-5 (configured in vectorless/models.py) for independent review.
+Runs on Gemini 2.5 Pro (configured in vectorless/models.py) for cross-family
+verification of the OpenAI parser. Free under Vertex AI trial credit.
 
-Output: data/judge_report.json. Requires OPENAI_API_KEY.
+Output: data/judge_report.json. Requires Vertex AI ADC.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
 
 MAX_OUTPUT_TOKENS = 16384
 
-# OpenAI gpt-5 pricing per 1M tokens. Used for cost logs.
+# Gemini 2.5 Pro pricing per 1M tokens (under 200K context). Used for cost logs.
 PRICE_INPUT_PER_M = 1.25
 PRICE_OUTPUT_PER_M = 10.0
 

@@ -404,11 +404,43 @@ answerable by one leaf node.
 
 ## Environment
 
-Auth via OpenAI API key in `.env` at project root:
+The pipeline uses three LLM vendors by role (OpenAI for parsing and GT
+judge, Anthropic for GT annotator and parser judge fallback, Vertex AI
+Gemini for high-volume summary/OCR/retrieval). Setup all three:
+
+```bash
+# OpenAI + Anthropic API keys go in .env
+cp .env.example .env
+# Edit .env and fill OPENAI_API_KEY + ANTHROPIC_API_KEY
+
+# Vertex AI uses Application Default Credentials, one-time login
+gcloud auth application-default login
+gcloud config set project YOUR_GCP_PROJECT_ID
+```
+
+Required `.env`:
 
 ```
 OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GOOGLE_CLOUD_PROJECT=your_gcp_project_id
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=True
 ```
+
+### LLM distribution by role
+
+| Role | Vendor | Model | Why |
+|---|---|---|---|
+| Parser | OpenAI | `gpt-5` | Top-tier reasoning for PDF structure |
+| Summary | Vertex AI | `gemini-2.5-flash-lite` | High-volume, low-stakes; trial-covered |
+| OCR clean | Vertex AI | `gemini-2.5-flash-lite` | Cheap text fix; trial-covered |
+| Retrieval LLM | Vertex AI | `gemini-2.5-flash-lite` | Largest token volume in eval; trial-covered |
+| Parser judge | Vertex AI | `gemini-2.5-pro` | Cross-family from OpenAI parser |
+| GT annotator | Anthropic | `claude-sonnet-4-6` | Cross-family from Gemini retrieval LLM |
+| GT judge | OpenAI | `gpt-5` | Cross-family from Anthropic annotator |
+
+Bias-free comparison boundaries: Parser ≠ Parser-judge, Annotator ≠ Retrieval LLM, Annotator ≠ GT-judge.
 
 Optional env vars:
 

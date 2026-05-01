@@ -1,10 +1,14 @@
-"""Batch-annotate (doc, type) items via OpenAI API.
+"""Batch-annotate (doc, type) items via Anthropic or OpenAI API.
 
 Replaces the manual paste step from prompt.py for the annotator stage. Loops
-over gt_allocation.json, calls the OpenAI Chat Completions API per item with
-the same prompt that prompt.py emits, and writes the JSON array straight to
-the raw GT file. Judge step stays manual via Copilot/IDE for cross-family
-diversity per design v2.
+over gt_allocation.json, calls the configured LLM per item with the same
+prompt that prompt.py emits, and writes the JSON array straight to the raw
+GT file. GT judge stays cross-family (defaults to OpenAI gpt-5 when
+annotator is Anthropic Sonnet) per design v2.
+
+Default annotator is Anthropic Sonnet 4.6 because it is the cross-family
+counterpart to the Vertex Gemini retrieval LLM and the OpenAI gpt-5 GT
+judge. Switch provider via --provider openai for OpenAI fallback.
 
 Resume-aware. Skips items whose raw file is already non-empty. State after
 this script runs equals "annotated" in run_allocation, so build_validate.py
@@ -14,7 +18,7 @@ Usage:
     python scripts/gt/auto_annotate.py --category UU --dry-run
     python scripts/gt/auto_annotate.py --category UU
     python scripts/gt/auto_annotate.py --doc-id uu-3-2025 --type factual
-    python scripts/gt/auto_annotate.py --category UU --model gpt-5.5-2026-04-23
+    python scripts/gt/auto_annotate.py --category UU --provider openai --model gpt-5
     python scripts/gt/auto_annotate.py --category UU --max-cost 5
 """
 
@@ -56,7 +60,11 @@ ALLOCATION_FILE = Path("data/gt_allocation.json")
 RAW_DIR = Path("data/ground_truth_raw")
 LOG_FILE = Path("data/gt_annotate_log.json")
 LOG_DIR = Path("data/gt_annotate_logs")
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_PROVIDER = "anthropic"
+DEFAULT_MODEL_BY_PROVIDER = {
+    "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-5",
+}
 DEFAULT_MAX_COST = 1.00
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEED = 42
@@ -65,21 +73,30 @@ DEFAULT_SEED = 42
 # crossdoc pairs. Bump higher only if a doc exceeds this.
 DEFAULT_CHAR_BUDGET = 500_000
 
-# Pricing per 1M tokens, USD. Update if OpenAI repricing.
+# Pricing per 1M tokens, USD.
 PRICING = {
-    "gpt-5.5":      {"input": 5.00, "cached": 0.50, "output": 30.00},
-    "gpt-5":        {"input": 2.50, "cached": 0.25, "output": 10.00},
-    "gpt-5-mini":   {"input": 0.50, "cached": 0.05, "output":  2.00},
-    "gpt-4o":       {"input": 2.50, "cached": 1.25, "output": 10.00},
-    "gpt-4o-mini":  {"input": 0.15, "cached": 0.075, "output": 0.60},
+    # OpenAI
+    "gpt-5.5":           {"input": 5.00, "cached": 0.50,  "output": 30.00},
+    "gpt-5":             {"input": 1.25, "cached": 0.125, "output": 10.00},
+    "gpt-5-mini":        {"input": 0.50, "cached": 0.05,  "output":  2.00},
+    "gpt-4.1":           {"input": 2.00, "cached": 0.50,  "output":  8.00},
+    "gpt-4.1-mini":      {"input": 0.40, "cached": 0.10,  "output":  1.60},
+    "gpt-4.1-nano":      {"input": 0.10, "cached": 0.025, "output":  0.40},
+    "gpt-4o":            {"input": 2.50, "cached": 1.25,  "output": 10.00},
+    "gpt-4o-mini":       {"input": 0.15, "cached": 0.075, "output":  0.60},
+    # Anthropic. cached price = 5-min cache write rate (1.25x base) used as conservative estimate.
+    "claude-opus-4-7":   {"input": 5.00, "cached": 0.50,  "output": 25.00},
+    "claude-sonnet-4-6": {"input": 3.00, "cached": 0.30,  "output": 15.00},
+    "claude-sonnet-4-5": {"input": 3.00, "cached": 0.30,  "output": 15.00},
+    "claude-haiku-4-5":  {"input": 1.00, "cached": 0.10,  "output":  5.00},
 }
 
 
 def lookup_pricing(model: str) -> dict[str, float]:
     """Return per-1M-token pricing for a model alias or pinned snapshot.
 
-    Falls back to gpt-5.5 family pricing when the snapshot starts with the
-    alias (e.g. gpt-5.5-2026-04-23).
+    Falls back to family pricing when the snapshot starts with an alias
+    (e.g. gpt-5-2025-08-07 -> gpt-5, claude-sonnet-4-6-20251001 -> claude-sonnet-4-6).
     """
     if model in PRICING:
         return PRICING[model]
@@ -87,6 +104,17 @@ def lookup_pricing(model: str) -> dict[str, float]:
         if model.startswith(alias + "-"):
             return price
     raise SystemExit(f"Unknown model '{model}'. Add it to PRICING in auto_annotate.py.")
+
+
+def resolve_provider(provider: str | None, model: str) -> str:
+    """Pick provider explicitly or infer from model prefix."""
+    if provider:
+        return provider
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    raise SystemExit(f"Cannot infer provider from model '{model}'. Pass --provider.")
 
 
 def estimate_input_tokens(prompt: str) -> int:
@@ -107,11 +135,23 @@ def estimate_cost(prompt: str, n_questions: int, pricing: dict[str, float]) -> f
 
 
 def actual_cost(usage: dict, pricing: dict[str, float]) -> float:
-    """Compute cost from real OpenAI usage object, accounting for cached prefix."""
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    cached = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-    fresh = max(0, prompt_tokens - cached)
-    completion = usage.get("completion_tokens", 0)
+    """Compute cost from real usage object, accounting for cached prefix.
+
+    Tolerates both OpenAI (prompt_tokens / completion_tokens) and Anthropic
+    (input_tokens / output_tokens / cache_read_input_tokens) shapes.
+    """
+    if "prompt_tokens" in usage:
+        # OpenAI shape
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        cached = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+        fresh = max(0, prompt_tokens - cached)
+        completion = usage.get("completion_tokens", 0)
+    else:
+        # Anthropic shape
+        input_total = usage.get("input_tokens", 0)
+        cached = usage.get("cache_read_input_tokens", 0)
+        fresh = max(0, input_total - cached)
+        completion = usage.get("output_tokens", 0)
     return (
         (fresh / 1_000_000) * pricing["input"]
         + (cached / 1_000_000) * pricing["cached"]
@@ -206,7 +246,7 @@ def crossdoc_pair(allocation: dict, doc_id: str) -> str | None:
 
 
 def call_openai(client, model: str, prompt: str, temperature: float, seed: int) -> tuple[str, dict]:
-    """Single Chat Completions call, return (text, usage_dict).
+    """Single OpenAI Chat Completions call, return (text, usage_dict).
 
     Sets temperature and seed for reproducibility. Falls back to defaults if
     the model rejects either parameter (some reasoning models lock them).
@@ -226,6 +266,35 @@ def call_openai(client, model: str, prompt: str, temperature: float, seed: int) 
     text = resp.choices[0].message.content or ""
     usage = resp.usage.model_dump() if hasattr(resp.usage, "model_dump") else dict(resp.usage)
     return text, usage
+
+
+def call_anthropic(client, model: str, prompt: str, temperature: float) -> tuple[str, dict]:
+    """Single Anthropic Messages call, return (text, usage_dict)."""
+    resp = client.messages.create(
+        model=model,
+        max_tokens=16384,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    text = resp.content[0].text if resp.content else ""
+    usage_obj = resp.usage
+    usage = {
+        "input_tokens": getattr(usage_obj, "input_tokens", 0) or 0,
+        "output_tokens": getattr(usage_obj, "output_tokens", 0) or 0,
+        "cache_read_input_tokens": getattr(usage_obj, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(usage_obj, "cache_creation_input_tokens", 0) or 0,
+    }
+    return text, usage
+
+
+def call_llm(provider: str, client, model: str, prompt: str,
+             temperature: float, seed: int) -> tuple[str, dict]:
+    """Dispatch to the right provider. Returns (text, usage_dict)."""
+    if provider == "openai":
+        return call_openai(client, model, prompt, temperature, seed)
+    if provider == "anthropic":
+        return call_anthropic(client, model, prompt, temperature)
+    raise SystemExit(f"Unknown provider '{provider}'")
 
 
 def append_log(entry: dict) -> None:
@@ -252,7 +321,7 @@ def write_call_detail(stamp: str, doc_id: str, query_type: str, payload: dict) -
     return path
 
 
-def annotate_one(client, model: str, pricing: dict, cat: str, doc_id: str,
+def annotate_one(provider: str, client, model: str, pricing: dict, cat: str, doc_id: str,
                  query_type: str, n_questions: int, paired_doc_id: str | None,
                  dry_run: bool, temperature: float, seed: int,
                  char_budget: int) -> tuple[float, int, str]:
@@ -265,7 +334,7 @@ def annotate_one(client, model: str, pricing: dict, cat: str, doc_id: str,
     started = dt.datetime.now()
     stamp = started.strftime("%Y%m%d_%H%M%S")
     t0 = time.time()
-    text, usage = call_openai(client, model, prompt, temperature=temperature, seed=seed)
+    text, usage = call_llm(provider, client, model, prompt, temperature=temperature, seed=seed)
     elapsed = time.time() - t0
     cost = actual_cost(usage, pricing)
 
@@ -273,6 +342,7 @@ def annotate_one(client, model: str, pricing: dict, cat: str, doc_id: str,
         "doc_id": doc_id,
         "query_type": query_type,
         "category": cat,
+        "provider": provider,
         "model": model,
         "paired_doc_id": paired_doc_id,
         "n_questions_target": n_used,
@@ -300,6 +370,7 @@ def annotate_one(client, model: str, pricing: dict, cat: str, doc_id: str,
 
     meta_path = write_meta_sidecar(cat, doc_id, n_used, total_parts=1, query_type=query_type)
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["annotator_provider"] = provider
     meta["annotator_model"] = model
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -317,8 +388,12 @@ def main() -> None:
                     help="Single doc_id, requires --type")
     ap.add_argument("--type", "-t", type=str, default=None,
                     choices=["factual", "paraphrased", "multihop", "crossdoc", "adversarial"])
-    ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
-                    help=f"OpenAI model id or pinned snapshot (default {DEFAULT_MODEL})")
+    ap.add_argument("--provider", type=str, default=None,
+                    choices=["openai", "anthropic"],
+                    help=f"LLM provider (default {DEFAULT_PROVIDER}; inferred from --model prefix)")
+    ap.add_argument("--model", type=str, default=None,
+                    help="Model id or pinned snapshot. Default depends on provider: "
+                         f"{DEFAULT_MODEL_BY_PROVIDER}")
     ap.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
                     help=f"Hard stop if estimated batch cost exceeds this (USD, default {DEFAULT_MAX_COST})")
     ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE,
@@ -341,8 +416,13 @@ def main() -> None:
         raise SystemExit(f"{ALLOCATION_FILE} not found, run allocate_quotas.py first")
     allocation = json.loads(ALLOCATION_FILE.read_text(encoding="utf-8"))
 
-    pricing = lookup_pricing(args.model)
-    print(f"Model       : {args.model}")
+    # Resolve provider + model. If neither flag given, use the default Anthropic + Sonnet.
+    provider = args.provider or DEFAULT_PROVIDER
+    model = args.model or DEFAULT_MODEL_BY_PROVIDER[provider]
+    provider = resolve_provider(provider, model)
+    pricing = lookup_pricing(model)
+    print(f"Provider    : {provider}")
+    print(f"Model       : {model}")
     print(f"Pricing     : ${pricing['input']}/${pricing['cached']}/${pricing['output']} per 1M (input/cached/output)")
     print(f"Temperature : {args.temperature}")
     print(f"Seed        : {args.seed}")
@@ -392,13 +472,24 @@ def main() -> None:
         return
 
     # Real API calls
-    if not os.getenv("OPENAI_API_KEY"):
-        raise SystemExit("OPENAI_API_KEY not set in env, add to .env")
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise SystemExit("openai package not installed, run, pip install 'openai>=1.50'")
-    client = OpenAI()
+    if provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            raise SystemExit("OPENAI_API_KEY not set in env, add to .env")
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise SystemExit("openai package not installed, run, pip install 'openai>=1.50'")
+        client = OpenAI()
+    elif provider == "anthropic":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise SystemExit("ANTHROPIC_API_KEY not set in env, add to .env")
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise SystemExit("anthropic package not installed, run, pip install 'anthropic>=0.40'")
+        client = Anthropic()
+    else:
+        raise SystemExit(f"Unknown provider '{provider}'")
 
     print(f"\nRunning {len(work)} call(s)...")
     total_cost = 0.0
@@ -407,7 +498,7 @@ def main() -> None:
         paired = crossdoc_pair(allocation, doc_id) if qt == "crossdoc" else None
         try:
             cost, n_items, status = annotate_one(
-                client, args.model, pricing, cat, doc_id, qt, n, paired,
+                provider, client, model, pricing, cat, doc_id, qt, n, paired,
                 dry_run=False, temperature=args.temperature, seed=args.seed,
                 char_budget=args.char_budget,
             )
@@ -430,8 +521,8 @@ def main() -> None:
         print()
         print("Next.")
         print(f"  1. python scripts/gt/run_allocation.py --build --category {args.category or '<cat>'}")
-        print(f"  2. (Judge step manual via Copilot Sonnet 4.6 over each tmp/validate_*.txt,")
-        print(f"     paste full response with ---CLEANED--- framing over the matching raw GT file)")
+        print(f"  2. python scripts/gt/auto_judge.py --category {args.category or '<cat>'} --provider openai --model gpt-5")
+        print(f"     (cross-family judge, defaults to OpenAI gpt-5 against Anthropic annotator)")
         print(f"  3. python scripts/gt/run_allocation.py --apply --category {args.category or '<cat>'}")
 
 

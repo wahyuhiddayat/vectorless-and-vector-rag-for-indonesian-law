@@ -1,4 +1,18 @@
-"""Shared OpenAI client + token accounting for indexing and retrieval."""
+"""Multi-vendor LLM client + token accounting for indexing and retrieval.
+
+Routes by model name prefix:
+  gpt-*, o1, o3, o4   -> OpenAI Chat Completions
+  claude-*            -> Anthropic Messages API
+  gemini-*            -> Google GenAI on Vertex AI
+
+Public surface (unchanged from prior single-vendor impl):
+  client(), call(prompt, model, ...), get_stats(), reset_counters(),
+  snapshot_counters(), step_metrics(t_start, snap_before)
+
+JSON-mode is enforced where the backend supports it. For Anthropic the
+prompt itself must request JSON output; the retry loop catches parse
+failures and retries.
+"""
 
 import json
 import os
@@ -15,24 +29,84 @@ load_dotenv()
 
 MODEL = RETRIEVAL_MODEL
 
-_client = None
+_openai_cache = None
+_anthropic_cache = None
+_vertex_cache = None
 _input_tokens = 0
 _output_tokens = 0
 _calls = 0
 _lock = threading.Lock()
 
 
-def client():
-    """Lazy-init OpenAI client with a 5min HTTP deadline."""
-    global _client
-    if _client is None:
+def _openai_client():
+    """Lazy-init OpenAI client."""
+    global _openai_cache
+    if _openai_cache is None:
         from openai import OpenAI
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             print("ERROR: OPENAI_API_KEY not set.")
             sys.exit(1)
-        _client = OpenAI(api_key=api_key, timeout=300.0, max_retries=0)
-    return _client
+        _openai_cache = OpenAI(api_key=api_key, timeout=300.0, max_retries=0)
+    return _openai_cache
+
+
+def _anthropic_client():
+    """Lazy-init Anthropic client."""
+    global _anthropic_cache
+    if _anthropic_cache is None:
+        from anthropic import Anthropic
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("ERROR: ANTHROPIC_API_KEY not set.")
+            sys.exit(1)
+        _anthropic_cache = Anthropic(api_key=api_key, timeout=300.0, max_retries=0)
+    return _anthropic_cache
+
+
+def _vertex_client():
+    """Lazy-init Google GenAI client on Vertex AI (uses ADC)."""
+    global _vertex_cache
+    if _vertex_cache is None:
+        from google import genai
+        from google.genai import types as gtypes
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+        if not project:
+            print("ERROR: GOOGLE_CLOUD_PROJECT not set.")
+            sys.exit(1)
+        _vertex_cache = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            http_options=gtypes.HttpOptions(api_version="v1", timeout=300_000),
+        )
+    return _vertex_cache
+
+
+def client():
+    """Return the OpenAI client.
+
+    Kept for backward compatibility with callers that need a raw client
+    handle (e.g. preflight smoke tests). Prefer call() for normal use.
+    """
+    return _openai_client()
+
+
+def _backend(model: str) -> str:
+    """Return the backend identifier for a given model name."""
+    if model.startswith("gpt-") or model.startswith(("o1", "o3", "o4")):
+        return "openai"
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith("gemini-"):
+        return "vertex"
+    raise ValueError(f"Unknown model family: {model!r}")
+
+
+def _supports_openai_reasoning(model: str) -> bool:
+    """OpenAI reasoning models accept reasoning_effort instead of temperature."""
+    return model.startswith("gpt-5") or model.startswith(("o1", "o3", "o4"))
 
 
 def _track(input_tokens: int, output_tokens: int) -> None:
@@ -84,50 +158,105 @@ _RETRYABLE_TOKENS = (
     "rate_limit_exceeded", "server_error", "service unavailable",
     "overloaded", "timeout", "timed out", "connection",
     "apiconnectionerror", "apitimeouterror", "internalservererror",
+    "deadline_exceeded", "unavailable",
 )
 
 
-def _supports_reasoning(model: str) -> bool:
-    """Return True if the model accepts reasoning_effort parameter."""
-    return model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3")
+def _call_openai(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
+    """One OpenAI Chat Completions call. Returns (text, input_tokens, output_tokens)."""
+    cli = _openai_client()
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "max_completion_tokens": max_tokens,
+    }
+    if _supports_openai_reasoning(model):
+        kwargs["reasoning_effort"] = "minimal"
+    else:
+        kwargs["temperature"] = 0.0
+
+    resp = cli.chat.completions.create(**kwargs)
+    text = (resp.choices[0].message.content or "").strip()
+    in_tok = getattr(resp.usage, "prompt_tokens", 0) or 0
+    out_tok = getattr(resp.usage, "completion_tokens", 0) or 0
+    return text, in_tok, out_tok
+
+
+def _call_anthropic(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
+    """One Anthropic Messages call. Returns (text, input_tokens, output_tokens).
+
+    Anthropic has no native JSON-mode; rely on prompt to request JSON and
+    on the outer retry loop to recover from parse failures.
+    """
+    cli = _anthropic_client()
+    resp = cli.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+    )
+    text = (resp.content[0].text or "").strip() if resp.content else ""
+    in_tok = getattr(resp.usage, "input_tokens", 0) or 0
+    out_tok = getattr(resp.usage, "output_tokens", 0) or 0
+    return text, in_tok, out_tok
+
+
+def _call_vertex(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
+    """One Vertex AI Gemini call. Returns (text, input_tokens, output_tokens)."""
+    cli = _vertex_client()
+    from google.genai import types as gtypes
+    cfg_kwargs: dict = {
+        "temperature": 0.0,
+        "max_output_tokens": max_tokens,
+        "response_mime_type": "application/json",
+    }
+    if model.startswith("gemini-2.5-flash"):
+        cfg_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
+
+    resp = cli.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(**cfg_kwargs),
+    )
+    text = (getattr(resp, "text", "") or "").strip()
+    meta = getattr(resp, "usage_metadata", None)
+    in_tok = getattr(meta, "prompt_token_count", 0) or 0 if meta else 0
+    out_tok = getattr(meta, "candidates_token_count", 0) or 0 if meta else 0
+    return text, in_tok, out_tok
+
+
+def _call_backend(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
+    """Dispatch to the right backend. Returns (text, input_tokens, output_tokens)."""
+    backend = _backend(model)
+    if backend == "openai":
+        return _call_openai(prompt, model, max_tokens)
+    if backend == "anthropic":
+        return _call_anthropic(prompt, model, max_tokens)
+    if backend == "vertex":
+        return _call_vertex(prompt, model, max_tokens)
+    raise ValueError(f"Unknown backend: {backend}")
 
 
 def call(prompt: str, *, model: str = MODEL, max_retries: int = 8,
          max_completion_tokens: int = 16384,
          return_usage: bool = False) -> dict | tuple[dict, dict]:
-    """Send prompt to OpenAI, return parsed JSON. Retries transient errors and non-JSON responses.
+    """Send prompt to the configured LLM, return parsed JSON.
 
-    With return_usage=True, returns (json_dict, usage_dict) for caller-local accounting.
-    Uses response_format={'type':'json_object'} so the response is always JSON.
+    Routes by model prefix to OpenAI, Anthropic, or Vertex Gemini. Retries
+    transient errors and non-JSON responses up to max_retries times with
+    exponential backoff.
+
+    With return_usage=True, returns (json_dict, usage_dict) for caller-local
+    accounting.
     """
-    cli = client()
-
-    kwargs: dict = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
-        "max_completion_tokens": max_completion_tokens,
-    }
-    # gpt-5 family supports reasoning_effort; "minimal" is the cheapest tier
-    # (analog of Gemini thinking_budget=0). gpt-4.1 family does not accept it.
-    if _supports_reasoning(model):
-        kwargs["reasoning_effort"] = "minimal"
-    else:
-        # gpt-4.1 family supports temperature; reasoning models reject it.
-        kwargs["temperature"] = 0.0
-
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
-            resp = cli.chat.completions.create(**kwargs)
+            text, in_tok, out_tok = _call_backend(prompt, model, max_completion_tokens)
+            _track(in_tok, out_tok)
 
-            usage = resp.usage
-            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
-            output_tokens = getattr(usage, "completion_tokens", 0) or 0
-            _track(input_tokens, output_tokens)
-
-            text = (resp.choices[0].message.content or "").strip()
-            # Strip markdown fences in case the model wraps despite json_object mode.
+            # Strip markdown fences in case the model wraps despite JSON mode.
             if text.startswith("```"):
                 lines = text.split("\n")
                 text = "\n".join(lines[1:-1])
@@ -139,7 +268,7 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 8,
                 if attempt < max_retries - 1:
                     wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                     sys.stderr.write(
-                        f"  OpenAI returned non-JSON (attempt {attempt+1}), retrying in {wait:.0f}s...\n"
+                        f"  LLM returned non-JSON (attempt {attempt+1}, model={model}), retrying in {wait:.0f}s...\n"
                     )
                     time.sleep(wait)
                     continue
@@ -147,8 +276,8 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 8,
 
             if return_usage:
                 return parsed, {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
+                    "input_tokens": in_tok,
+                    "output_tokens": out_tok,
                     "calls": 1,
                 }
             return parsed
@@ -161,10 +290,10 @@ def call(prompt: str, *, model: str = MODEL, max_retries: int = 8,
             if any(tok in err for tok in _RETRYABLE_TOKENS) and attempt < max_retries - 1:
                 wait = min(60, 5 * (2 ** attempt)) + random.uniform(0, 5)
                 sys.stderr.write(
-                    f"  OpenAI error (attempt {attempt+1}): {e!r} - retrying in {wait:.0f}s...\n"
+                    f"  LLM error (attempt {attempt+1}, model={model}): {e!r} - retrying in {wait:.0f}s...\n"
                 )
                 time.sleep(wait)
             else:
                 raise
 
-    raise RuntimeError(f"call failed after {max_retries} attempts") from last_exc
+    raise RuntimeError(f"call failed after {max_retries} attempts (model={model})") from last_exc

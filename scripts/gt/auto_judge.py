@@ -56,19 +56,26 @@ DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEED = 42
 
 PROVIDER_DEFAULTS = {
-    "openai":    {"model": "gpt-4o"},
+    "openai":    {"model": "gpt-5"},
     "anthropic": {"model": "claude-sonnet-4-6"},
 }
 
+# Default judge provider is OpenAI gpt-5 because the GT annotator defaults to
+# Anthropic Claude Sonnet 4.6; cross-family judge stays per design v2.
+DEFAULT_PROVIDER = "openai"
+
 PRICING = {
     "gpt-5.5":              {"input":  5.00, "cached": 0.50,  "output": 30.00},
-    "gpt-5":                {"input":  2.50, "cached": 0.25,  "output": 10.00},
+    "gpt-5":                {"input":  1.25, "cached": 0.125, "output": 10.00},
     "gpt-5-mini":           {"input":  0.50, "cached": 0.05,  "output":  2.00},
+    "gpt-4.1":              {"input":  2.00, "cached": 0.50,  "output":  8.00},
+    "gpt-4.1-mini":         {"input":  0.40, "cached": 0.10,  "output":  1.60},
+    "gpt-4.1-nano":         {"input":  0.10, "cached": 0.025, "output":  0.40},
     "gpt-4o":               {"input":  2.50, "cached": 1.25,  "output": 10.00},
     "gpt-4o-mini":          {"input":  0.15, "cached": 0.075, "output":  0.60},
     "claude-sonnet-4-5":    {"input":  3.00, "cached": 0.30,  "output": 15.00},
     "claude-sonnet-4-6":    {"input":  3.00, "cached": 0.30,  "output": 15.00},
-    "claude-opus-4-7":      {"input": 15.00, "cached": 1.50,  "output": 75.00},
+    "claude-opus-4-7":      {"input":  5.00, "cached": 0.50,  "output": 25.00},
     "claude-haiku-4-5":     {"input":  1.00, "cached": 0.10,  "output":  5.00},
 }
 
@@ -239,7 +246,8 @@ def main() -> None:
                     help="Single doc_id, requires --type")
     ap.add_argument("--type", "-t", type=str, default=None,
                     choices=list(QUERY_TYPES))
-    ap.add_argument("--provider", type=str, required=True, choices=["openai", "anthropic"])
+    ap.add_argument("--provider", type=str, default=DEFAULT_PROVIDER, choices=["openai", "anthropic"],
+                    help=f"LLM provider (default {DEFAULT_PROVIDER})")
     ap.add_argument("--model", type=str, default=None,
                     help="Model id (defaults to provider's recommended judge model)")
     ap.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
