@@ -23,18 +23,18 @@ _lock = threading.Lock()
 
 
 def client():
-    """Lazy-init Gemini client with a 120s HTTP deadline."""
+    """Lazy-init Gemini client on Vertex AI with a 5min HTTP deadline."""
     global _client
     if _client is None:
         from google import genai
         from google.genai import types as gtypes
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            print("ERROR: GEMINI_API_KEY not set.")
-            sys.exit(1)
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "skripsi-gavin")
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
         _client = genai.Client(
-            api_key=api_key,
-            http_options=gtypes.HttpOptions(timeout=300_000),
+            vertexai=True,
+            project=project,
+            location=location,
+            http_options=gtypes.HttpOptions(api_version="v1", timeout=300_000),
         )
     return _client
 

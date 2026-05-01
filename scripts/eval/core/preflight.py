@@ -69,8 +69,11 @@ def check_gemini_reachable(timeout_s: float = 10.0) -> tuple[bool, str]:
         load_dotenv()
     except ImportError:
         pass
-    if not os.environ.get("GEMINI_API_KEY"):
-        return False, "GEMINI_API_KEY not set"
+    try:
+        import google.auth
+        google.auth.default()
+    except Exception as exc:
+        return False, f"ADC not configured (run gcloud auth application-default login): {exc}"
     try:
         from google.genai import types as genai_types
         from vectorless.llm import MODEL, client as gemini_client

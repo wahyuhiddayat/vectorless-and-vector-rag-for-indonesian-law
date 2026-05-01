@@ -69,15 +69,19 @@ _total_calls = 0
 
 
 def _get_genai_client():
-    """Create the Google GenAI client on first use."""
+    """Create the Google GenAI client on Vertex AI on first use."""
     global _genai_client
     if _genai_client is None:
         from google import genai
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            print("ERROR: GEMINI_API_KEY not set.")
-            sys.exit(1)
-        _genai_client = genai.Client(api_key=api_key)
+        from google.genai import types as gtypes
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "skripsi-gavin")
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+        _genai_client = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            http_options=gtypes.HttpOptions(api_version="v1"),
+        )
     return _genai_client
 
 

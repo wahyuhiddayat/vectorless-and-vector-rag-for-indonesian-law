@@ -200,7 +200,7 @@ Env vars are set before the retrieval module is imported, so module-level reads 
 | "missing-index" errors only | Re-split incomplete or doc outside the corpus | Run `vectorless.indexing.build` for that doc and granularity |
 | "Qdrant check failed" | `--qdrant-path` does not exist | Ensure indexing wrote the local store, or pass a server URL |
 | "Resume config mismatch" | Different `--systems` or `--granularities` than the stored run | Use `--overwrite`, or pick a new `--label` |
-| Gemini API check failed | `GEMINI_API_KEY` unset | Set `.env`, retry without `--strict` to validate other parts |
+| Gemini API check failed | ADC not configured | Run `gcloud auth application-default login`, retry without `--strict` to validate other parts |
 | Bootstrap CI too wide | Few queries in this combo | Increase query count or accept the wider CI in the writeup |
 
 ## Relation to GT

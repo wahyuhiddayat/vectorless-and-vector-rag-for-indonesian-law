@@ -404,10 +404,18 @@ answerable by one leaf node.
 
 ## Environment
 
-Requires `.env` at project root:
+Auth via Application Default Credentials (ADC). One-time setup:
+
+```bash
+gcloud auth application-default login
+```
+
+`.env` at project root for Vertex AI config:
 
 ```
-GEMINI_API_KEY=your_api_key_here
+GOOGLE_CLOUD_PROJECT=skripsi-gavin
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=True
 ```
 
 Optional env vars:

@@ -4,7 +4,7 @@ Compares raw PDF text against the parsed pasal-level JSON and produces a
 per-doc report of coverage gaps, structural issues, and OCR corruption.
 Runs on Gemini 2.5 Pro (stronger tier than the indexer) for independent review.
 
-Output: data/judge_report.json. Requires GEMINI_API_KEY.
+Output: data/judge_report.json. Requires Vertex AI ADC (gcloud auth application-default login).
 """
 from __future__ import annotations
 
