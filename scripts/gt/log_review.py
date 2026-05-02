@@ -96,12 +96,12 @@ def load_items(path: Path) -> list[dict]:
 def prompt_verdict(query_label: str) -> tuple[str, str]:
     """Prompt the author for a verdict and optional notes for one item."""
     while True:
-        raw = input(f"Verdict {query_label}, c=correct w=wrong b=borderline s=skip q=quit, ").strip().lower()
+        raw = input(f"Verdict {query_label}: c=correct w=wrong b=borderline s=skip q=quit, ").strip().lower()
         if raw == "q":
             raise KeyboardInterrupt
         if raw in VALID_VERDICTS:
             verdict = VALID_VERDICTS[raw]
-            notes = input("Notes (enter to skip), ").strip()
+            notes = input("Notes (enter to skip): ").strip()
             return verdict, notes
         print("  invalid, try again")
 
