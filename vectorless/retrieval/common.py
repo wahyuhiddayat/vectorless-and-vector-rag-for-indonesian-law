@@ -16,6 +16,10 @@ DATA_INDEX = Path(os.environ.get("DATA_INDEX", "data/index_pasal"))
 LOG_DIR = Path("data/retrieval_logs")
 
 
+# Indonesian stopwords. Scope: KWIC anchor selection only (see _content_tokens
+# below). NOT applied to BM25 tokenization. Faisal et al. (2024, IJAIN 10(3))
+# Table 5 reports stopword removal decreases BM25 EM on Indonesian legal QA
+# from 29.73 to 26.49 percent. BM25 IDF naturally downweights common terms.
 STOPWORDS = {
     "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
     "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
@@ -27,10 +31,23 @@ STOPWORDS = {
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase, split, drop common Indonesian stopwords."""
-    text = text.lower()
-    tokens = re.findall(r"[a-z0-9]+", text)
-    return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
+    """Lowercase, regex split on [a-z0-9]+, drop length-1 tokens.
+
+    No stopword removal, no stemming. Aligns with Faisal et al. (2024)
+    Table 5: both preprocessing techniques decrease BM25 EM on Indonesian
+    legal QA. BM25 IDF naturally downweights common terms.
+    """
+    return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 1]
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Tokenize and drop STOPWORDS. Used by KWIC snippet anchor selection.
+
+    Stopword removal helps here because we need a content word to anchor
+    the snippet window, and anchoring on a particle (e.g. "yang") would
+    almost always match position 0 of the leaf text.
+    """
+    return [t for t in tokenize(text) if t not in STOPWORDS]
 
 
 def load_catalog() -> list[dict]:
@@ -84,7 +101,7 @@ def extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
     """Window of text around the first matching query token; falls back to text head."""
     text_lower = text.lower()
     best_pos = -1
-    for token in tokenize(query):
+    for token in _content_tokens(query):
         pos = text_lower.find(token)
         if pos != -1 and (best_pos == -1 or pos < best_pos):
             best_pos = pos
