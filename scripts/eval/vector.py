@@ -1,8 +1,8 @@
 """Vector RAG evaluation harness.
 
-Evaluates vector retrieval systems (vector-dense, vector-hybrid) across
-granularities (pasal, ayat, rincian) and embedding models, then writes the
-same artifact set as vectorless.py for an apples-to-apples comparison.
+Evaluates the vector-dense retrieval system across granularities (pasal,
+ayat, rincian) and embedding models, then writes the same artifact set as
+vectorless.py for an apples-to-apples comparison.
 
 Reuses every scoring function from scripts.eval.core, so RQ1 and RQ2 numbers
 are computed by identical code paths.
@@ -61,7 +61,7 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vector_worker.py"
 
-SYSTEMS = ["vector-dense", "vector-hybrid"]
+SYSTEMS = ["vector-dense"]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 EMBEDDING_MODELS = [
     "bge-m3",

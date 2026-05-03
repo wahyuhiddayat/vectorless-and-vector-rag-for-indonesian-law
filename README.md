@@ -282,19 +282,6 @@ python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
 | `query` | *(required)* | Legal question in Indonesian |
 | `--top_k N` | `5` | How many results to return |
 
-### 4.3 Hybrid (BM25 + dense)
-
-Combines BM25 sparse scoring with dense embedding scoring.
-
-```bash
-python -m vector.retrieve_vector_hybrid "Apa syarat penyadapan?"
-```
-
-| Flag | Default | What it does |
-|------|---------|--------------|
-| `query` | *(required)* | Legal question in Indonesian |
-| `--top_k N` | `5` | Top-K results per method (BM25 and dense), then merged |
-
 ---
 
 ## 5. Using retrieval from Python (for experiments)

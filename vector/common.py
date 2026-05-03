@@ -2,7 +2,7 @@
 Shared utilities for vector RAG retrieval pipelines.
 
 Contains: LLM client, embedding, token tracking, answer generation, logging.
-Used by retrieve_vector.py and retrieve_vector_hybrid.py.
+Used by retrieve_vector.py.
 
 All key settings are configurable via environment variables:
     VECTOR_EMBEDDING_MODEL  e.g. gemini-embedding-001 (default)

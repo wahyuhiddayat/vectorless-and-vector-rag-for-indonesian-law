@@ -40,10 +40,6 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         from vector.retrieve_vector import retrieve
         return retrieve(query, top_k=top_k, verbose=False)
 
-    if system == "vector-hybrid":
-        from vector.retrieve_vector_hybrid import retrieve
-        return retrieve(query, top_k=top_k, verbose=False)
-
     raise ValueError(f"Unsupported system: {system!r}")
 
 
@@ -53,7 +49,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--system", required=True,
-        choices=["vector-dense", "vector-hybrid"],
+        choices=["vector-dense"],
     )
     ap.add_argument(
         "--granularity", required=True,
