@@ -65,8 +65,8 @@ SYSTEMS = ["vector-dense"]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 EMBEDDING_MODELS = [
     "bge-m3",
-    "all-indobert-base-v4",
     "multilingual-e5-large-instruct",
+    "all-nusabert-large-v4",
 ]
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900

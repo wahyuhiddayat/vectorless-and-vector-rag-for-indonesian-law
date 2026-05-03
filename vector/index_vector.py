@@ -4,10 +4,10 @@ Vector indexing pipeline for Indonesian legal documents.
 Reads the same index JSON files used by vectorless-rag, collects all leaf nodes,
 embeds each chunk using the chosen embedding model, and stores in Qdrant.
 
-Supported embedding models (all local via SentenceTransformer):
-    bge-m3                          (1024d, BAAI/bge-m3, MIRACL SOTA, 8K context)
-    multilingual-e5-large-instruct  (1024d, intfloat/..., MMTEB best public, 512-token)
-    all-indobert-base-v4            (768d,  LazarusNLP/..., Indonesian-specific, 128-token)
+Supported embedding models (all local via SentenceTransformer).
+    bge-m3                          (1024d, BAAI/bge-m3, broad multilingual, 8K ctx)
+    multilingual-e5-large-instruct  (1024d, intfloat/..., instruction-tuned, 512 ctx)
+    all-nusabert-large-v4           (1024d, LazarusNLP/..., Indonesian supervised, 512 ctx)
 
 Qdrant storage:
     --qdrant-path ./qdrant_local    local file-based mode (no server needed)
@@ -19,7 +19,7 @@ unless --collection is supplied explicitly.
 Usage:
     python -m vector.index_vector --source data/index_pasal --qdrant-path ./qdrant_local
     python -m vector.index_vector --source data/index_pasal --model multilingual-e5-large-instruct --qdrant-path ./qdrant_local
-    python -m vector.index_vector --source data/index_ayat  --model all-indobert-base-v4 --qdrant-path ./qdrant_local
+    python -m vector.index_vector --source data/index_ayat  --model all-nusabert-large-v4 --qdrant-path ./qdrant_local
 """
 
 import argparse
@@ -47,15 +47,15 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
         "dim": 1024,
         "short": "bgem3",
     },
-    "all-indobert-base-v4": {
-        "model_id": "LazarusNLP/all-indobert-base-v4",
-        "dim": 768,
-        "short": "indobert",
-    },
     "multilingual-e5-large-instruct": {
         "model_id": "intfloat/multilingual-e5-large-instruct",
         "dim": 1024,
         "short": "e5",
+    },
+    "all-nusabert-large-v4": {
+        "model_id": "LazarusNLP/all-nusabert-large-v4",
+        "dim": 1024,
+        "short": "nusabert",
     },
 }
 

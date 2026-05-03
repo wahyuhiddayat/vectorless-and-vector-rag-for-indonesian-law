@@ -29,18 +29,20 @@ GRANULARITY = os.environ.get("VECTOR_GRANULARITY", "pasal")
 LOG_DIR = Path("data/retrieval_logs")
 
 
+# RQ2 axis. Indonesian specialization gradient (breadth vs depth of training data).
+# All three are XLM-R or BERT-family encoders, sentence-transformers compatible,
+# Qdrant cosine, dense-only. See Notes/06-decisions/2026-05-03-embedding-model-axis.md.
 _EMBEDDING_MODEL_MAP: dict[str, dict] = {
     "bge-m3": {
+        # Tier 1. Broad multilingual contrastive. XLM-R-large, MIT, native 8K ctx.
+        # Dense-only in RQ2. Sparse and ColBERT capabilities intentionally unused.
         "model_id": "BAAI/bge-m3",
         "dim": 1024,
         "backend": "sentence_transformers",
     },
-    "all-indobert-base-v4": {
-        "model_id": "LazarusNLP/all-indobert-base-v4",
-        "dim": 768,
-        "backend": "sentence_transformers",
-    },
     "multilingual-e5-large-instruct": {
+        # Tier 2. Multilingual plus instruction-tuned. XLM-R-large with GPT-4
+        # synthetic data, MIT, 512 ctx.
         "model_id": "intfloat/multilingual-e5-large-instruct",
         "dim": 1024,
         "backend": "sentence_transformers",
@@ -48,6 +50,12 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
             "Given a legal question in Indonesian, retrieve relevant legal "
             "document sections that answer the question"
         ),
+    },
+    "all-nusabert-large-v4": {
+        # Tier 3. Indonesian and Nusantara supervised. NusaBERT-large, Apache-2.0, 512 ctx.
+        "model_id": "LazarusNLP/all-nusabert-large-v4",
+        "dim": 1024,
+        "backend": "sentence_transformers",
     },
 }
 

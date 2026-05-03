@@ -8,7 +8,7 @@ Usage:
     python scripts/eval/vector_worker.py \\
         --system vector-dense \\
         --granularity pasal \\
-        --embedding-model gemini-embedding-001 \\
+        --embedding-model bge-m3 \\
         --query "Apa syarat penyadapan?" \\
         --qdrant-path ./qdrant_local
 """
@@ -30,8 +30,8 @@ if str(REPO_ROOT) not in sys.path:
 # Collection naming convention: law-{granularity}-{model_short}
 _MODEL_SHORT = {
     "bge-m3": "bgem3",
-    "all-indobert-base-v4": "indobert",
     "multilingual-e5-large-instruct": "e5",
+    "all-nusabert-large-v4": "nusabert",
 }
 
 
@@ -58,7 +58,7 @@ def main() -> int:
     ap.add_argument(
         "--embedding-model", required=True,
         choices=list(_MODEL_SHORT),
-        help="Embedding model: bge-m3 | all-indobert-base-v4 | multilingual-e5-large-instruct",
+        help="Embedding model. bge-m3 | multilingual-e5-large-instruct | all-nusabert-large-v4",
     )
     ap.add_argument("--query", required=True)
     ap.add_argument("--top-k", type=int, default=10)
