@@ -216,12 +216,34 @@ def cmd_apply(allocation: dict, category: str | None, query_type: str | None) ->
             n_failed += 1
 
     print(f"\nApplied {n_applied}, skipped {n_skipped}, failed {n_failed}")
-    if n_applied:
+    print_audit_commands(allocation, category, query_type)
+
+
+def print_audit_commands(allocation: dict, category: str | None, query_type: str | None) -> None:
+    """Print log_review commands for every (doc, type) in plan with state=applied.
+
+    Items not in `applied` state get a `# skip` line with the reason so the
+    audit list mirrors the actual reviewable surface without silent drops.
+    """
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for _cat, doc_id, qt, _ in iter_plan(allocation, category, query_type):
+        grouped.setdefault(doc_id, []).append((qt, _state(doc_id, qt)))
+    if not grouped:
+        return
+
+    print()
+    print("Next. Author spot-check per (doc, type),")
+    for doc_id, entries in grouped.items():
         print()
-        print("Next.")
-        print("  1. Run author spot-check per (doc, type),")
-        print("     python scripts/gt/log_review.py <doc> --type <type>")
-        print("  2. After all items reviewed, python scripts/gt/collect.py && python scripts/gt/finalize.py")
+        for qt, st in entries:
+            if st == "applied":
+                print(f"  python scripts/gt/log_review.py {doc_id} --type {qt}")
+            else:
+                print(f"  # skip  {doc_id} --type {qt}  (state={st})")
+    print()
+    print("After all items reviewed,")
+    print("  python scripts/gt/log_review.py --report")
+    print("  python scripts/gt/collect.py && python scripts/gt/finalize.py")
 
 
 def main() -> None:

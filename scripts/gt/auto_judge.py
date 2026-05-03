@@ -365,7 +365,8 @@ def main() -> None:
     if n_ok:
         print()
         print("Next.")
-        print(f"  1. python scripts/gt/log_review.py <doc> --type <type>  (per item, manual)")
+        print(f"  1. python scripts/gt/run_allocation.py --apply --category <cat>")
+        print(f"     (idempotent, prints the canonical log_review command list)")
         print(f"  2. python scripts/gt/collect.py && python scripts/gt/finalize.py")
 
 
