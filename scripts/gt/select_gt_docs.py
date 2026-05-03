@@ -163,6 +163,10 @@ def main() -> None:
 
     write_selection(selection)
     print(f"\nWrote {SELECTION_FILE}")
+    cat_hint = targets[0] if len(targets) == 1 else "<cat>"
+    print()
+    print("Next.")
+    print(f"  python scripts/gt/allocate_quotas.py --category {cat_hint} --seed {args.seed}")
 
 
 if __name__ == "__main__":

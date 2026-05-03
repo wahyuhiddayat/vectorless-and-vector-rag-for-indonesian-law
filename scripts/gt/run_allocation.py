@@ -177,11 +177,11 @@ def cmd_build(allocation: dict, category: str | None, query_type: str | None,
 
     print(f"\nBuilt {n_built}, skipped {n_skipped}, failed {n_failed}")
     if n_built:
+        cat_hint = category or "<cat>"
         print()
         print("Next.")
-        print("  1. Ask the IDE Judge to process each tmp/validate_*.txt and paste the")
-        print("     full response (with ---CLEANED--- framing) over the matching raw GT file.")
-        print("  2. python scripts/gt/run_allocation.py --apply --category <cat>")
+        print(f"  1. python scripts/gt/auto_judge.py --category {cat_hint}")
+        print(f"  2. python scripts/gt/run_allocation.py --apply --category {cat_hint}")
 
 
 def cmd_apply(allocation: dict, category: str | None, query_type: str | None) -> None:

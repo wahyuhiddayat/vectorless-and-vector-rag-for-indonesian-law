@@ -313,10 +313,12 @@ def finalize(check_only: bool = False) -> dict:
     with open(TESTSET_FILE, "wb") as f:
         pickle.dump(testset, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    print(f"\n✓ Disimpan ke {TESTSET_FILE}")
+    print(f"\nDisimpan ke {TESTSET_FILE}")
     print(f"  {len(testset)} queries siap dipakai untuk evaluasi 3 granularity")
-    print("\nNext step:")
-    print("  python scripts/gt/load_testset.py  # inspect result")
+    print()
+    print("Next.")
+    print("  python scripts/gt/load_testset.py --stats")
+    print("  python scripts/sync_data.py --push        # backup data ke HuggingFace")
 
     return testset
 

@@ -599,6 +599,10 @@ def main() -> None:
     print(f"  Sebelumnya : {len(existing_gt)} pertanyaan")
     print(f"  Ditambahkan: {added} pertanyaan")
     print(f"  Total      : {len(merged_gt)} pertanyaan")
+    print()
+    print("Next.")
+    print("  python scripts/gt/finalize.py")
+    print("  python scripts/gt/load_testset.py --stats")
 
 
 if __name__ == "__main__":

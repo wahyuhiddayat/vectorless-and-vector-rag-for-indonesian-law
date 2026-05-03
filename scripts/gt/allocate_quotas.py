@@ -202,9 +202,14 @@ def main() -> None:
     print("  " + "  ".join(c.ljust(w) for c, w in zip(totals, widths)))
 
     if args.emit_commands:
-        print("\nCommands to run:\n")
+        print("\nManual route (per-prompt copy-paste):\n")
         for cmd in render_commands(doc_ids, allocation):
             print(f"  {cmd}")
+
+    print()
+    print("Next (auto route via Anthropic API).")
+    print(f"  python scripts/gt/auto_annotate.py --category {args.category} --dry-run")
+    print(f"  python scripts/gt/auto_annotate.py --category {args.category}")
 
 
 if __name__ == "__main__":

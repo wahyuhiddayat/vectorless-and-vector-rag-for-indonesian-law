@@ -219,10 +219,9 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
     print(f"\nReviewed.")
     print(f"  Audit -> {audit_path}  ({len(results)} of {len(items)})")
     print()
-    print("Next.")
-    print(f"  Continue with the next allocation item, or after all (doc, type) are done,")
-    print(f"    python scripts/gt/collect.py")
-    print(f"    python scripts/gt/finalize.py")
+    print("Next. Continue with the remaining (doc, type), or after all reviewed,")
+    print(f"  python scripts/gt/log_review.py --report")
+    print(f"  python scripts/gt/collect.py && python scripts/gt/finalize.py")
     return audit
 
 
