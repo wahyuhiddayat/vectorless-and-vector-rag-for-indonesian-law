@@ -201,7 +201,6 @@ def build_config(args, label: str, selected_queries: list, cutoffs: list[int]) -
         "qdrant_url": None,
         "llm_model": gemini_model_name(),
         "notes": {
-            "answer_eval": "citation-grounding + weak lexical overlap vs answer_hint",
             "single_gold_gt": True,
         },
     }

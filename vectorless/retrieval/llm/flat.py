@@ -20,7 +20,7 @@ import time
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    load_all_leaf_nodes, generate_answer_multi_doc, save_log,
+    load_all_leaf_nodes, save_log,
 )
 
 
@@ -150,12 +150,6 @@ def retrieve(query: str, max_candidates: int = 100, verbose: bool = True) -> dic
         return {"query": query, "strategy": "llm-flat",
                 "node_ids": selected_ids, "error": "Selected nodes not found in corpus"}
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
-    answer_result = generate_answer_multi_doc(query, selected_results, verbose=verbose)
-    steps["answer_gen"] = step_metrics(t_step, snap)
-
     sources = []
     for r in selected_results:
         sources.append({
@@ -173,8 +167,6 @@ def retrieve(query: str, max_candidates: int = 100, verbose: bool = True) -> dic
         "strategy": "llm-flat",
         "corpus_size": len(leaves),
         "flat_search": search_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -201,8 +193,7 @@ def main():
 
     result = retrieve(args.query, max_candidates=args.max_candidates)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > [{src['doc_id']}] {src['navigation_path']}")
     print(f"{'-'*60}")

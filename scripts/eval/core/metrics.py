@@ -1,4 +1,4 @@
-"""Pure retrieval + answer scoring functions.
+"""Pure retrieval scoring functions.
 
 Zero I/O, zero side effects. Used by both the vectorless and vector eval
 harnesses so RQ1, RQ2, and RQ3 numbers are computed identically.
@@ -48,7 +48,6 @@ Methodology notes for thesis writeup.
 from __future__ import annotations
 
 import math
-import re
 
 
 # ----------------------------------------------------------------------
@@ -64,15 +63,6 @@ GOLD_KEY_BY_GRANULARITY = {
 }
 
 SLICE_FIELDS = ["reference_mode", "query_style", "gold_doc_id", "query_type"]
-
-STOPWORDS = {
-    "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
-    "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
-    "tidak", "akan", "telah", "dapat", "harus", "setiap", "suatu",
-    "antara", "atas", "secara", "serta", "bahwa", "tentang",
-    "berdasarkan", "sebagaimana", "dimaksud", "tersebut",
-    "ayat", "huruf", "angka",
-}
 
 
 # ----------------------------------------------------------------------
@@ -93,16 +83,6 @@ def unique_preserve_order(values: list[str]) -> list[str]:
             seen.add(value)
             output.append(value)
     return output
-
-
-def strip_citation_labels(text: str) -> str:
-    return re.sub(r"\[R\d+\]", " ", text or "")
-
-
-def normalize_tokens(text: str) -> list[str]:
-    lowered = strip_citation_labels(text).lower()
-    tokens = re.findall(r"[a-z0-9]+", lowered)
-    return [tok for tok in tokens if tok not in STOPWORDS and len(tok) > 1]
 
 
 # ----------------------------------------------------------------------
@@ -281,63 +261,6 @@ def rank_distribution_stats(records: list[dict]) -> dict:
         "mean_rank_on_hit": float(sum(sorted_ranks) / n),
         "median_rank_on_hit": float(median),
         "max_rank_on_hit": int(sorted_ranks[-1]),
-    }
-
-
-# ----------------------------------------------------------------------
-# Answer + citation scoring
-# ----------------------------------------------------------------------
-
-def tokenize_overlap(answer: str, answer_hint: str) -> tuple[float, float]:
-    answer_tokens = normalize_tokens(answer)
-    hint_tokens = normalize_tokens(answer_hint)
-    if not hint_tokens or not answer_tokens:
-        return 0.0, 0.0
-
-    answer_set = set(answer_tokens)
-    hint_set = set(hint_tokens)
-    overlap = len(answer_set & hint_set)
-    precision = overlap / len(answer_set) if answer_set else 0.0
-    recall = overlap / len(hint_set) if hint_set else 0.0
-    f1 = 0.0 if precision + recall == 0 else (2 * precision * recall) / (precision + recall)
-    return recall, f1
-
-
-def score_citations_and_answer(
-    answer: str,
-    cited_ids: list[str],
-    relevant_ids: set[str],
-    answer_hint: str,
-) -> dict:
-    cited = unique_preserve_order(cited_ids)
-    cited_set = set(cited)
-    relevant = set(relevant_ids)
-    answer_nonempty = bool((answer or "").strip())
-    citation_nonempty = bool(cited)
-    citation_gold = cited_set & relevant
-
-    citation_precision = (len(citation_gold) / len(cited_set)) if cited_set else 0.0
-    citation_recall = (len(citation_gold) / len(relevant)) if relevant else 0.0
-    citation_hit = bool(citation_gold)
-    fully_grounded = bool(cited_set) and cited_set.issubset(relevant)
-    supported_answer = answer_nonempty and citation_hit
-    unsupported_answer = answer_nonempty and not citation_hit
-    uncited_answer = answer_nonempty and not citation_nonempty
-    hint_recall, hint_f1 = tokenize_overlap(answer or "", answer_hint or "")
-
-    return {
-        "answer_nonempty": float(answer_nonempty),
-        "citation_nonempty": float(citation_nonempty),
-        "num_citations": len(cited),
-        "citation_precision": citation_precision,
-        "citation_recall": citation_recall,
-        "citation_hit": float(citation_hit),
-        "fully_grounded_citations": float(fully_grounded),
-        "supported_answer": float(supported_answer),
-        "unsupported_answer": float(unsupported_answer),
-        "uncited_answer": float(uncited_answer),
-        "answer_hint_token_recall": hint_recall,
-        "answer_hint_token_f1": hint_f1,
     }
 
 

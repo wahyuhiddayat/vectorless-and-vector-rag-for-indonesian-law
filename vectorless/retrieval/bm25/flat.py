@@ -21,7 +21,7 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, load_all_leaf_nodes, generate_answer_multi_doc, save_log,
+    tokenize, load_all_leaf_nodes, save_log,
 )
 
 
@@ -112,14 +112,6 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         return {"query": query, "strategy": "bm25-flat",
                 "error": "No results found"}
 
-    # Step 2: Generate answer (multi-doc)
-    snap = snapshot_counters()
-    t_step = time.time()
-
-    answer_result = generate_answer_multi_doc(query, results, verbose=verbose)
-    steps["answer_gen"] = step_metrics(t_step, snap)
-
-    # Build sources
     sources = []
     for r in results:
         sources.append({
@@ -138,8 +130,6 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         "strategy": "bm25-flat",
         "corpus_size": len(leaves),
         "search": {"rankings": results},
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -168,8 +158,7 @@ def main():
 
     result = retrieve(args.query, top_k=args.top_k)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {src['bm25_score']})")
     print(f"{'-'*60}")

@@ -20,8 +20,7 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, load_catalog, load_doc, extract_nodes,
-    generate_answer, save_log,
+    tokenize, load_catalog, load_doc, extract_nodes, save_log,
 )
 
 
@@ -223,18 +222,11 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
         return {"query": query, "strategy": "bm25-tree", "doc_ids": [doc_id],
                 "error": "No relevant nodes found"}
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
         return {"query": query, "strategy": "bm25-tree", "doc_ids": [doc_id],
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
-
-    doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
-    answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-    steps["answer_gen"] = step_metrics(t_step, snap)
 
     sources = []
     for node in nodes:
@@ -253,8 +245,6 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
         "strategy": "bm25-tree",
         "doc_search": {"rankings": doc_results},
         "tree_search": tree_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -281,8 +271,7 @@ def main():
 
     result = retrieve(args.query, top_k_per_level=args.top_k_per_level)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > {src['navigation_path']}")
     print(f"{'-'*60}")

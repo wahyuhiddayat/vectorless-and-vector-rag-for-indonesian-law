@@ -20,8 +20,7 @@ import time
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    load_catalog, load_doc, find_node, extract_nodes,
-    generate_answer, save_log,
+    load_catalog, load_doc, find_node, extract_nodes, save_log,
 )
 
 
@@ -298,18 +297,11 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
         return {"query": query, "strategy": f"llm-{strategy}", "doc_ids": doc_ids,
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
-
-    doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
-    answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-    timings["answer_gen"] = step_metrics(t_step, snap)
 
     sources = []
     for node in nodes:
@@ -328,8 +320,6 @@ def retrieve(query: str, strategy: str = "stepwise", verbose: bool = True) -> di
         "strategy": f"llm-{strategy}",
         "doc_search": doc_result,
         "tree_search": tree_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": timings},
     }
@@ -354,8 +344,7 @@ def main():
 
     result = retrieve(args.query, strategy=args.strategy)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > {src['navigation_path']}")
     print(f"{'-'*60}")

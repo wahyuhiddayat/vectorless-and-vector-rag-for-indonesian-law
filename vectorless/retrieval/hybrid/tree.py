@@ -6,7 +6,6 @@ document tree structure. This is the tree variant of hybrid retrieval.
 Pipeline:
   1. Doc search  - union of BM25 metadata match + LLM semantic selection
   2. Node search - BM25 retrieves candidate Pasal within selected doc, LLM reranks
-  3. Answer gen  - LLM generates grounded answer (same as other strategies)
 
 This addresses weaknesses of both pure approaches:
   - Pure BM25 fails on vocabulary mismatch (query term not in metadata)
@@ -27,7 +26,7 @@ from rank_bm25 import BM25Okapi
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     tokenize, load_catalog, load_doc, find_node, extract_nodes,
-    extract_kwic_snippet, generate_answer, save_log, DATA_INDEX,
+    extract_kwic_snippet, save_log, DATA_INDEX,
 )
 
 
@@ -282,18 +281,11 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
         return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
-
-    doc_meta = {"doc_id": doc_id, "judul": doc.get("judul", "")}
-    answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-    steps["answer_gen"] = step_metrics(t_step, snap)
 
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
     sources = []
@@ -314,8 +306,6 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
         "strategy": "hybrid",
         "doc_search": doc_result,
         "node_search": node_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -340,8 +330,7 @@ def main():
 
     result = retrieve(args.query, bm25_top_k=args.bm25_top_k)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         score = src.get("bm25_score", "N/A")
         print(f"  > {src['navigation_path']} (BM25: {score})")

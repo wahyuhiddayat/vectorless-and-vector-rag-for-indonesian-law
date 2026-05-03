@@ -228,7 +228,6 @@ class EvalRunner:
             "qdrant_url": self.qdrant_url,
             "llm_model": gemini_model_name(),
             "notes": {
-                "answer_eval": "citation-grounding + weak lexical overlap vs answer_hint",
                 "single_gold_gt": True,
                 "metric_redundancy": "recall@k == hit@k, map@k == mrr@k for single-gold GT",
             },

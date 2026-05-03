@@ -9,7 +9,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ..ids import doc_category
-from ..llm import call as llm_call
 
 load_dotenv()
 
@@ -129,115 +128,6 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
                 "penjelasan": node.get("penjelasan"),
             })
     return out
-
-
-def _format_source(label: str, node: dict, include_doc: bool = False) -> str:
-    parts = [f"### [{label}] {node['title']}", f"Lokasi: {node['navigation_path']}"]
-    if include_doc and node.get("doc_title"):
-        parts.append(f"Sumber: {node['doc_title']}")
-    parts.append("")
-    parts.append(f"Isi:\n{node['text']}")
-    if node.get("penjelasan") and node["penjelasan"] != "Cukup jelas.":
-        parts.append(f"\nPenjelasan Resmi:\n{node['penjelasan']}")
-    return "\n".join(parts) + "\n"
-
-
-def _build_answer_prompt(query: str, header: str, context: str, labels: list[str]) -> str:
-    labels_list = ", ".join(f"[{l}]" for l in labels)
-    return f"""\
-Kamu adalah asisten hukum Indonesia. Jawab pertanyaan berdasarkan HANYA teks Pasal yang diberikan.
-
-Pertanyaan: {query}
-
-{header}
-{context}
-
-Balas dalam format JSON:
-{{
-  "answer": "<jawaban yang jelas dan lengkap, sisipkan [R1], [R2], dll. di kalimat yang mengacu ke sumber>",
-  "cited": ["R1", "R2"]
-}}
-
-Aturan:
-- Jawab berdasarkan teks Pasal saja, JANGAN mengarang
-- Jika ada Penjelasan Resmi, gunakan untuk menginterpretasi
-- Label sumber yang tersedia: {labels_list}
-- Sisipkan label [R1], [R2], dll. langsung di dalam teks jawaban, tepat setelah kalimat/fakta yang mengacu ke sumber tersebut
-- "cited" berisi daftar label yang dipakai (tanpa kurung siku)
-- Jawab dalam Bahasa Indonesia
-- Kembalikan HANYA JSON
-"""
-
-
-def generate_answer(query: str, nodes: list[dict], doc_meta: dict,
-                    verbose: bool = True) -> dict:
-    """Answer a query grounded in nodes from a single document."""
-    label_map = {}
-    parts = []
-    for i, node in enumerate(nodes, 1):
-        label = f"R{i}"
-        label_map[label] = {
-            "node_id": node["node_id"],
-            "title": node.get("title", ""),
-            "navigation_path": node.get("navigation_path", ""),
-        }
-        parts.append(_format_source(label, node))
-
-    prompt = _build_answer_prompt(
-        query,
-        header=f"Sumber hukum ({doc_meta.get('judul', '')}):",
-        context="\n---\n".join(parts),
-        labels=list(label_map),
-    )
-    result = llm_call(prompt)
-    result["citations"] = [
-        {**label_map[l], "label": l} for l in result.get("cited", []) if l in label_map
-    ]
-    result["label_map"] = label_map
-
-    if verbose:
-        print(f"\n[Answer] {result.get('answer', '')[:300]}")
-        for c in result["citations"]:
-            print(f"  [{c['label']}] {c['node_id']} — {c['title']}")
-    return result
-
-
-def generate_answer_multi_doc(query: str, results: list[dict],
-                              verbose: bool = True) -> dict:
-    """Answer a query grounded in nodes drawn from multiple documents."""
-    if not results:
-        return {"answer": "No answer generated", "cited": [], "citations": [], "label_map": {}}
-
-    label_map = {}
-    parts = []
-    for i, r in enumerate(results, 1):
-        label = f"R{i}"
-        label_map[label] = {
-            "node_id": r["node_id"],
-            "doc_id": r["doc_id"],
-            "title": r.get("title", ""),
-            "navigation_path": r.get("navigation_path", ""),
-            "doc_title": r.get("doc_title", ""),
-        }
-        parts.append(_format_source(label, r, include_doc=True))
-
-    prompt = _build_answer_prompt(
-        query,
-        header="Sumber hukum:",
-        context="\n---\n".join(parts),
-        labels=list(label_map),
-    )
-    result = llm_call(prompt)
-    result["citations"] = [
-        {**label_map[l], "label": l} for l in result.get("cited", []) if l in label_map
-    ]
-    result["label_map"] = label_map
-
-    if verbose:
-        print(f"\n[Answer] {result.get('answer', '')[:300]}")
-        for c in result["citations"]:
-            print(f"  [{c['label']}] {c['node_id']} — {c['title']}")
-    return result
 
 
 def save_log(result: dict) -> None:

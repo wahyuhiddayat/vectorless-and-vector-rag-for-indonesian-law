@@ -23,8 +23,7 @@ import time
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    load_catalog, load_doc, find_node, extract_nodes,
-    generate_answer, save_log,
+    load_catalog, load_doc, find_node, extract_nodes, save_log,
 )
 from .tree import doc_search
 
@@ -460,15 +459,6 @@ def retrieve(query: str,
                         "step_metrics": timings},
         }
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
-    nodes = extract_nodes(primary_doc, [s["node_id"] for s in selected])
-    doc_meta = {"doc_id": primary_doc_id, "judul": primary_doc.get("judul", "")}
-    answer_result = generate_answer(query, nodes, doc_meta, verbose=verbose)
-
-    timings["answer_gen"] = step_metrics(t_step, snap)
-
     sources: list[dict] = []
     for s in selected:
         node = find_node(primary_doc.get("structure", []), s["node_id"]) or {}
@@ -493,8 +483,6 @@ def retrieve(query: str,
             "scratchpad": scratchpad,
         },
         "node_ids": [s["node_id"] for s in selected],
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": timings},
     }
@@ -524,8 +512,7 @@ def main() -> None:
                       max_actions=args.max_actions, max_reads=args.max_reads)
 
     print("\n" + "-" * 60)
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print("\nDASAR HUKUM:")
+    print("DASAR HUKUM:")
     for src in result.get("sources", []):
         path = src.get("navigation_path") or src.get("node_id", "")
         print(f"  > {src.get('doc_id', '')} :: {path}")

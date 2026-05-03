@@ -5,7 +5,6 @@ No tree structure is used. This is the flat variant of hybrid retrieval.
 
 Stage 1: BM25 search across ALL leaf nodes (same corpus as bm25-flat).
 Stage 2: LLM reranks top-K BM25 candidates using KWIC text snippets.
-Stage 3: Answer generation from reranked results (multi-doc).
 
 Unlike the tree-based hybrid strategy that navigates within a selected doc,
 this variant searches the full leaf node corpus directly, eliminating the
@@ -24,8 +23,7 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, load_all_leaf_nodes, extract_kwic_snippet,
-    generate_answer_multi_doc, save_log,
+    tokenize, load_all_leaf_nodes, extract_kwic_snippet, save_log,
 )
 
 
@@ -160,12 +158,6 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     selected_map = {c["node_id"]: c for c in candidates}
     selected_results = [selected_map[nid] for nid in selected_ids if nid in selected_map]
 
-    snap = snapshot_counters()
-    t_step = time.time()
-
-    answer_result = generate_answer_multi_doc(query, selected_results, verbose=verbose)
-    steps["answer_gen"] = step_metrics(t_step, snap)
-
     sources = []
     for r in selected_results:
         sources.append({
@@ -191,8 +183,6 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
             "bm25_score": c["bm25_score"],
         } for c in candidates],
         "rerank_result": rerank_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -221,8 +211,7 @@ def main():
 
     result = retrieve(args.query, bm25_top_k=args.bm25_top_k)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {src['bm25_score']})")
     print(f"{'-'*60}")

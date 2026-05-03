@@ -1,7 +1,8 @@
 """
 Pure vector (dense) retrieval for Indonesian legal documents.
 
-Embed query -> Qdrant cosine similarity -> LLM answer generation.
+Embed query, then Qdrant cosine similarity. Retrieval-only pipeline,
+no answer generation.
 
 Configuration via env vars (see common.py):
     VECTOR_EMBEDDING_MODEL, VECTOR_COLLECTION, QDRANT_PATH / QDRANT_URL, VECTOR_GRANULARITY
@@ -15,8 +16,7 @@ import argparse
 import time
 
 from .common import (
-    embed_query, reset_token_counters, get_token_stats,
-    generate_answer, save_log,
+    embed_query, save_log,
     COLLECTION_NAME, GRANULARITY, EMBEDDING_MODEL,
     get_qdrant_client,
 )
@@ -57,8 +57,7 @@ def vector_search(query: str, top_k: int = 5, verbose: bool = True) -> dict:
 
 
 def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
-    """Run dense retrieval followed by answer generation."""
-    reset_token_counters()
+    """Run dense retrieval. Returns retrieved chunks only, no answer generation."""
     t_start = time.time()
 
     if verbose:
@@ -74,8 +73,6 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     if not rankings:
         return {"query": query, "strategy": "vector-dense", "error": "No results found"}
 
-    answer_result = generate_answer(query, rankings, verbose=verbose)
-
     sources = [
         {
             "doc_id": r["doc_id"],
@@ -88,7 +85,6 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
     ]
 
     elapsed = time.time() - t_start
-    stats = get_token_stats()
 
     result = {
         "query": query,
@@ -97,18 +93,21 @@ def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
         "embedding_model": EMBEDDING_MODEL,
         "collection": COLLECTION_NAME,
         "vector_search": search_result,
-        "answer": answer_result.get("answer", ""),
-        "citations": answer_result.get("citations", []),
         "sources": sources,
-        "metrics": {**stats, "elapsed_s": round(elapsed, 2)},
+        "metrics": {
+            "llm_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "elapsed_s": round(elapsed, 2),
+        },
     }
 
     save_log(result)
 
     if verbose:
         print(f"\n{'='*60}")
-        print(f"Done in {elapsed:.1f}s  |  {stats['llm_calls']} LLM calls  |  "
-              f"{stats['total_tokens']:,} tokens")
+        print(f"Done in {elapsed:.1f}s  |  0 LLM calls (retrieval-only)")
         print(f"{'='*60}")
 
     return result
@@ -122,8 +121,7 @@ def main():
 
     result = retrieve(args.query, top_k=args.top_k)
     print(f"\n{'-'*60}")
-    print(f"JAWABAN:\n{result.get('answer', 'No answer generated')}")
-    print(f"\nDASAR HUKUM:")
+    print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         print(f"  > {src['navigation_path']} (cosine: {src.get('cosine_score', 'N/A'):.4f})")
     print(f"{'-'*60}")

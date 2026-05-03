@@ -78,7 +78,7 @@ def main() -> int:
     if args.qdrant_path:
         os.environ["QDRANT_PATH"] = args.qdrant_path
 
-    # Capture the answer-generation LLM model for provenance, if importable.
+    # Capture the retrieval LLM model name for provenance schema parity with vectorless.
     try:
         from vectorless.llm import MODEL as _ans_model
         llm_model = str(_ans_model)

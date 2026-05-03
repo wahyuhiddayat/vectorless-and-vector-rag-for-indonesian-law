@@ -9,7 +9,7 @@ vectorless-and-vector-rag-for-indonesian-law/
   scraper/              # BPK JDIH document acquisition (see scraper/README.md)
   vectorless/           # Vectorless RAG system
     indexing/           # PDF parsing + index building
-    retrieval/          # Query -> answer pipelines (BM25, LLM, hybrid)
+    retrieval/          # Query -> retrieved nodes pipelines (BM25, LLM, hybrid)
   vector/               # Vector RAG system (comparison baseline)
   data/                 # Shared data layer (gitignored)
     raw/                # Scraper output: metadata JSONs + PDFs
@@ -286,15 +286,14 @@ python -m vector.retrieve_vector "Apa syarat penyadapan?" --top_k 10
 
 ## 5. Using retrieval from Python (for experiments)
 
-All retrieval modules export a `retrieve()` function. For thesis experiments, call this directly instead of using CLI:
+All retrieval modules export a `retrieve()` function that returns retrieved nodes only. Thesis is retrieval-only, no answer generation in any pipeline. For experiments, call this directly instead of using CLI:
 
 ```python
 from vectorless.retrieval.bm25.flat import retrieve
 result = retrieve("Apa syarat penyadapan?", top_k=5)
 
-print(result["answer"])        # LLM-generated answer
 print(result["sources"])       # Retrieved Pasal with scores
-print(result["metrics"])       # Token usage, elapsed time
+print(result["metrics"])       # LLM call count, token usage, elapsed time
 ```
 
 Compare strategies programmatically:

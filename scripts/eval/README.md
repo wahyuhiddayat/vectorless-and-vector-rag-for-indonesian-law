@@ -152,12 +152,6 @@ For single-gold GT these three names refer to mathematically equivalent values (
 - `full_reciprocal_rank`, mean reciprocal rank without a cutoff (captures gold beyond k)
 - `exact_top1_hit_rate`
 
-**Per query, answer.**
-
-- `answer_nonempty`, `num_citations`
-- `citation_precision`, `citation_recall`, `citation_hit`, `fully_grounded_citations`
-- `answer_hint_token_recall`, `answer_hint_token_f1`, sanity-check only, not headline
-
 **Per query, cost.**
 
 - `llm_calls`, `input_tokens`, `output_tokens`, `total_tokens`, `elapsed_s`
