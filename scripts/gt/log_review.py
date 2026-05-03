@@ -93,15 +93,15 @@ def load_items(path: Path) -> list[dict]:
     return data
 
 
-def prompt_verdict(query_label: str) -> tuple[str, str]:
+def prompt_verdict() -> tuple[str, str]:
     """Prompt the author for a verdict and optional notes for one item."""
     while True:
-        raw = input(f"Verdict {query_label}: c=correct w=wrong b=borderline s=skip q=quit, ").strip().lower()
+        raw = input("  Verdict (c=correct, w=wrong, b=borderline, s=skip, q=quit): ").strip().lower()
         if raw == "q":
             raise KeyboardInterrupt
         if raw in VALID_VERDICTS:
             verdict = VALID_VERDICTS[raw]
-            notes = input("Notes (enter to skip): ").strip()
+            notes = input("  Notes (enter to skip): ").strip()
             return verdict, notes
         print("  invalid, try again")
 
@@ -151,12 +151,12 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
     provenance = load_provenance()
     effective = resolve_provenance(provenance, doc_id, query_type)
     print()
-    print(f"Doc, {doc_id}  type={query_type}")
-    print(f"Items, {len(items)}")
+    print(f"Doc      : {doc_id}  (type={query_type})")
+    print(f"Items    : {len(items)}")
     if effective:
-        print(f"Annotator model, {effective.get('annotator_model') or '<unknown>'}")
-        print(f"Judge model    , {effective.get('judge_model') or '<unknown>'}")
-        print(f"Prompt version , {effective.get('prompt_version') or '<unknown>'}")
+        print(f"Annotator: {effective.get('annotator_model') or '<unknown>'}")
+        print(f"Judge    : {effective.get('judge_model') or '<unknown>'}")
+        print(f"Prompt   : {effective.get('prompt_version') or '<unknown>'}")
     print()
 
     results: list[dict] = []
@@ -170,7 +170,7 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
         anchors = _anchor_pairs(item)
         primary_anchor = anchors[0][1] if anchors else "<missing>"
 
-        print(f"[{idx}/{len(items)}] type={item.get('query_type', '?')}, "
+        print(f"[{idx}/{len(items)}] {item.get('query_type', '?')}, "
               f"{item.get('query_style', '?')}, {item.get('reference_mode', '?')}")
         print(f"  {'Query':<8}: {item.get('query', '')}")
         for a_idx, (did, nid) in enumerate(anchors, start=1):
@@ -186,7 +186,7 @@ def review_doc(doc_id: str, query_type: str, resume: bool) -> dict:
         if item.get("answer_hint"):
             print(f"  {'Hint':<8}: {item['answer_hint']}")
         try:
-            verdict, notes = prompt_verdict(f"[{idx}/{len(items)}]")
+            verdict, notes = prompt_verdict()
         except KeyboardInterrupt:
             print("\nQuit, partial progress saved")
             break
