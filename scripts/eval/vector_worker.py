@@ -34,6 +34,8 @@ _MODEL_SHORT = {
     "all-nusabert-large-v4": "nusabert",
 }
 
+_RERANKER_CHOICES = ["none", "bge-reranker-v2-m3", "qwen3-reranker-0.6b"]
+
 
 def run_retrieval(system: str, query: str, top_k: int) -> dict:
     if system == "vector-dense":
@@ -60,6 +62,11 @@ def main() -> int:
         choices=list(_MODEL_SHORT),
         help="Embedding model. bge-m3 | multilingual-e5-large-instruct | all-nusabert-large-v4",
     )
+    ap.add_argument(
+        "--reranker", default="none",
+        choices=_RERANKER_CHOICES,
+        help="Reranker. none | bge-reranker-v2-m3 | qwen3-reranker-0.6b",
+    )
     ap.add_argument("--query", required=True)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument(
@@ -75,6 +82,7 @@ def main() -> int:
     os.environ["VECTOR_EMBEDDING_MODEL"] = args.embedding_model
     os.environ["VECTOR_COLLECTION"] = collection
     os.environ["VECTOR_GRANULARITY"] = args.granularity
+    os.environ["VECTOR_RERANKER"] = args.reranker
     if args.qdrant_path:
         os.environ["QDRANT_PATH"] = args.qdrant_path
 
@@ -92,6 +100,7 @@ def main() -> int:
             "system": args.system,
             "granularity": args.granularity,
             "embedding_model": args.embedding_model,
+            "reranker": args.reranker,
             "collection": collection,
             "llm_model": llm_model,
             "result": result,
@@ -102,6 +111,7 @@ def main() -> int:
             "system": args.system,
             "granularity": args.granularity,
             "embedding_model": args.embedding_model,
+            "reranker": args.reranker,
             "llm_model": llm_model,
             "error": str(exc),
             "traceback": traceback.format_exc(),

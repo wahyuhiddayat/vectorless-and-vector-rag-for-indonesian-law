@@ -68,14 +68,25 @@ EMBEDDING_MODELS = [
     "multilingual-e5-large-instruct",
     "all-nusabert-large-v4",
 ]
+RERANKERS = [
+    "none",
+    "bge-reranker-v2-m3",
+    "qwen3-reranker-0.6b",
+]
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900
 DEFAULT_MAX_RETRIES = 2
 
 
-def combo_key(system: str, granularity: str, embedding_model: str) -> str:
+def combo_key(system: str, granularity: str, embedding_model: str,
+              reranker: str) -> str:
     """File-safe combo identifier used for record JSONL filenames."""
-    return f"{eval_io.sanitize_label(system, 'system')}__{eval_io.sanitize_label(granularity, 'gran')}__{eval_io.sanitize_label(embedding_model, 'model')}"
+    return (
+        f"{eval_io.sanitize_label(system, 'system')}__"
+        f"{eval_io.sanitize_label(granularity, 'gran')}__"
+        f"{eval_io.sanitize_label(embedding_model, 'model')}__"
+        f"{eval_io.sanitize_label(reranker, 'rerank')}"
+    )
 
 
 def invoke_vector_worker(
@@ -83,6 +94,7 @@ def invoke_vector_worker(
     system: str,
     granularity: str,
     embedding_model: str,
+    reranker: str,
     query: str,
     top_k: int,
     timeout_s: int,
@@ -97,6 +109,7 @@ def invoke_vector_worker(
         "--system", system,
         "--granularity", granularity,
         "--embedding-model", embedding_model,
+        "--reranker", reranker,
         "--query", query,
         "--top-k", str(top_k),
     ]
@@ -117,7 +130,7 @@ def invoke_vector_worker(
         stderr = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
         return (
             {"ok": False, "system": system, "granularity": granularity,
-             "embedding_model": embedding_model,
+             "embedding_model": embedding_model, "reranker": reranker,
              "error": f"Worker timed out after {timeout_s}s"},
             stdout, stderr,
         )
@@ -135,7 +148,7 @@ def invoke_vector_worker(
 
 def run_one_query_with_retry(
     *, repo_root: Path, system: str, granularity: str, embedding_model: str,
-    qid: str, item: dict, top_k: int, cutoffs: list[int],
+    reranker: str, qid: str, item: dict, top_k: int, cutoffs: list[int],
     worker_timeout_s: int, max_retries: int, qdrant_path: str | None,
     logger: ProgressLogger,
 ) -> tuple[dict, float]:
@@ -145,7 +158,7 @@ def run_one_query_with_retry(
     total_t0 = time.time()
     while True:
         payload, stdout_text, stderr_text = invoke_vector_worker(
-            repo_root, system, granularity, embedding_model,
+            repo_root, system, granularity, embedding_model, reranker,
             item["query"], top_k, worker_timeout_s, qdrant_path,
         )
         normalized = normalize_worker_payload(payload)
@@ -172,6 +185,7 @@ def run_one_query_with_retry(
         retry_count=retry_count, error_category=error_category,
     )
     record["embedding_model"] = embedding_model
+    record["reranker"] = reranker
     return record, elapsed
 
 
@@ -186,6 +200,7 @@ def build_config(args, label: str, selected_queries: list, cutoffs: list[int]) -
         "systems": args.systems_list,
         "granularities": args.granularities_list,
         "embedding_models": args.embedding_models_list,
+        "rerankers": args.rerankers_list,
         "top_k": args.top_k,
         "cutoffs": cutoffs,
         "doc_id": args.doc_id,
@@ -208,8 +223,8 @@ def build_config(args, label: str, selected_queries: list, cutoffs: list[int]) -
 
 _RESUME_SIGNATURE_KEYS = (
     "run_kind", "testset_file", "systems", "granularities",
-    "embedding_models", "top_k", "cutoffs", "doc_id", "query_limit",
-    "random_seed",
+    "embedding_models", "rerankers", "top_k", "cutoffs", "doc_id",
+    "query_limit", "random_seed",
 )
 
 
@@ -252,6 +267,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--granularities", default=",".join(GRANULARITIES), help="Comma-separated granularities")
     ap.add_argument("--embedding-models", default=",".join(EMBEDDING_MODELS),
                     help="Comma-separated embedding models")
+    ap.add_argument("--rerankers", default=",".join(RERANKERS),
+                    help="Comma-separated rerankers (none, bge-reranker-v2-m3, qwen3-reranker-0.6b)")
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--query-limit", type=int, default=None)
     ap.add_argument("--random-seed", type=int, default=None)
@@ -285,14 +302,16 @@ def main() -> int:  # noqa: C901
     args.systems_list = eval_io.parse_csv_list(args.systems, SYSTEMS)
     args.granularities_list = eval_io.parse_csv_list(args.granularities, GRANULARITIES)
     args.embedding_models_list = eval_io.parse_csv_list(args.embedding_models, EMBEDDING_MODELS)
+    args.rerankers_list = eval_io.parse_csv_list(args.rerankers, RERANKERS)
 
     unknown = (
         [s for s in args.systems_list if s not in SYSTEMS]
         + [g for g in args.granularities_list if g not in GRANULARITIES]
         + [m for m in args.embedding_models_list if m not in EMBEDDING_MODELS]
+        + [r for r in args.rerankers_list if r not in RERANKERS]
     )
     if unknown:
-        raise SystemExit(f"Unknown system, granularity, or model: {unknown}")
+        raise SystemExit(f"Unknown system, granularity, model, or reranker: {unknown}")
     if args.top_k < 1:
         raise SystemExit("--top-k must be >= 1")
 
@@ -359,80 +378,84 @@ def main() -> int:  # noqa: C901
 
     eval_io.write_json(run_dir / "config.json", config)
 
-    # Execute, triple-nested loop with embedding_model as the inner dim.
+    # Execute. Quad-nested loop: system x granularity x embedding x reranker.
     error_categories: dict[str, int] = {}
     total_combos = (
         len(args.systems_list)
         * len(args.granularities_list)
         * len(args.embedding_models_list)
+        * len(args.rerankers_list)
     )
     combo_idx = 0
     for system in args.systems_list:
         for granularity in args.granularities_list:
             for embedding_model in args.embedding_models_list:
-                combo_idx += 1
-                logger.combo_start(combo_idx, total_combos, system,
-                                   f"{granularity} | {embedding_model}")
-                key = combo_key(system, granularity, embedding_model)
-                combo_path = records_dir / f"{key}.jsonl"
+                for reranker in args.rerankers_list:
+                    combo_idx += 1
+                    logger.combo_start(combo_idx, total_combos, system,
+                                       f"{granularity} | {embedding_model} | {reranker}")
+                    key = combo_key(system, granularity, embedding_model, reranker)
+                    combo_path = records_dir / f"{key}.jsonl"
 
-                completed = (
-                    {r["query_id"] for r in eval_io.read_records_file(combo_path, validate=True) if r.get("query_id")}
-                    if args.resume else set()
-                )
-                invalid = getattr(eval_io.read_records_file, "last_invalid_count", 0)
-                if invalid:
-                    logger.warn(
-                        f"  resume: skipped {invalid} truncated/invalid record(s) in {key}, "
-                        f"those queries will be re-run"
+                    completed = (
+                        {r["query_id"] for r in eval_io.read_records_file(combo_path, validate=True) if r.get("query_id")}
+                        if args.resume else set()
                     )
-                    eval_io.read_records_file.last_invalid_count = 0  # type: ignore[attr-defined]
-                if completed:
-                    logger.info(f"  resume: {len(completed)}/{len(selected_queries)} already done")
-
-                mode = "a" if (args.resume and completed) else "w"
-                fh = combo_path.open(mode, encoding="utf-8")
-                combo_t0 = time.time()
-                combo_records: list[dict] = []
-                if completed:
-                    combo_records.extend(eval_io.read_records_file(combo_path, validate=True))
-                try:
-                    for qid, item in selected_queries:
-                        if qid in completed:
-                            continue
-                        record, elapsed = run_one_query_with_retry(
-                            repo_root=REPO_ROOT, system=system, granularity=granularity,
-                            embedding_model=embedding_model, qid=qid, item=item,
-                            top_k=args.top_k, cutoffs=cutoffs,
-                            worker_timeout_s=args.worker_timeout_s,
-                            max_retries=args.max_retries, qdrant_path=args.qdrant_path,
-                            logger=logger,
+                    invalid = getattr(eval_io.read_records_file, "last_invalid_count", 0)
+                    if invalid:
+                        logger.warn(
+                            f"  resume: skipped {invalid} truncated/invalid record(s) in {key}, "
+                            f"those queries will be re-run"
                         )
-                        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-                        fh.flush()
-                        combo_records.append(record)
-                        logger.query_line(record, elapsed)
-                        if record.get("error"):
-                            cat = record.get("error_category", "other") or "other"
-                            error_categories[cat] = error_categories.get(cat, 0) + 1
-                        time.sleep(LLM_INTER_QUERY_DELAY_S)
-                finally:
-                    fh.close()
+                        eval_io.read_records_file.last_invalid_count = 0  # type: ignore[attr-defined]
+                    if completed:
+                        logger.info(f"  resume: {len(completed)}/{len(selected_queries)} already done")
 
-                logger.combo_summary(system, f"{granularity}|{embedding_model}",
-                                     combo_records, time.time() - combo_t0)
+                    mode = "a" if (args.resume and completed) else "w"
+                    fh = combo_path.open(mode, encoding="utf-8")
+                    combo_t0 = time.time()
+                    combo_records: list[dict] = []
+                    if completed:
+                        combo_records.extend(eval_io.read_records_file(combo_path, validate=True))
+                    try:
+                        for qid, item in selected_queries:
+                            if qid in completed:
+                                continue
+                            record, elapsed = run_one_query_with_retry(
+                                repo_root=REPO_ROOT, system=system, granularity=granularity,
+                                embedding_model=embedding_model, reranker=reranker,
+                                qid=qid, item=item,
+                                top_k=args.top_k, cutoffs=cutoffs,
+                                worker_timeout_s=args.worker_timeout_s,
+                                max_retries=args.max_retries, qdrant_path=args.qdrant_path,
+                                logger=logger,
+                            )
+                            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                            fh.flush()
+                            combo_records.append(record)
+                            logger.query_line(record, elapsed)
+                            if record.get("error"):
+                                cat = record.get("error_category", "other") or "other"
+                                error_categories[cat] = error_categories.get(cat, 0) + 1
+                            time.sleep(LLM_INTER_QUERY_DELAY_S)
+                    finally:
+                        fh.close()
+
+                    logger.combo_summary(system, f"{granularity}|{embedding_model}|{reranker}",
+                                         combo_records, time.time() - combo_t0)
 
     # Finalize, aggregate by (system, granularity, embedding_model).
     completed_at = datetime.now()
     wall_s = (completed_at - started_at).total_seconds()
     all_records = eval_io.read_all_records(records_dir)
 
-    # Synthetic system label "<system>:<embedding_model>" so the existing
-    # aggregator (which groups by system x granularity) treats each embedding
-    # model as its own system. Mirrors how RQ2 reports compare across models.
+    # Synthetic system label "<system>:<embedding_model>:<reranker>" so the existing
+    # aggregator (which groups by system x granularity) treats each (embedding, reranker)
+    # combo as its own system. Mirrors how RQ2 reports compare across model+reranker.
     for r in all_records:
         if r.get("system") and r.get("embedding_model"):
-            r["system_full"] = f"{r['system']}:{r['embedding_model']}"
+            rerank_part = r.get("reranker", "none") or "none"
+            r["system_full"] = f"{r['system']}:{r['embedding_model']}:{rerank_part}"
 
     synthetic_systems = sorted({r["system_full"] for r in all_records if r.get("system_full")})
 

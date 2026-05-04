@@ -10,6 +10,7 @@ All key settings are configurable via environment variables:
     QDRANT_URL              e.g. http://localhost:6333 (default)
     QDRANT_PATH             e.g. ./qdrant_local  (local mode, takes priority over URL)
     VECTOR_GRANULARITY      e.g. pasal (default), stored in result dict only
+    VECTOR_RERANKER         e.g. none (default), bge-reranker-v2-m3, qwen3-reranker-0.6b
 """
 
 import json
@@ -26,7 +27,13 @@ COLLECTION_NAME = os.environ.get("VECTOR_COLLECTION", "law-pasal-bgem3")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_PATH = os.environ.get("QDRANT_PATH", None)
 GRANULARITY = os.environ.get("VECTOR_GRANULARITY", "pasal")
+RERANKER = os.environ.get("VECTOR_RERANKER", "none")
 LOG_DIR = Path("data/retrieval_logs")
+
+# First-stage candidate count fed to the reranker. Final top-k=10 returned to caller.
+# 50 chosen per Notes/06-decisions/2026-05-04-rq2-reranker-iv.md, balances recall ceiling
+# with reranker latency budget. See ADR for rationale and source citations.
+RERANKER_TOP_N = 50
 
 
 # RQ2 axis. Indonesian specialization gradient (breadth vs depth of training data).
@@ -56,6 +63,29 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
         "model_id": "LazarusNLP/all-nusabert-large-v4",
         "dim": 1024,
         "backend": "sentence_transformers",
+    },
+}
+
+
+# RQ2 reranker IV. Scoring-paradigm tier (no-rerank, encoder cross-attention, LLM pointwise).
+# See Notes/06-decisions/2026-05-04-rq2-reranker-iv.md for axis justification and model selection.
+_RERANKER_REGISTRY: dict[str, dict] = {
+    "none": {
+        # R0. No reranker. First-stage Qdrant top-k=10 returned directly.
+        "model_id": None,
+        "backend": "none",
+    },
+    "bge-reranker-v2-m3": {
+        # R1. Encoder cross-encoder. XLM-R-large seq-cls, Apache-2.0, 8K ctx.
+        # Indonesian seen via MIRACL-id training mixture.
+        "model_id": "BAAI/bge-reranker-v2-m3",
+        "backend": "cross_encoder",
+    },
+    "qwen3-reranker-0.6b": {
+        # R2. Decoder LLM pointwise yes/no logit. Qwen3-0.6B, Apache-2.0, 32K ctx.
+        # Use the seq-cls conversion checkpoint for sentence-transformers CrossEncoder API.
+        "model_id": "tomaarsen/Qwen3-Reranker-0.6B-seq-cls",
+        "backend": "cross_encoder",
     },
 }
 
