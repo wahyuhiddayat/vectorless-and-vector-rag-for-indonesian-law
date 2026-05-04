@@ -147,6 +147,63 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
     return out
 
 
+def raptor_finalize(submitted_ids: list[str],
+                    visited_ids: list[str],
+                    fallback_ids: list[str],
+                    top_k: int) -> tuple[list[str], list[str]]:
+    """Finalize an agentic retrieval ranking with RAPTOR-style fallback.
+
+    Builds the final ordered list of `top_k` node_ids by stacking three layers
+    in order of preference, deduplicating across layers:
+      1. agent_submit       node_ids the agent explicitly submitted
+      2. visited_unsubmitted node_ids visited during navigation but not submitted
+      3. bm25_fallback      ranked fallback (typically BM25 over doc leaves)
+
+    Mirrors the tree-retrieval evaluation convention used by Sarthi et al.
+    (RAPTOR, ICLR 2024) where the final retrieved set is a fixed-cardinality
+    list capped at top_k.
+
+    Args:
+        submitted_ids: ordered ids submitted by the agent, most relevant first.
+        visited_ids:   ordered ids the agent inspected but did not submit, in
+            descending visit recency.
+        fallback_ids:  deterministic fallback ordering (e.g. BM25 leaves of the
+            primary doc) used to fill remaining slots.
+        top_k: target output length.
+
+    Returns:
+        Tuple `(final_ranking, sources_per_slot)`. `final_ranking` has length
+        min(top_k, total unique ids). `sources_per_slot` is a parallel list
+        labelling each slot as `agent_submit`, `visited_unsubmitted`, or
+        `bm25_fallback`, used for telemetry.
+    """
+    seen: set[str] = set()
+    final: list[str] = []
+    labels: list[str] = []
+    for nid in submitted_ids:
+        if nid and nid not in seen:
+            final.append(nid)
+            labels.append("agent_submit")
+            seen.add(nid)
+            if len(final) >= top_k:
+                return final, labels
+    for nid in visited_ids:
+        if nid and nid not in seen:
+            final.append(nid)
+            labels.append("visited_unsubmitted")
+            seen.add(nid)
+            if len(final) >= top_k:
+                return final, labels
+    for nid in fallback_ids:
+        if nid and nid not in seen:
+            final.append(nid)
+            labels.append("bm25_fallback")
+            seen.add(nid)
+            if len(final) >= top_k:
+                return final, labels
+    return final, labels
+
+
 def validate_llm_ranking(llm_ranking: list[str], candidates: list[dict]) -> list[str]:
     """Validate and complete an LLM-generated ranking over candidate node_ids.
 

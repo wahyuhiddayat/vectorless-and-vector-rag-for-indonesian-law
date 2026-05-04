@@ -1,12 +1,18 @@
 """LLM flat retrieval for Indonesian legal QA.
 
-LLM selects relevant nodes from a flat list of all leaf nodes across all
-documents. No tree navigation is performed. The LLM sees node metadata
-(node_id, title, doc_title, navigation_path, summary) but not full text,
-allowing more candidates to fit in the context window.
+LLM ranks all leaf nodes across all documents in a single prompt. No tree
+navigation. The LLM sees node metadata (node_id, title, doc_title,
+navigation_path, summary) but not full text, so more candidates fit in
+context. Output is a full RankGPT-style permutation of the input set.
 
-This provides a baseline to compare against LLM-Tree and measure whether
-tree-based navigation adds value for LLM-driven retrieval.
+Tests the hypothesis that for LLM retrieval, flat scaling fails as the
+candidate count grows past the model's effective ranking ability. Compared
+in the RQ1 matrix against `llm-agentic-doc` (hierarchical agentic) to
+isolate the flat-vs-hierarchical axis.
+
+When the LLM truncates or hallucinates, `validate_llm_ranking` drops bad
+ids and appends missing candidates in input order so Recall@k semantics
+remain well defined.
 
 Usage:
     python -m vectorless.retrieval.llm.flat "Apa syarat penyadapan?"
@@ -20,25 +26,29 @@ import time
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    load_all_leaf_nodes, save_log,
+    load_all_leaf_nodes, save_log, validate_llm_ranking,
 )
 
 
 def flat_search(query: str, leaves: list[dict], max_candidates: int = 100,
                 verbose: bool = True) -> dict:
-    """Have the LLM select relevant nodes from a flat list.
+    """Ask the LLM to rank a flat list of leaf nodes.
 
-    Shows only metadata (no full text) to fit more candidates in context.
-    If corpus exceeds max_candidates, random samples are taken.
+    Shows only metadata (no full text) so more candidates fit in context.
+    If the corpus exceeds max_candidates, a random sample is shown and the
+    rest are discarded for this call. With max_candidates large enough to
+    cover all leaves (set by the eval harness), this becomes a pure
+    full-permutation rerank over the entire leaf corpus.
 
     Args:
         query: Legal question in Indonesian.
         leaves: All leaf nodes from all documents.
-        max_candidates: Max nodes to show the LLM.
+        max_candidates: Max nodes shown to the LLM.
         verbose: Print progress.
 
     Returns:
-        Dict with thinking, selected_ids, and candidates_shown.
+        Dict with thinking, raw `ranking`, validated `ranked_node_ids`,
+        candidates_shown, llm_ranking_length, validated_ranking_length.
     """
     if len(leaves) > max_candidates:
         sampled = random.sample(leaves, max_candidates)
@@ -61,9 +71,10 @@ def flat_search(query: str, leaves: list[dict], max_candidates: int = 100,
         })
 
     candidates_text = json.dumps(candidates_for_prompt, ensure_ascii=False, indent=2)
+    n_candidates = len(candidates_for_prompt)
 
     prompt = f"""\
-Kamu diberi pertanyaan hukum dan daftar Pasal dari berbagai Undang-Undang Indonesia.
+Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari berbagai Undang-Undang Indonesia.
 Setiap kandidat memiliki ringkasan isi (summary) dan lokasi dalam dokumen.
 
 Pertanyaan: {query}
@@ -71,31 +82,37 @@ Pertanyaan: {query}
 Daftar Pasal kandidat:
 {candidates_text}
 
-Pilih Pasal yang paling relevan untuk menjawab pertanyaan.
+Tugas: Urutkan SELURUH {n_candidates} kandidat dari paling relevan ke paling tidak relevan
+untuk menjawab pertanyaan. Output harus berisi SEMUA {n_candidates} node_ids dari input,
+tanpa duplikat dan tanpa node_id yang tidak ada di input.
 
 Balas dalam format JSON:
 {{
-  "thinking": "<penalaran mengapa Pasal ini relevan berdasarkan summary dan konteks UU>",
-  "selected_ids": ["node_id1", "node_id2"]
+  "thinking": "<penalaran singkat tentang kriteria ranking>",
+  "ranking": ["node_id_paling_relevan", "node_id_kedua", "...", "node_id_paling_tidak_relevan"]
 }}
 
 Aturan:
-- Pilih berdasarkan ISI summary, bukan hanya judul
-- Pilih Pasal yang benar-benar menjawab pertanyaan (biasanya 1-5 Pasal)
-- Perhatikan sumber UU (doc_title) dan navigation_path untuk konteks
-- Jika beberapa Pasal saling melengkapi, pilih semuanya
+- "ranking" HARUS berisi tepat {n_candidates} node_ids
+- "ranking" tidak boleh ada duplikat
+- Setiap node_id harus muncul di input (tidak boleh hallucinate)
+- Urutan menentukan ranking (index 0 = paling relevan)
+- Pertimbangkan ISI summary, sumber UU (doc_title), dan navigation_path
 - Kembalikan HANYA JSON, tanpa teks lain
 """
 
     result = llm_call(prompt)
 
-    valid_ids = {c["node_id"] for c in candidates_for_prompt}
-    selected_ids = [nid for nid in result.get("selected_ids", []) if nid in valid_ids]
-    result["selected_ids"] = selected_ids
+    raw_ranking = result.get("ranking", [])
+    validated = validate_llm_ranking(raw_ranking, candidates_for_prompt)
+    result["ranked_node_ids"] = validated
     result["candidates_shown"] = len(sampled)
+    result["llm_ranking_length"] = len(raw_ranking)
+    result["validated_ranking_length"] = len(validated)
 
     if verbose:
-        print(f"\n[LLM Flat] Selected: {selected_ids}")
+        print(f"\n[LLM Flat] Ranked {len(validated)} candidates "
+              f"(LLM returned {len(raw_ranking)} of {n_candidates})")
         if result.get("thinking"):
             print(f"  Reasoning: {result['thinking'][:200]}")
 
@@ -106,16 +123,17 @@ def retrieve(query: str, max_candidates: int = 100, verbose: bool = True) -> dic
     """Full LLM flat retrieval pipeline.
 
     1. Load all leaf nodes.
-    2. LLM selects from flat list (with sampling if too large).
-    3. Answer generation from selected nodes.
+    2. LLM full-ranks the flat list (sampling only if corpus > max_candidates).
+    3. Validate ranking, append missing ids in input order, build sources.
 
     Args:
         query: Legal question in Indonesian.
-        max_candidates: Max candidates to show the LLM.
+        max_candidates: Cap on candidates shown. Eval harness passes a very
+            large value so the entire corpus is shown.
         verbose: Print progress.
 
     Returns:
-        Dict with query, strategy, search results, answer, sources, and metrics.
+        Dict with query, strategy, search results, sources, and metrics.
     """
     reset_counters()
     t_start = time.time()
@@ -136,27 +154,28 @@ def retrieve(query: str, max_candidates: int = 100, verbose: bool = True) -> dic
 
     search_result = flat_search(query, leaves, max_candidates=max_candidates,
                                 verbose=verbose)
-    selected_ids = search_result.get("selected_ids", [])
+    ranked_ids = search_result.get("ranked_node_ids", [])
     steps["flat_search"] = step_metrics(t_step, snap)
 
-    if not selected_ids:
+    if not ranked_ids:
         return {"query": query, "strategy": "llm-flat",
-                "error": "No relevant nodes selected"}
+                "error": "LLM returned no ranking"}
 
     leaf_map = {leaf["node_id"]: leaf for leaf in leaves}
-    selected_results = [leaf_map[nid] for nid in selected_ids if nid in leaf_map]
+    ranked_results = [leaf_map[nid] for nid in ranked_ids if nid in leaf_map]
 
-    if not selected_results:
+    if not ranked_results:
         return {"query": query, "strategy": "llm-flat",
-                "node_ids": selected_ids, "error": "Selected nodes not found in corpus"}
+                "node_ids": ranked_ids, "error": "Ranked nodes not found in corpus"}
 
     sources = []
-    for r in selected_results:
+    for pos, r in enumerate(ranked_results):
         sources.append({
             "doc_id": r["doc_id"],
             "node_id": r["node_id"],
             "title": r.get("title", ""),
             "navigation_path": r.get("navigation_path", ""),
+            "rerank_position": pos,
         })
 
     elapsed = time.time() - t_start

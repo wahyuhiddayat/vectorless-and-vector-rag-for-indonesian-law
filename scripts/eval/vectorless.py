@@ -43,17 +43,21 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
+# RQ1 matrix per ADR Notes/06-decisions/2026-05-04-llm-retrieval-redesign.md.
+# llm-tree is deprecated and dropped from the default SYSTEMS list. It remains
+# callable for reproducibility via the worker dispatcher (CLI --systems llm-tree).
 SYSTEMS = [
     "bm25-flat", "bm25-tree",
     "hybrid-flat", "hybrid-tree",
-    "llm-flat", "llm-tree",
-    "llm-agentic-doc",
+    "llm-flat", "llm-agentic-doc",
 ]
+LEGACY_SYSTEMS = {"llm-tree"}
+ALL_SYSTEMS = SYSTEMS + sorted(LEGACY_SYSTEMS)
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 LLM_SYSTEMS = {
     "hybrid-flat", "hybrid-tree",
-    "llm-flat", "llm-tree",
-    "llm-agentic-doc",
+    "llm-flat", "llm-agentic-doc",
+    "llm-tree",
 }
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900
@@ -112,7 +116,7 @@ def main() -> int:
     systems = eval_io.parse_csv_list(args.systems, SYSTEMS)
     granularities = eval_io.parse_csv_list(args.granularities, GRANULARITIES)
 
-    unknown_systems = [s for s in systems if s not in SYSTEMS]
+    unknown_systems = [s for s in systems if s not in ALL_SYSTEMS]
     unknown_grans = [g for g in granularities if g not in GRANULARITIES]
     if unknown_systems:
         raise SystemExit(f"Unknown systems: {unknown_systems}")

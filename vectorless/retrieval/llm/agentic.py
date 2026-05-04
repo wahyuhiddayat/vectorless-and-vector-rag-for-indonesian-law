@@ -21,9 +21,12 @@ import argparse
 import json
 import time
 
+from rank_bm25 import BM25Okapi
+
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     load_catalog, load_doc, find_node, extract_nodes, save_log,
+    raptor_finalize, tokenize,
 )
 from .tree import doc_search
 
@@ -33,6 +36,7 @@ MAX_READS = 12
 READ_TEXT_CAP = 1500
 OBSERVATION_RENDER_CAP = 1800
 SCRATCHPAD_RECENT_FULL = 2
+DEFAULT_TOP_K = 10
 VALID_ACTIONS = ("inspect_doc", "expand", "read", "submit")
 
 
@@ -155,7 +159,8 @@ def _build_prompt(query: str, scratchpad: list[dict],
         "- inspect_doc()                            ulang struktur lengkap dokumen aktif",
         "- expand(node_id)                          anak satu node, berguna jika outline terlalu padat",
         "- read(node_id)                            teks lengkap satu leaf, hemat anggaran",
-        '- submit(node_ids, reasoning)              finalisasi pilihan, contoh node_ids ["pasal_3", "pasal_5_ayat_1"]',
+        '- submit(node_ids, reasoning)              finalisasi pilihan terurut, paling relevan dulu, hingga 10 node_ids,',
+        '                                            contoh node_ids ["pasal_3_ayat_2", "pasal_5_ayat_1", "pasal_7"]',
     ]
 
     rules = [
@@ -163,7 +168,8 @@ def _build_prompt(query: str, scratchpad: list[dict],
         "- Outline lengkap dokumen sudah disertakan di bawah. Pakai langsung untuk memilih node.",
         "- Pakai read hanya saat butuh memverifikasi isi sebuah leaf sebelum submit.",
         f"- Sisa anggaran action = {actions_left}, sisa anggaran read = {reads_left}.",
-        "- Submit segera setelah node yang dipilih cukup untuk menjawab pertanyaan.",
+        "- Submit dengan node_ids TERURUT dari paling relevan ke paling tidak relevan.",
+        "- Submit hingga 10 node_ids. Bisa kurang jika hanya beberapa yang benar-benar relevan.",
         "- Jangan ulangi action persis sama dengan langkah sebelumnya.",
         "- Kembalikan HANYA JSON, tanpa teks lain.",
     ]
@@ -207,52 +213,69 @@ def _siblings_hint(doc: dict, missing_id: str, limit: int = 5) -> list[str]:
     return near[:limit] if near else all_ids[:limit]
 
 
-def _fallback_select(scratchpad: list[dict], primary_doc_id: str) -> list[dict]:
-    """If the agent never submitted, recover the most recent committed nodes."""
-    selected: list[dict] = []
-    seen: set[tuple[str, str]] = set()
+def _collect_visited_node_ids(scratchpad: list[dict]) -> list[str]:
+    """Collect node_ids the agent visited via read or expand, by visit recency.
 
+    Most recently visited first. Read targets and expanded children are both
+    treated as visited. Used as the second layer of the RAPTOR-style fallback
+    when the agent's submit list does not fill the top_k slots.
+    """
+    visited: list[str] = []
+    seen: set[str] = set()
     for entry in reversed(scratchpad):
-        if entry.get("action") != "read":
-            continue
+        action = entry.get("action")
         obs = entry.get("observation") or {}
         if "error" in obs:
             continue
-        doc_id = obs.get("doc_id") or primary_doc_id
-        node_id = obs.get("node_id")
-        if doc_id and node_id and (doc_id, node_id) not in seen:
-            seen.add((doc_id, node_id))
-            selected.append({"doc_id": doc_id, "node_id": node_id})
-        if len(selected) >= 3:
-            break
+        if action == "read":
+            nid = obs.get("node_id")
+            if nid and nid not in seen:
+                visited.append(nid)
+                seen.add(nid)
+        elif action == "expand":
+            for child in obs.get("children") or []:
+                nid = child.get("node_id")
+                if nid and nid not in seen:
+                    visited.append(nid)
+                    seen.add(nid)
+    return visited
 
-    if selected:
-        return selected
 
-    for entry in reversed(scratchpad):
-        if entry.get("action") != "expand":
-            continue
-        obs = entry.get("observation") or {}
-        if "error" in obs:
-            continue
-        doc_id = obs.get("doc_id") or primary_doc_id
-        for child in obs.get("children", []) or []:
-            if not child.get("has_children"):
-                key = (doc_id, child.get("node_id"))
-                if key[0] and key[1] and key not in seen:
-                    seen.add(key)
-                    selected.append({"doc_id": key[0], "node_id": key[1]})
-            if len(selected) >= 3:
-                break
-        if selected:
-            break
+def _collect_doc_leaf_ids(doc: dict) -> list[dict]:
+    """Flatten doc tree to leaf nodes carrying text, preserving traversal order."""
+    leaves: list[dict] = []
 
-    return selected
+    def _walk(nodes):
+        for n in nodes:
+            children = n.get("nodes") or []
+            if children:
+                _walk(children)
+            elif n.get("text"):
+                leaves.append({
+                    "node_id": n.get("node_id", ""),
+                    "title": n.get("title", ""),
+                    "text": n.get("text", ""),
+                    "navigation_path": n.get("navigation_path", ""),
+                })
+
+    _walk(doc.get("structure") or [])
+    return leaves
+
+
+def _bm25_rank_leaves(query: str, leaves: list[dict]) -> list[str]:
+    """BM25-rank a doc's leaves against the query. Returns leaf node_ids."""
+    if not leaves:
+        return []
+    corpus = [tokenize(leaf["text"]) for leaf in leaves]
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(tokenize(query))
+    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    return [leaves[i]["node_id"] for i, _ in ranked]
 
 
 def retrieve(query: str,
              max_actions: int = MAX_ACTIONS, max_reads: int = MAX_READS,
-             verbose: bool = True) -> dict:
+             top_k: int = DEFAULT_TOP_K, verbose: bool = True) -> dict:
     """Run the agentic LLM retrieval pipeline for one query.
 
     Args:
@@ -440,10 +463,18 @@ def retrieve(query: str,
 
     timings["agent_loop"] = step_metrics(t_step, snap)
 
-    if not submitted:
-        selected = _fallback_select(scratchpad, primary_doc_id)
+    submitted_ids = [s["node_id"] for s in selected]
+    visited_ids = _collect_visited_node_ids(scratchpad)
+    doc_leaves = _collect_doc_leaf_ids(primary_doc)
+    bm25_fallback_ids = _bm25_rank_leaves(query, doc_leaves)
+    final_ids, slot_labels = raptor_finalize(
+        submitted_ids=submitted_ids,
+        visited_ids=visited_ids,
+        fallback_ids=bm25_fallback_ids,
+        top_k=top_k,
+    )
 
-    if not selected:
+    if not final_ids:
         return {
             "query": query,
             "strategy": "llm-agentic-doc",
@@ -454,20 +485,28 @@ def retrieve(query: str,
                 "submitted": submitted,
                 "scratchpad": scratchpad,
             },
-            "error": "Agent did not select any valid node",
+            "error": "Agent did not select any valid node and BM25 fallback returned no leaves",
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
                         "step_metrics": timings},
         }
 
     sources: list[dict] = []
-    for s in selected:
-        node = find_node(primary_doc.get("structure", []), s["node_id"]) or {}
+    for pos, (nid, src_label) in enumerate(zip(final_ids, slot_labels)):
+        node = find_node(primary_doc.get("structure", []), nid) or {}
         sources.append({
-            "doc_id": s["doc_id"],
-            "node_id": s["node_id"],
+            "doc_id": primary_doc_id,
+            "node_id": nid,
             "title": node.get("title", ""),
             "navigation_path": node.get("navigation_path", ""),
+            "rerank_position": pos,
+            "submission_source": src_label,
         })
+
+    submission_source_counts = {
+        "agent_submit": slot_labels.count("agent_submit"),
+        "visited_unsubmitted": slot_labels.count("visited_unsubmitted"),
+        "bm25_fallback": slot_labels.count("bm25_fallback"),
+    }
 
     elapsed = time.time() - t_start
     stats = get_stats()
@@ -480,9 +519,12 @@ def retrieve(query: str,
             "actions_used": actions_used,
             "reads_used": reads_used,
             "submitted": submitted,
+            "submitted_count": len(submitted_ids),
+            "visited_count": len(visited_ids),
+            "submission_source_counts": submission_source_counts,
             "scratchpad": scratchpad,
         },
-        "node_ids": [s["node_id"] for s in selected],
+        "node_ids": final_ids,
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": timings},
     }
@@ -506,10 +548,13 @@ def main() -> None:
                     help=f"Hard cap on agent steps (default {MAX_ACTIONS})")
     ap.add_argument("--max-reads", type=int, default=MAX_READS,
                     help=f"Hard cap on read tool calls (default {MAX_READS})")
+    ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K,
+                    help=f"Final ranked output length after RAPTOR fallback (default {DEFAULT_TOP_K})")
     args = ap.parse_args()
 
     result = retrieve(args.query,
-                      max_actions=args.max_actions, max_reads=args.max_reads)
+                      max_actions=args.max_actions, max_reads=args.max_reads,
+                      top_k=args.top_k)
 
     print("\n" + "-" * 60)
     print("DASAR HUKUM:")

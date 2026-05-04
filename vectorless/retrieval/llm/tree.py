@@ -1,8 +1,27 @@
-"""LLM tree-based retrieval for Indonesian legal QA.
+"""LLM tree-based retrieval for Indonesian legal QA. DEPRECATED.
 
-All retrieval decisions (doc selection, tree navigation) are made by LLM prompting.
-No algorithmic scoring. The LLM is the sole searcher, navigating the document
-tree structure to find relevant leaf nodes. This is the PageIndex-style approach.
+Status: Replaced by `llm-agentic-doc` (`vectorless/retrieval/llm/agentic.py`)
+in the RQ1 matrix per ADR `Notes/06-decisions/2026-05-04-llm-retrieval-redesign.md`.
+This module remains importable and CLI-callable for reproducibility of older
+experiment runs (notably `Notes/05-experiments/2026-04-28-uu-pilot-25q/`),
+but is no longer in the default eval `SYSTEMS` list.
+
+Reasons for replacement:
+1. Greedy stepwise drill-down with no backtracking. Compound error from a
+   wrong pick at level k cannot be recovered at level k plus N.
+2. Subset-selection output. The original `selected_ids` semantics break
+   Recall@k for k greater than `|selected|`. Not patched here because the
+   entire paradigm is superseded by agentic-doc.
+3. Not actually agentic. PageIndex (VectifyAI 2024), the paradigm origin,
+   uses tool-use loops with reflection, which `llm-agentic-doc` implements
+   and `llm-tree` does not.
+
+Original module description follows. Two tree search modes are kept
+callable for the legacy `--strategy` flag.
+
+Original retrieval logic. All retrieval decisions (doc selection, tree
+navigation) made by LLM prompting. No algorithmic scoring. The LLM
+navigates the document tree structure to find relevant leaf nodes.
 
 Two tree search modes:
   - "full"     - show entire tree skeleton, LLM picks nodes in one shot
