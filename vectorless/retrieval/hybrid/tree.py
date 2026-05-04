@@ -14,7 +14,7 @@ This addresses weaknesses of both pure approaches:
 
 Usage:
     python -m vectorless.retrieval.hybrid.tree "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.hybrid.tree "Apa syarat penyadapan?" --bm25_top_k 10
+    python -m vectorless.retrieval.hybrid.tree "Apa syarat penyadapan?" --bm25_top_k 20
 """
 
 import argparse
@@ -26,7 +26,7 @@ from rank_bm25 import BM25Okapi
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     tokenize, load_catalog, load_doc, find_node, extract_nodes,
-    extract_kwic_snippet, save_log, DATA_INDEX,
+    extract_kwic_snippet, save_log, validate_llm_ranking, DATA_INDEX,
 )
 
 
@@ -137,7 +137,7 @@ def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
     return leaves
 
 
-def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
+def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
     """Return the top leaf candidates scored by BM25."""
     leaves = _collect_leaf_nodes(doc["structure"])
     if not leaves:
@@ -171,7 +171,12 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 10) -> list[dict]:
 
 
 def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
-    """Have the LLM rerank BM25 candidates using their snippets."""
+    """Ask the LLM to rank all candidates from most to least relevant.
+
+    RankGPT-style full permutation generation (Sun et al. 2023, EMNLP). Caller
+    validates via `validate_llm_ranking` to drop hallucinations and append
+    missing IDs, so the final ranking always covers the full candidate set.
+    """
     candidates_for_prompt = []
     for c in candidates:
         candidates_for_prompt.append({
@@ -182,35 +187,40 @@ def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
         })
 
     candidates_text = json.dumps(candidates_for_prompt, ensure_ascii=False, indent=2)
+    n_candidates = len(candidates)
 
     prompt = f"""\
-Kamu diberi pertanyaan hukum dan daftar Pasal kandidat dari "{doc_title}".
+Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari "{doc_title}".
 Setiap kandidat memiliki cuplikan teks (snippet) dari isinya.
 
 Pertanyaan: {query}
 
-Kandidat Pasal (diurutkan berdasarkan kecocokan kata kunci):
+Kandidat Pasal (diurutkan berdasarkan kecocokan kata kunci awal):
 {candidates_text}
 
-Pilih Pasal yang paling relevan untuk menjawab pertanyaan.
+Tugas: Urutkan SELURUH {n_candidates} kandidat dari paling relevan ke paling tidak relevan
+untuk menjawab pertanyaan. Output harus berisi SEMUA {n_candidates} node_ids dari input,
+tanpa duplikat dan tanpa node_id yang tidak ada di input.
 
 Balas dalam format JSON:
 {{
-  "thinking": "<penalaran mengapa Pasal ini paling relevan berdasarkan snippet>",
-  "selected_ids": ["node_id1", "node_id2"]
+  "thinking": "<penalaran singkat tentang kriteria ranking>",
+  "ranking": ["node_id_paling_relevan", "node_id_kedua", "...", "node_id_paling_tidak_relevan"]
 }}
 
 Aturan:
-- Pilih berdasarkan ISI snippet, bukan hanya judul
-- Pilih Pasal yang benar-benar menjawab pertanyaan (biasanya 1-3 Pasal)
-- Jika beberapa Pasal saling melengkapi, pilih semuanya
+- "ranking" HARUS berisi tepat {n_candidates} node_ids
+- "ranking" tidak boleh ada duplikat
+- Setiap node_id harus muncul di input (tidak boleh hallucinate)
+- Urutan menentukan ranking (index 0 = paling relevan)
+- Pertimbangkan ISI snippet dan navigation_path
 - Kembalikan HANYA JSON
 """
 
     return llm_call(prompt)
 
 
-def node_search(query: str, doc: dict, bm25_top_k: int = 10,
+def node_search(query: str, doc: dict, bm25_top_k: int = 20,
                 verbose: bool = True) -> dict:
     """Run BM25 candidate search and LLM reranking within one document."""
     candidates = _bm25_node_candidates(query, doc, top_k=bm25_top_k)
@@ -225,26 +235,25 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 10,
             print(f"    path: {c['navigation_path']}")
 
     rerank_result = _llm_rerank(query, candidates, doc.get("judul", ""))
-    selected_ids = rerank_result.get("selected_ids", [])
-
-    valid_candidate_ids = {c["node_id"] for c in candidates}
-    selected_ids = [nid for nid in selected_ids if nid in valid_candidate_ids]
-    if not selected_ids:
-        selected_ids = [candidates[0]["node_id"]]
+    raw_ranking = rerank_result.get("ranking", [])
+    ranked_ids = validate_llm_ranking(raw_ranking, candidates)
+    rerank_result["validated_ranking"] = ranked_ids
+    rerank_result["llm_ranking_length"] = len(raw_ranking)
+    rerank_result["validated_ranking_length"] = len(ranked_ids)
 
     if verbose:
-        print(f"\n[Node Search - LLM Rerank] Selected: {selected_ids}")
+        print(f"\n[Node Search - LLM Rerank] Ranked {len(ranked_ids)} candidates")
         if rerank_result.get("thinking"):
             print(f"  Reasoning: {rerank_result['thinking'][:200]}")
 
     return {
-        "node_ids": selected_ids,
+        "node_ids": ranked_ids,
         "bm25_candidates": candidates,
         "llm_rerank": rerank_result,
     }
 
 
-def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
+def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     """Run the catalog-first hybrid retrieval pipeline for one query."""
     reset_counters()
     t_start = time.time()
@@ -289,13 +298,14 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
     sources = []
-    for node in nodes:
+    for pos, node in enumerate(nodes):
         sources.append({
             "doc_id": doc_id,
             "node_id": node["node_id"],
             "title": node["title"],
             "navigation_path": node["navigation_path"],
             "bm25_score": bm25_scores.get(node["node_id"]),
+            "rerank_position": pos,
         })
 
     elapsed = time.time() - t_start
@@ -324,8 +334,8 @@ def retrieve(query: str, bm25_top_k: int = 10, verbose: bool = True) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="Hybrid BM25+LLM retrieval for Indonesian legal QA")
     ap.add_argument("query", help="Legal question in Indonesian")
-    ap.add_argument("--bm25_top_k", type=int, default=10,
-                    help="Max BM25 candidates for LLM reranking (default: 10)")
+    ap.add_argument("--bm25_top_k", type=int, default=20,
+                    help="Max BM25 candidates for LLM reranking (default: 20)")
     args = ap.parse_args()
 
     result = retrieve(args.query, bm25_top_k=args.bm25_top_k)

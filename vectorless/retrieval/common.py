@@ -147,6 +147,41 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
     return out
 
 
+def validate_llm_ranking(llm_ranking: list[str], candidates: list[dict]) -> list[str]:
+    """Validate and complete an LLM-generated ranking over candidate node_ids.
+
+    Drops hallucinated and duplicate IDs, then appends any missing candidate IDs
+    in original first-stage order so the output length always matches the input
+    candidate count. Used by hybrid-flat and hybrid-tree LLM rerank stages.
+
+    Args:
+        llm_ranking: list of node_ids returned by the LLM in descending relevance
+            order. May contain hallucinations, duplicates, or be shorter than
+            len(candidates).
+        candidates: list of candidate dicts (each with `node_id`), in first-stage
+            (BM25) order. Used for the valid-id set and the deterministic
+            tiebreak fallback.
+
+    Returns:
+        List of node_ids of length len(candidates), unique, all present in the
+        candidate set, with the LLM ranking honoured first and any missing
+        candidates appended in first-stage order.
+    """
+    valid_order = [c["node_id"] for c in candidates]
+    valid_set = set(valid_order)
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for nid in llm_ranking:
+        if nid in valid_set and nid not in seen:
+            cleaned.append(nid)
+            seen.add(nid)
+    for nid in valid_order:
+        if nid not in seen:
+            cleaned.append(nid)
+            seen.add(nid)
+    return cleaned
+
+
 def save_log(result: dict) -> None:
     """Persist a retrieval result under data/retrieval_logs."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
