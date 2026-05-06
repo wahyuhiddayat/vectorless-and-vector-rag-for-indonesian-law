@@ -50,24 +50,24 @@ JENIS_MAP = {
     23: "PERBUP",
     30: "PERWALI",
     # Kementerian/Lembaga, fixed at 20 per Notes/01-corpus/categories.md
-    27: "PERATURAN_BPK",
+    154: "PERMEN_PUPR",
     40: "PERMENDAGRI",
     42: "PMK",
-    46: "PERMENKUMHAM",
-    48: "PERMENHUB",
-    50: "PERATURAN_KAPOLRI",
+    69: "PERMENPERIN",
+    170: "PERMENAG",
+    241: "PERATURAN_POLRI",
     54: "PERATURAN_BSSN",
-    58: "PERATURAN_KPK",
+    202: "PERMENBUMN",
     67: "PERMENDAG",
-    75: "PERATURAN_BKPM",
+    186: "PERMENDIKBUD",
     78: "PERATURAN_BI",
     80: "PERATURAN_OJK",
     95: "PERATURAN_MA",
     105: "PERMENAKER",
-    106: "PERMENKOMINFO",
-    110: "PERMENRISTEKDIKTI",
+    278: "PERMENKOMDIGI",
+    242: "PERMENDIKBUDRISET",
     147: "PERMEN_ESDM",
-    154: "PERMEN_PUPR",
+    111: "PERMEN_ATRBPN",
     182: "PERMENKES",
     230: "PERATURAN_BPOM",
 }
@@ -84,24 +84,24 @@ KATEGORI_MAP = {
     23: "Daerah",
     30: "Daerah",
     # Kementerian/Lembaga
-    27: "Kementerian/Lembaga",
+    154: "Kementerian/Lembaga",
     40: "Kementerian/Lembaga",
     42: "Kementerian/Lembaga",
-    46: "Kementerian/Lembaga",
-    48: "Kementerian/Lembaga",
-    50: "Kementerian/Lembaga",
+    69: "Kementerian/Lembaga",
+    170: "Kementerian/Lembaga",
+    241: "Kementerian/Lembaga",
     54: "Kementerian/Lembaga",
-    58: "Kementerian/Lembaga",
+    202: "Kementerian/Lembaga",
     67: "Kementerian/Lembaga",
-    75: "Kementerian/Lembaga",
+    186: "Kementerian/Lembaga",
     78: "Kementerian/Lembaga",
     80: "Kementerian/Lembaga",
     95: "Kementerian/Lembaga",
     105: "Kementerian/Lembaga",
-    106: "Kementerian/Lembaga",
-    110: "Kementerian/Lembaga",
+    278: "Kementerian/Lembaga",
+    242: "Kementerian/Lembaga",
     147: "Kementerian/Lembaga",
-    154: "Kementerian/Lembaga",
+    111: "Kementerian/Lembaga",
     182: "Kementerian/Lembaga",
     230: "Kementerian/Lembaga",
 }
@@ -170,8 +170,9 @@ def make_doc_id(bentuk_singkat: str, nomor: str, tahun: str,
     `pergub-dki-jakarta-11-2026` vs `pergub-jambi-1-2026`.
     """
     bs = bentuk_singkat.strip().lower() if bentuk_singkat else "unknown"
-    bs = re.sub(r"\s+", "-", bs)
+    bs = re.sub(r"[/\\:*?\"<>|\s]+", "-", bs).strip("-")
     n = nomor.strip() if nomor else "0"
+    n = re.sub(r"[/\\:*?\"<>|\s]+", "-", n).strip("-").lower()
     t = tahun.strip() if tahun else "0"
     daerah = _daerah_slug(judul)
     if daerah:

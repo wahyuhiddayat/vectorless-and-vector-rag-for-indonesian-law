@@ -2,8 +2,17 @@
 
 _MULTI_WORD_PREFIXES = {
     "peraturan-bi": "PERATURAN_BI",
+    "peraturan-bpom": "PERATURAN_BPOM",
     "peraturan-bssn": "PERATURAN_BSSN",
+    "peraturan-menag": "PERMENAG",
     "peraturan-ojk": "PERATURAN_OJK",
+    "peraturan-polri": "PERATURAN_POLRI",
+    "permen-atr-kepala-bpn": "PERMEN_ATRBPN",
+    "permen-bumn": "PERMENBUMN",
+    "permen-esdm": "PERMEN_ESDM",
+    "permen-komdigi": "PERMENKOMDIGI",
+    "permen-perin": "PERMENPERIN",
+    "permen-pupr": "PERMEN_PUPR",
     "perma": "PERATURAN_MA",
 }
 
