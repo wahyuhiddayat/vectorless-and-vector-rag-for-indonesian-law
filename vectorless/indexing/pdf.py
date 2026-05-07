@@ -1,44 +1,113 @@
-"""Shared utilities for parser scripts (LLM calls, PDF loading, JSON parsing).
+"""PDF loading, page formatting, and PDF-path resolution for indexed docs.
 
-Extracted from scripts/parser/llm_fix.py (archived) so scripts/parser/llm_parse.py
-can import without depending on the legacy llm_fix module.
+Public functions used by the parsing pipeline:
+  - find_pdf_path(doc_id) -> Path | None
+  - load_pdf_pages(doc_id) -> list[dict]
+  - format_pdf_pages(pages, start_page, end_page) -> str
+
+Plus shared helpers used during LLM output normalization:
+  - parse_llm_json(raw) -> dict
+  - count_pasals_in_tree(structure) -> int
+
+Owned by `vectorless/indexing/` because the scrape and indexing layers both
+need to look up the PDF for a doc by its registry entry. The legacy
+`scripts/parser/_common.py` and the `find_pdf_path` previously in
+`scripts/_shared/` were both consolidated here.
 """
 from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
-
-from scripts._shared import find_pdf_path  # noqa: E402
+DATA_DIR = REPO_ROOT / "data"
+REGISTRY_PATH = DATA_DIR / "raw" / "registry.json"
 
 
 _PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
 
 # OCR corruptions in Pasal headings that cause the LLM parser to skip them.
 # Applied to each block's text on load, before prompt assembly.
-_PASAL_FIXES = [
-    # "Pasal22" glued → "Pasal 22"
+_PASAL_FIXES: list[tuple[re.Pattern, str]] = [
+    # "Pasal22" glued -> "Pasal 22"
     (re.compile(r"\bPasal(\d)"), r"Pasal \1"),
-    # "Pasal 2 1" standalone heading (OCR split digits) → "Pasal 21".
+    # "Pasal 2 1" standalone heading (OCR split digits) -> "Pasal 21".
     # Anchored to line start + end to avoid collapsing inline references.
     (re.compile(r"(?m)^Pasal\s+(\d)\s+(\d{1,2})\s*$"), r"Pasal \1\2"),
-    # "Pasal 2O" (capital O) → "Pasal 20"; matches 1-3 digit prefix then O.
+    # "Pasal 2O" (capital O) -> "Pasal 20"; matches 1-3 digit prefix then O.
     (re.compile(r"\bPasal\s+(\d{1,3})O\b"), r"Pasal \g<1>0"),
-    # "Pasal 2l" (lowercase l) → "Pasal 21"
+    # "Pasal 2l" (lowercase l) -> "Pasal 21"
     (re.compile(r"\bPasal\s+(\d{1,3})l\b"), r"Pasal \g<1>1"),
-    # "PasaT N" / "Pasa1 N" → "Pasal N" (letter-in-word OCR)
+    # "PasaT N" / "Pasa1 N" -> "Pasal N" (letter-in-word OCR)
     (re.compile(r"\bPasa[T1I](?=\s+\d)"), "Pasal"),
-    # Angka list items at line start: "1O. text" → "10. text",
-    # "2l. text" → "21. text". Anchored to line start so we never
+    # Angka list items at line start: "1O. text" -> "10. text",
+    # "2l. text" -> "21. text". Anchored to line start so we never
     # touch embedded legal references like "ayat (1O)" (those go
     # through the ayat normalizer separately).
     (re.compile(r"(?m)^(\s*\d+)O(?=\.\s)"), r"\g<1>0"),
     (re.compile(r"(?m)^(\s*\d+)l(?=\.\s)"), r"\g<1>1"),
 ]
+
+
+def _load_registry() -> dict:
+    """Return the parsed registry, or an empty dict when missing."""
+    if not REGISTRY_PATH.exists():
+        return {}
+    with open(REGISTRY_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def find_pdf_path(doc_id: str) -> Path | None:
+    """Locate the main PDF for a doc_id via registry metadata.
+
+    Preferred: return `entry["pdf_path"]` (deterministic mapping written by
+    the scraper). Fallback: pattern-match filenames under the jenis folder
+    for legacy registries that lack pdf_path.
+    """
+    registry = _load_registry()
+    entry = registry.get(doc_id)
+    if not entry:
+        return None
+    explicit = entry.get("pdf_path")
+    if explicit:
+        p = DATA_DIR / "raw" / explicit
+        if p.exists():
+            return p
+    jenis = entry.get("jenis_folder", "")
+    nomor = entry.get("nomor", "")
+    tahun = entry.get("tahun", "")
+    if not jenis:
+        return None
+    pdf_dir = DATA_DIR / "raw" / jenis / "pdfs"
+    if not pdf_dir.exists():
+        return None
+    nom_re = re.escape(str(nomor))
+    thn_re = re.escape(str(tahun))
+    # Common filename patterns seen in corpus:
+    #   peraturan-bi-no-5-tahun-2025.pdf           (slug style)
+    #   PBI_102024.pdf                              (concat: NN + YYYY)
+    #   Lamp_Batang_Tubuh_2025PBI010.pdf            (concat: YYYY + PBI + NNN pad)
+    #   3 tahun 2026.pdf                            (loose)
+    # Accept if any pattern matches nomor + tahun as standalone tokens
+    # (digit boundary, not substring).
+    patterns = [
+        rf"(?:nomor|no\.?)\s+{nom_re}\s+tahun\s+{thn_re}",
+        rf"(?<!\d){nom_re}[-\s]tahun[-\s]{thn_re}(?!\d)",
+        rf"(?<!\d){nom_re.zfill(1)}{thn_re}(?!\d)",
+        rf"(?<!\d)0{nom_re}{thn_re}(?!\d)",
+        rf"(?<!\d)00{nom_re}{thn_re}(?!\d)",
+        rf"{thn_re}PBI_?0*{nom_re}(?!\d)",
+        rf"{thn_re}[A-Za-z]+0*{nom_re}(?!\d)",
+    ]
+    combined = re.compile("|".join(patterns), re.IGNORECASE)
+    candidates = [
+        pdf for pdf in pdf_dir.glob("*.pdf")
+        if "Lampiran" not in pdf.name and combined.search(pdf.name)
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda p: len(p.name))
 
 
 def _normalize_pasal_headings(text: str) -> str:
@@ -55,10 +124,10 @@ def _normalize_pasal_headings(text: str) -> str:
 def load_pdf_pages(doc_id: str) -> list[dict]:
     """Read the PDF and return list of {page_num, blocks} per page.
 
-    Each block: {x0, y0, text}. Blocks sorted (y, x) for reading order.
+    Each block: {x0, y0, text}. Blocks are sorted (y, x) for reading order.
     Use format_pdf_pages() to render a page range as prompt text.
     """
-    import pymupdf
+    import pymupdf  # lazy import keeps module importable without pymupdf
 
     pdf_path = find_pdf_path(doc_id)
     if not pdf_path:
@@ -126,8 +195,8 @@ def parse_llm_json(raw: str) -> dict:
     return obj
 
 
-def _normalize_keys(obj) -> None:
-    """Rename 'name' -> 'title' recursively (LLM sometimes uses 'name')."""
+def _normalize_keys(obj: object) -> None:
+    """Rename `name` -> `title` recursively (LLM sometimes uses `name`)."""
     if isinstance(obj, dict):
         if "name" in obj and "title" not in obj:
             obj["title"] = obj.pop("name")
@@ -139,9 +208,9 @@ def _normalize_keys(obj) -> None:
 
 
 def count_pasals_in_tree(structure: list[dict]) -> int:
-    """Count nodes whose title is exactly a Pasal heading (e.g. 'Pasal 12', 'Pasal 5A').
+    """Count nodes whose title is exactly a Pasal heading (e.g. `Pasal 12`, `Pasal 5A`).
 
-    Uses a strict regex to avoid false positives from titles like 'Pasal 1 1.'.
+    Uses a strict regex to avoid false positives from titles like `Pasal 1 1.`.
     """
     count = 0
     for node in structure:

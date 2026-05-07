@@ -5,6 +5,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from . import GRANULARITY_INDEX_MAP, LLM_CLEANUP_VERSION, PARSER_VERSION
 from .status import (
     apply_verify_results,
     load_registry,
@@ -13,14 +14,6 @@ from .status import (
     sync_manifest_from_indexes,
     write_status_manifest,
 )
-
-GRANULARITY_INDEX_MAP = {
-    "pasal": Path("data/index_pasal"),
-    "ayat": Path("data/index_ayat"),
-    "rincian": Path("data/index_rincian"),
-}
-PARSER_VERSION = "2026-04-02"
-LLM_CLEANUP_VERSION = "2026-04-02"
 
 # Detect recurring PDF headers that survive OCR cleanup and bleed into node text.
 # Negative lookbehind/lookahead exclude legitimate uses:

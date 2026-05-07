@@ -3,19 +3,13 @@ import json
 from datetime import datetime, UTC
 from pathlib import Path
 
+from . import GRANULARITY_INDEX_MAP, LLM_CLEANUP_VERSION, PARSER_VERSION
+
 DATA_RAW = Path("data/raw")
 REGISTRY_PATH = DATA_RAW / "registry.json"
 STATUS_PATH = Path("data/index_status.json")
 
-GRANULARITY_INDEX_MAP = {
-    "pasal": Path("data/index_pasal"),
-    "ayat": Path("data/index_ayat"),
-    "rincian": Path("data/index_rincian"),
-}
-
 SCHEMA_VERSION = 1
-PARSER_VERSION = "2026-04-02"
-LLM_CLEANUP_VERSION = "2026-04-02"
 
 
 def now_iso() -> str:

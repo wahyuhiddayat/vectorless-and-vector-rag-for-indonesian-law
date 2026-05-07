@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vectorless.indexing.parser import extract_pages  # noqa: E402
-from scripts._shared import find_pdf_path as _shared_find_pdf_path  # noqa: E402
+from vectorless.indexing.pdf import find_pdf_path as _shared_find_pdf_path  # noqa: E402
 
 # Lenient Pasal heading detector for raw PDF text.
 # Matches standalone "Pasal N" lines including OCR variants:

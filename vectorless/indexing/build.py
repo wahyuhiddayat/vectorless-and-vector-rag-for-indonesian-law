@@ -30,22 +30,21 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
+from .llm_parse import _append_audit, parse_doc as llm_parse_doc  # noqa: E402
+from .ocr import clean_doc  # noqa: E402
 from .parser import (  # noqa: E402
     ayat_split_leaves,
     deep_split_leaves,
     iter_leaves,
     strip_ocr_headers,
 )
+from .summary import annotate_doc  # noqa: E402
 from .targets import resolve_targets  # noqa: E402
 from ..ids import doc_category  # noqa: E402
 
-INDEXING_LOGS_DIR = Path("data/indexing_logs")
+from . import GRANULARITY_INDEX_MAP  # noqa: E402
 
-GRANULARITY_INDEX_MAP = {
-    "pasal": Path("data/index_pasal"),
-    "ayat": Path("data/index_ayat"),
-    "rincian": Path("data/index_rincian"),
-}
+INDEXING_LOGS_DIR = Path("data/indexing_logs")
 
 CATALOG_FIELDS = (
     "doc_id", "judul", "nomor", "tahun", "bentuk_singkat", "status",
@@ -123,8 +122,6 @@ def _resplit_derived(pasal_path: Path, jenis_folder: str, doc_id: str) -> dict[s
 
 def _annotate_granularities(doc_id: str, granularities: tuple[str, ...]) -> dict[str, dict]:
     """Annotate the given granularities concurrently. Stats keyed by granularity."""
-    from scripts.parser.add_node_summary import annotate_doc
-
     with ThreadPoolExecutor(max_workers=len(granularities)) as ex:
         futures = {gran: ex.submit(annotate_doc, doc_id, gran, False, False) for gran in granularities}
         return {gran: f.result() for gran, f in futures.items()}
@@ -132,14 +129,11 @@ def _annotate_granularities(doc_id: str, granularities: tuple[str, ...]) -> dict
 
 def _clean_ocr(doc_id: str) -> dict:
     """Repair OCR garbles in pasal-level leaves before resplit propagates them."""
-    from scripts.parser.clean_ocr import clean_doc
     return clean_doc(doc_id, verbose=False)
 
 
 def index_doc(doc_id: str, dry_run: bool = False, resplit_only: bool = False) -> dict:
     """Index one document and return a short status summary."""
-    from scripts.parser.llm_parse import parse_doc as llm_parse_doc, _append_audit
-
     t0 = time.time()
     summary: dict = {"doc_id": doc_id}
 
@@ -307,7 +301,7 @@ def main() -> None:
         log.info(f"catalog ({gran})  {len(catalog)} docs  {idx_dir / 'catalog.json'}")
 
     try:
-        from scripts.parser.corpus_status import build_status, write_status
+        from .corpus_status import build_status, write_status
         write_status(build_status())
         log.info("corpus_status.json refreshed")
     except Exception as exc:
