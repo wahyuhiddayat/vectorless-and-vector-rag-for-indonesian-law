@@ -31,11 +31,12 @@ python scraper/bpk_scraper.py [OPTIONS]
 
 ### Jenis ID
 
-Daftar lengkap mapping `jenis_id` ke nama folder ada di `JENIS_MAP` dalam [bpk_scraper.py](bpk_scraper.py). Saat ini ter-cover 39 kategori (3 Pusat, 4 Daerah, 32 Kementerian/Lembaga). Quick reference,
+Daftar lengkap mapping `jenis_id` ke nama folder ada di `JENIS_MAP` dalam [bpk_scraper.py](bpk_scraper.py). Saat ini ter-cover 28 kategori (4 Pusat, 4 Daerah, 20 Kementerian/Lembaga). Quick reference,
 
 | ID | Folder | Jenis |
 |----|--------|-------|
 | `8` | `UU` | Undang-Undang |
+| `9` | `PERPU` | Peraturan Pemerintah Pengganti UU |
 | `10` | `PP` | Peraturan Pemerintah |
 | `11` | `PERPRES` | Peraturan Presiden |
 | `42` | `PMK` | Peraturan Menteri Keuangan |

@@ -42,6 +42,7 @@ NON_RETRYABLE_STATUS = {400, 401, 403, 404, 405, 410, 451}
 JENIS_MAP = {
     # Pusat
     8: "UU",
+    9: "PERPU",
     10: "PP",
     11: "PERPRES",
     # Daerah
@@ -76,6 +77,7 @@ JENIS_MAP = {
 KATEGORI_MAP = {
     # Pusat
     8: "Pusat",
+    9: "Pusat",
     10: "Pusat",
     11: "Pusat",
     # Daerah
