@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +32,16 @@ from vectorless.llm import call as llm_call  # noqa: E402
 from vectorless.categories import parse_model_for_category  # noqa: E402
 from vectorless.indexing.metadata import build_metadata  # noqa: E402
 from vectorless.indexing.targets import resolve_targets  # noqa: E402
+from vectorless.indexing.tree import (  # noqa: E402
+    _PASAL_TITLE_RE,
+    _sanitize_node_id,
+    assign_readable_node_ids,
+    backfill_page_indices,
+    build_navigation_paths,
+    collect_pasal_numbers,
+    iter_nodes,
+    normalize_pasal_titles_in_tree,
+)
 
 
 def call_llm(prompt: str, model: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
@@ -383,168 +394,10 @@ TITLE CONVENTIONS:
    code fences. No trailing explanation. One top-level key: "structure".
 """
 
-_PASAL_TITLE_RE = re.compile(r"^Pasal\s+\d+[A-Z]?$")
-
-
-def iter_nodes(structure: list[dict]):
-    """Yield every node in the tree (depth-first)."""
-    for n in structure:
-        yield n
-        if n.get("nodes"):
-            yield from iter_nodes(n["nodes"])
-
-
-def collect_pasal_numbers(structure: list[dict]) -> list[str]:
-    """Return list of Pasal numbers (arabic only) in tree order."""
-    out = []
-    for n in iter_nodes(structure):
-        t = (n.get("title") or "").strip()
-        m = re.match(r"^Pasal\s+(\d+[A-Z]?)$", t)
-        if m:
-            out.append(m.group(1))
-    return out
-
-
-def _sanitize_node_id(s: str) -> str:
-    """Enforce lowercase + underscores only; preserve Roman pasal (I, II, III)."""
-    return re.sub(r"[^A-Za-z0-9_]", "_", s).strip("_")
-
-
-def _canonical_title_from_node_id(node_id: str, original_title: str) -> str:
-    """Rebuild canonical pasal-family title from node_id.
-
-    node_id is LLM-consistent and structural; the title may carry verbatim OCR
-    artifacts. For nested amendment ids (pasal_I_angka_N_pasal_3A), the deepest
-    `pasal` segment wins — so the title reflects the nested Pasal, not the
-    Roman container. BAB/Bagian/Paragraf titles pass through unchanged.
-    """
-    parts = node_id.split("_")
-    last_pasal_idx = -1
-    for i, seg in enumerate(parts):
-        if seg == "pasal" and i + 1 < len(parts):
-            last_pasal_idx = i
-    if last_pasal_idx == -1:
-        return original_title
-    tail = parts[last_pasal_idx:]
-    out = []
-    i = 0
-    while i < len(tail):
-        seg = tail[i]
-        if seg == "pasal":
-            if i + 1 < len(tail):
-                num = tail[i + 1]
-                if re.match(r"^[IVX]+$", num):
-                    out.append(f"Pasal {num}")
-                elif re.match(r"^\d+[A-Z]?$", num, re.IGNORECASE):
-                    m = re.match(r"^(\d+)([A-Za-z]?)$", num)
-                    if m:
-                        n, suf = m.group(1), m.group(2).upper()
-                        out.append(f"Pasal {n}{suf}")
-                    else:
-                        out.append(f"Pasal {num}")
-                else:
-                    out.append(f"Pasal {num}")
-                i += 2
-                continue
-        elif seg == "ayat":
-            if i + 1 < len(tail):
-                out.append(f"Ayat ({tail[i + 1]})")
-                i += 2
-                continue
-        elif seg == "huruf":
-            if i + 1 < len(tail):
-                out.append(f"Huruf {tail[i + 1]}")
-                i += 2
-                continue
-        elif seg == "angka":
-            if i + 1 < len(tail):
-                out.append(f"Angka {tail[i + 1]}")
-                i += 2
-                continue
-        i += 1
-    canonical = " ".join(out)
-    return canonical if canonical else original_title
-
-
-def normalize_pasal_titles_in_tree(structure: list[dict]) -> int:
-    """Rebuild pasal-family titles from node_id; return count modified."""
-    count = 0
-    for node in structure:
-        title = node.get("title", "")
-        nid = node.get("node_id", "")
-        if nid and title.startswith("Pasal "):
-            new = _canonical_title_from_node_id(nid, title)
-            if new != title:
-                node["title"] = new
-                count += 1
-        if node.get("nodes"):
-            count += normalize_pasal_titles_in_tree(node["nodes"])
-    return count
-
-
-def assign_readable_node_ids(
-    structure: list[dict], ancestor_id: str = ""
-) -> None:
-    """Keep conforming node_ids; re-derive from title + ancestor when missing/malformed."""
-    for node in structure:
-        title = (node.get("title") or "").strip()
-        nid = (node.get("node_id") or "").strip()
-        if not nid or not re.match(r"^[a-zA-Z0-9_]+$", nid):
-            nid = _derive_node_id_from_title(title, ancestor_id)
-        node["node_id"] = nid
-        if node.get("nodes"):
-            assign_readable_node_ids(node["nodes"], ancestor_id=nid)
-
-
-def _derive_node_id_from_title(title: str, ancestor_id: str) -> str:
-    """Fallback derivation when LLM output is missing/malformed node_id."""
-    t = title.lower()
-    m = re.match(r"^pasal\s+([ivx]+)(?:\s+angka\s+(\d+))?(?:\s+pasal\s+(\d+[a-z]?))?", t)
-    if m:
-        parts = [f"pasal_{m.group(1).upper()}"]
-        if m.group(2):
-            parts.append(f"angka_{m.group(2)}")
-        if m.group(3):
-            parts.append(f"pasal_{m.group(3).upper()}")
-        return "_".join(parts)
-    m = re.match(r"^bab\s+([ivxlc]+)", t)
-    if m:
-        from vectorless.indexing.parser import roman_to_int
-        n = roman_to_int(m.group(1).upper())
-        return f"bab_{n if n else m.group(1)}"
-    m = re.match(r"^bagian\s+(\w+)", t)
-    if m:
-        return f"{ancestor_id}_bagian_{m.group(1).lower()}" if ancestor_id else f"bagian_{m.group(1).lower()}"
-    m = re.match(r"^paragraf\s+(\d+)", t)
-    if m:
-        return f"{ancestor_id}_paragraf_{m.group(1)}" if ancestor_id else f"paragraf_{m.group(1)}"
-    m = re.match(
-        r"^pasal\s+(\d+[a-z]?)(?:\s+ayat\s+\((\d+)\))?(?:\s+huruf\s+([a-z]+))?(?:\s+angka\s+(\d+))?",
-        t,
-    )
-    if m:
-        parts = [f"pasal_{m.group(1).upper() if m.group(1) and not m.group(1).isdigit() else m.group(1)}"]
-        if m.group(2):
-            parts.append(f"ayat_{m.group(2)}")
-        if m.group(3):
-            parts.append(f"huruf_{m.group(3)}")
-        if m.group(4):
-            parts.append(f"angka_{m.group(4)}")
-        return "_".join(parts)
-    return _sanitize_node_id(title)[:60].lower() or "node"
-
-
-def build_navigation_paths(
-    structure: list[dict], ancestors: list[str] | None = None
-) -> None:
-    """Set navigation_path on every node using title ancestry."""
-    ancestors = ancestors or []
-    for node in structure:
-        title = (node.get("title") or "").strip()
-        path = ancestors + [title]
-        node["navigation_path"] = " > ".join(path)
-        if node.get("nodes"):
-            build_navigation_paths(node["nodes"], path)
+# Tree-normalization helpers (iter_nodes, collect_pasal_numbers,
+# _PASAL_TITLE_RE, normalize_pasal_titles_in_tree, assign_readable_node_ids,
+# build_navigation_paths) live in vectorless/indexing/tree.py. backfill_page_indices
+# is also there. Imported at the top of this module.
 
 
 # Patterns for splitting a parent's penjelasan text into per-child slices.
@@ -634,45 +487,6 @@ def attach_penjelasan(
             matched += 1
     return matched
 
-
-def backfill_page_indices(
-    structure: list[dict], pages: list[dict], doc_total_pages: int
-) -> None:
-    """Derive start_index / end_index for every node by matching title or text
-    against PDF page raw_text. Missing defaults: 1..doc_total_pages."""
-    page_text = {p["page_num"]: p.get("raw_text", "") for p in pages}
-
-    def _find_title_page(title: str) -> int | None:
-        if not title:
-            return None
-        needle = title.strip()
-        needle_norm = re.sub(r"\s+", " ", needle)
-        for n in sorted(page_text):
-            t = re.sub(r"\s+", " ", page_text[n])
-            if needle_norm and needle_norm[:40] in t:
-                return n
-        return None
-
-    def _assign(node, default_start=1, default_end=doc_total_pages):
-        title = node.get("title", "")
-        start = _find_title_page(title) or default_start
-        node["start_index"] = start
-        children = node.get("nodes", []) or []
-        if children:
-            for i, child in enumerate(children):
-                next_sib = children[i + 1] if i + 1 < len(children) else None
-                next_start = _find_title_page(next_sib.get("title", "")) if next_sib else None
-                child_default_end = (next_start - 1) if next_start else default_end
-                _assign(child, default_start=start, default_end=child_default_end)
-            node["end_index"] = children[-1].get("end_index", default_end)
-        else:
-            node["end_index"] = default_end
-
-    for i, top in enumerate(structure):
-        next_top = structure[i + 1] if i + 1 < len(structure) else None
-        next_start = _find_title_page(next_top.get("title", "")) if next_top else None
-        default_end = (next_start - 1) if next_start else doc_total_pages
-        _assign(top, default_start=1, default_end=default_end)
 
 _INLINE_MARKER_RE = re.compile(
     r"(?:^|\n)\s*(?:\(\d+\)|[a-z]\.|\d+\.)\s",
@@ -1095,12 +909,213 @@ def _chunk_by_pasal(
     return ranges
 
 
+@dataclass
+class _Inputs:
+    """Parser inputs derived from doc_id: metadata + PDF pages + pasal hints."""
+    meta: dict
+    pages: list[dict]
+    pdf_text_full: str
+    pdf_pasal_numbers: list[str]
+
+
+@dataclass
+class _ChunkPlan:
+    """Whole-doc vs chunked decision plus the chunk page ranges."""
+    use_chunked: bool
+    ranges: list[tuple[int, int]]
+    strategy: str  # "whole" | "pasal-aware" | "page-based"
+
+
+@dataclass
+class _LLMResult:
+    """Combined output of one or more LLM parse calls."""
+    structure: list[dict] | None
+    usage: dict
+    chunk_errors: list[str]
+    error: str | None  # set when no usable structure was produced
+
+
+def _load_inputs(doc_id: str) -> _Inputs:
+    """Build metadata, load PDF pages, pre-compute pasal regex hints."""
+    meta = build_metadata(doc_id)
+    pages = load_pdf_pages(doc_id)
+    body_end = meta["body_pages"]
+    pdf_pasal_numbers = _pasal_numbers_in_page_range(pages, 1, body_end)
+    pdf_text_full = format_pdf_pages(pages, 1, body_end)
+    return _Inputs(
+        meta=meta,
+        pages=pages,
+        pdf_text_full=pdf_text_full,
+        pdf_pasal_numbers=pdf_pasal_numbers,
+    )
+
+
+def _plan_chunking(inputs: _Inputs) -> _ChunkPlan:
+    """Decide single-shot vs multi-chunk parse based on input size.
+
+    Char count above MAX_WHOLE_DOC_INPUT_CHARS forces chunking to keep the
+    LLM output budget (~65K tokens) feasible. For non-amendment docs, a
+    high pasal count is also a chunking trigger because each pasal expands
+    into nested ayat/huruf/angka text downstream. Amendment docs emit only
+    1-2 Pasal Roman roots regardless of inner Pasal count, so the
+    pasal-count threshold doesn't apply.
+    """
+    char_count = len(inputs.pdf_text_full)
+    if inputs.meta["is_perubahan"]:
+        use_chunked = char_count > MAX_WHOLE_DOC_INPUT_CHARS
+    else:
+        use_chunked = (
+            char_count > MAX_WHOLE_DOC_INPUT_CHARS
+            or len(inputs.pdf_pasal_numbers) > MAX_WHOLE_DOC_PASALS
+        )
+    if not use_chunked:
+        return _ChunkPlan(use_chunked=False, ranges=[], strategy="whole")
+    body_end = inputs.meta["body_pages"]
+    body_pages_list = [p for p in inputs.pages if p["page_num"] <= body_end]
+    ranges = _chunk_by_pasal(body_pages_list, body_end, pasals_per_chunk=20)
+    if ranges:
+        return _ChunkPlan(use_chunked=True, ranges=ranges, strategy="pasal-aware")
+    ranges = _chunk_pages(body_pages_list, PAGES_PER_CHUNK, CHUNK_OVERLAP_PAGES)
+    return _ChunkPlan(use_chunked=True, ranges=ranges, strategy="page-based")
+
+
+def _run_llm_parse(inputs: _Inputs, plan: _ChunkPlan, model: str) -> _LLMResult:
+    """Invoke the LLM (single-shot or parallel chunks) and merge the output.
+
+    Returns the combined structure with aggregate usage and any per-chunk
+    errors. `error` is set only when no chunk produced usable output. A
+    partial chunk failure is tolerated (errors recorded, surviving chunks
+    merged).
+    """
+    doc_id = inputs.meta["doc_id"]
+    judul = inputs.meta["judul"]
+    is_perubahan = inputs.meta["is_perubahan"]
+    agg_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
+
+    if not plan.use_chunked:
+        prompt = build_prompt(doc_id, judul, is_perubahan, inputs.pdf_text_full)
+        est_tokens = len(prompt) // 4
+        print(f"  calling {model} ({est_tokens:,} input tokens, whole doc)...", flush=True)
+        obj, usage, err = _run_llm(prompt, model)
+        _accumulate_usage(agg_usage, usage)
+        if err:
+            return _LLMResult(structure=None, usage=agg_usage, chunk_errors=[], error=err)
+        return _LLMResult(structure=obj["structure"], usage=agg_usage, chunk_errors=[], error=None)
+
+    print(
+        f"  chunked mode ({plan.strategy}): {inputs.meta['total_pages']} pages split "
+        f"into {len(plan.ranges)} chunks, parallel={PARALLEL_WORKERS}",
+        flush=True,
+    )
+    chunk_structures: list[list[dict] | None] = [None] * len(plan.ranges)
+    errors: list[str] = []
+
+    def _worker(i: int, start: int, end: int):
+        scoped = format_pdf_pages(inputs.pages, start, end)
+        expected = _pasals_in_page_range(inputs.pages, start, end)
+        prompt = build_prompt(
+            doc_id, judul, is_perubahan, scoped,
+            start_page=start, end_page=end,
+            expected_pasals=expected,
+        )
+        est = len(prompt) // 4
+        print(
+            f"  chunk {i+1}/{len(plan.ranges)} (p{start}-{end}, {len(expected)} pasals expected): "
+            f"{est:,} input tokens...",
+            flush=True,
+        )
+        return i, _run_llm(prompt, model)
+
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
+        futures = [pool.submit(_worker, i, s, e) for i, (s, e) in enumerate(plan.ranges)]
+        for fut in as_completed(futures):
+            try:
+                i, (obj, usage, err) = fut.result()
+            except Exception as exc:
+                errors.append(f"worker exception: {exc}")
+                continue
+            _accumulate_usage(agg_usage, usage)
+            if err or not obj:
+                errors.append(f"chunk {i+1}: {err}")
+                continue
+            chunk_structures[i] = obj["structure"]
+
+    valid_chunks = [c for c in chunk_structures if c]
+    if not valid_chunks:
+        return _LLMResult(structure=None, usage=agg_usage, chunk_errors=errors, error="all chunks failed")
+    structure = _merge_chunk_structures(valid_chunks)
+    return _LLMResult(structure=structure, usage=agg_usage, chunk_errors=errors, error=None)
+
+
+def _finalize_structure(
+    structure: list[dict],
+    pages: list[dict],
+    total_pages: int,
+    pdf_pasal_numbers: list[str],
+    is_perubahan: bool,
+) -> list[str]:
+    """Normalize the raw LLM tree in place. Returns diagnostic validation errors.
+
+    Title normalization runs first because navigation_path depends on the
+    canonical form: BM25 tokenization is sensitive to OCR drift between e.g.
+    'Pasal 15I' and 'Pasal l5I'. Validation is diagnostic only (the legacy
+    regex validator false-positives on intentional pasal gaps and container
+    nodes), but the errors are still surfaced for human review.
+    """
+    normalize_pasal_titles_in_tree(structure)
+    assign_readable_node_ids(structure)
+    build_navigation_paths(structure)
+    backfill_page_indices(structure, pages, total_pages)
+    _, errors = validate_parse({"structure": structure}, pdf_pasal_numbers, is_perubahan=is_perubahan)
+    return errors
+
+
+def _persist(
+    final_doc: dict, doc_id: str, jenis_folder: str, dry_run: bool
+) -> tuple[Path, Path | None]:
+    """Write `final_doc` to its index path. Returns (output_path, backup_path).
+
+    On dry_run, a preview is written under tmp/ and backup_path is None.
+    On a real write, an existing index_path is copied to BACKUP_DIR before
+    overwrite (one-shot per doc, not incremental). Backup is skipped when
+    the doc has never been indexed before.
+    """
+    if dry_run:
+        preview = REPO_ROOT / "tmp" / f"llm_parse_preview_{doc_id}.json"
+        preview.parent.mkdir(parents=True, exist_ok=True)
+        with open(preview, "w", encoding="utf-8") as f:
+            json.dump(final_doc, f, ensure_ascii=False, indent=2)
+        return preview, None
+
+    index_path = INDEX_PASAL / jenis_folder / f"{doc_id}.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+
+    backup_path: Path | None = None
+    if index_path.exists():
+        backup_cat = BACKUP_DIR / jenis_folder
+        backup_cat.mkdir(parents=True, exist_ok=True)
+        candidate = backup_cat / index_path.name
+        if not candidate.exists():
+            shutil.copy2(index_path, candidate)
+        backup_path = candidate
+
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(final_doc, f, ensure_ascii=False, indent=2)
+
+    return index_path, backup_path
+
+
 def parse_doc(doc_id: str, *, model: str | None = None, dry_run: bool = False) -> dict:
     """Parse one document and return its audit record.
 
+    Pipeline: load inputs (metadata + PDF) -> resolve parser model
+    -> plan chunking -> dispatch LLM call(s) -> finalize tree (titles,
+    ids, navigation, page indices) -> persist. Errors at any step return
+    early with audit["status"] == "error" and audit["error"] set.
+
     The parser model is resolved from the document's category registry
-    entry when `model` is None, which is the normal path. Pass an explicit
-    `model` to override (e.g. for ad-hoc parser experiments).
+    entry when `model` is None (the normal path). Pass an explicit model
+    only for ad-hoc parser experiments.
     """
     audit: dict = {
         "doc_id": doc_id,
@@ -1109,136 +1124,43 @@ def parse_doc(doc_id: str, *, model: str | None = None, dry_run: bool = False) -
     }
 
     try:
-        meta = build_metadata(doc_id)
+        inputs = _load_inputs(doc_id)
     except Exception as exc:
         audit["status"] = "error"
-        audit["error"] = f"metadata: {exc}"
+        audit["error"] = f"input: {exc}"
         return audit
 
+    meta = inputs.meta
     if model is None:
         model = parse_model_for_category(meta.get("jenis_folder", ""))
     audit["model"] = model
+    audit["is_perubahan"] = meta["is_perubahan"]
+    audit["total_pages"] = meta["total_pages"]
+    audit["body_pages"] = meta["body_pages"]
+    audit["pdf_pasal_regex_count"] = len(inputs.pdf_pasal_numbers)
+    audit["pdf_chars"] = len(inputs.pdf_text_full)
 
-    judul = meta["judul"]
-    is_perubahan = meta["is_perubahan"]
-    total_pages = meta["total_pages"]
-    body_end = meta["body_pages"]
-    audit["is_perubahan"] = is_perubahan
-    audit["total_pages"] = total_pages
-    audit["body_pages"] = body_end
+    plan = _plan_chunking(inputs)
+    audit["mode"] = "chunked" if plan.use_chunked else "whole"
 
-    try:
-        pages = load_pdf_pages(doc_id)
-    except Exception as exc:
+    result = _run_llm_parse(inputs, plan, model)
+    audit["usage"] = result.usage
+    if plan.use_chunked:
+        audit["chunk_errors"] = result.chunk_errors
+    if result.error or result.structure is None:
         audit["status"] = "error"
-        audit["error"] = f"pdf load: {exc}"
+        audit["error"] = result.error or "no structure produced"
         return audit
 
-    pdf_pasal_numbers = _pasal_numbers_in_page_range(pages, 1, body_end)
-    audit["pdf_pasal_regex_count"] = len(pdf_pasal_numbers)
-
-    # Chunk when char volume is large OR pasal count risks busting the ~65K
-    # output-token budget (~35 pasals of nested text).
-    pdf_text_full = format_pdf_pages(pages, 1, body_end)
-    char_count = len(pdf_text_full)
-    audit["pdf_chars"] = char_count
-    # Amendment docs emit only 1-2 Pasal Roman roots regardless of inner Pasal N
-    # count, so pasal-count chunking is meaningless — only char volume matters.
-    if is_perubahan:
-        use_chunked = char_count > MAX_WHOLE_DOC_INPUT_CHARS
-    else:
-        use_chunked = (
-            char_count > MAX_WHOLE_DOC_INPUT_CHARS
-            or len(pdf_pasal_numbers) > MAX_WHOLE_DOC_PASALS
-        )
-    audit["mode"] = "chunked" if use_chunked else "whole"
-
-    agg_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}
-
-    if not use_chunked:
-        prompt = build_prompt(doc_id, judul, is_perubahan, pdf_text_full)
-        est_tokens = len(prompt) // 4
-        print(f"  calling {model} ({est_tokens:,} input tokens, whole doc)...", flush=True)
-        obj, usage, err = _run_llm(prompt, model)
-        _accumulate_usage(agg_usage, usage)
-        if err:
-            audit["status"] = "error"
-            audit["error"] = err
-            audit["usage"] = agg_usage
-            return audit
-        structure = obj["structure"]
-    else:
-        body_pages_list = [p for p in pages if p["page_num"] <= body_end]
-        ranges = _chunk_by_pasal(body_pages_list, body_end, pasals_per_chunk=20)
-        strategy = "pasal-aware"
-        if not ranges:
-            ranges = _chunk_pages(body_pages_list, PAGES_PER_CHUNK, CHUNK_OVERLAP_PAGES)
-            strategy = "page-based"
-        print(
-            f"  chunked mode ({strategy}): {total_pages} pages split into "
-            f"{len(ranges)} chunks, parallel={PARALLEL_WORKERS}",
-            flush=True,
-        )
-        chunk_structures: list[list[dict] | None] = [None] * len(ranges)
-        errors: list[str] = []
-
-        def _worker(i: int, start: int, end: int):
-            scoped = format_pdf_pages(pages, start, end)
-            expected = _pasals_in_page_range(pages, start, end)
-            prompt = build_prompt(
-                doc_id, judul, is_perubahan, scoped,
-                start_page=start, end_page=end,
-                expected_pasals=expected,
-            )
-            est = len(prompt) // 4
-            print(
-                f"  chunk {i+1}/{len(ranges)} (p{start}-{end}, {len(expected)} pasals expected): "
-                f"{est:,} input tokens...",
-                flush=True,
-            )
-            return i, _run_llm(prompt, model)
-
-        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
-            futures = [pool.submit(_worker, i, s, e) for i, (s, e) in enumerate(ranges)]
-            for fut in as_completed(futures):
-                try:
-                    i, (obj, usage, err) = fut.result()
-                except Exception as exc:
-                    errors.append(f"worker exception: {exc}")
-                    continue
-                _accumulate_usage(agg_usage, usage)
-                if err or not obj:
-                    errors.append(f"chunk {i+1}: {err}")
-                    continue
-                chunk_structures[i] = obj["structure"]
-        valid_chunks = [c for c in chunk_structures if c]
-        if not valid_chunks:
-            audit["status"] = "error"
-            audit["error"] = "all chunks failed"
-            audit["chunk_errors"] = errors
-            audit["usage"] = agg_usage
-            return audit
-        audit["chunk_errors"] = errors
-        structure = _merge_chunk_structures(valid_chunks)
-
-    audit["usage"] = agg_usage
-
-    # Normalize pasal titles BEFORE building navigation_path — paths must
-    # reflect canonical form ("Pasal 15I", not OCR "Pasal l5I"). BM25
-    # tokenization depends on clean title/text tokens.
-    normalize_pasal_titles_in_tree(structure)
-    assign_readable_node_ids(structure)
-    build_navigation_paths(structure)
-    backfill_page_indices(structure, pages, total_pages)
-
-    # Penjelasan is intentionally NOT attached: GT targets body text, and the
-    # regex-based attribution had layout-specific bugs mis-attributing across
-    # pasals. Raw map stays at doc-level for optional display only.
-
-    # Validation is diagnostic, NOT a gate — the regex validator false-positives
-    # on valid LLM output (intentional Pasal gaps, container nodes).
-    _, errors = validate_parse({"structure": structure}, pdf_pasal_numbers, is_perubahan=is_perubahan)
-    audit["validation_errors"] = errors
+    structure = result.structure
+    audit["validation_errors"] = _finalize_structure(
+        structure,
+        inputs.pages,
+        meta["total_pages"],
+        inputs.pdf_pasal_numbers,
+        meta["is_perubahan"],
+    )
+    audit["pasal_count"] = count_pasals_in_tree(structure)
 
     final_doc = dict(meta)
     final_doc["structure"] = structure
@@ -1246,33 +1168,15 @@ def parse_doc(doc_id: str, *, model: str | None = None, dry_run: bool = False) -
     final_doc["llm_parse_model"] = model
     final_doc["llm_parse_applied_at"] = datetime.now(timezone.utc).isoformat()
 
-    audit["pasal_count"] = count_pasals_in_tree(structure)
-
+    output_path, backup_path = _persist(final_doc, doc_id, meta["jenis_folder"], dry_run)
     if dry_run:
         audit["status"] = "dry_run_ok"
-        preview = REPO_ROOT / "tmp" / f"llm_parse_preview_{doc_id}.json"
-        preview.parent.mkdir(parents=True, exist_ok=True)
-        with open(preview, "w", encoding="utf-8") as f:
-            json.dump(final_doc, f, ensure_ascii=False, indent=2)
-        audit["preview_path"] = str(preview)
-        return audit
-
-    index_path = INDEX_PASAL / meta["jenis_folder"] / f"{doc_id}.json"
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if index_path.exists():
-        backup_cat = BACKUP_DIR / meta["jenis_folder"]
-        backup_cat.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_cat / index_path.name
-        if not backup_path.exists():
-            shutil.copy2(index_path, backup_path)
-        audit["backup_path"] = str(backup_path)
-
-    with open(index_path, "w", encoding="utf-8") as f:
-        json.dump(final_doc, f, ensure_ascii=False, indent=2)
-
-    audit["status"] = "parsed"
-    audit["index_path"] = str(index_path)
+        audit["preview_path"] = str(output_path)
+    else:
+        audit["status"] = "parsed"
+        audit["index_path"] = str(output_path)
+        if backup_path is not None:
+            audit["backup_path"] = str(backup_path)
     return audit
 
 
