@@ -5,13 +5,11 @@ text body to the OCR-clean model, and writes the cleaned text back in
 place. Length and marker-count sanity checks reject suspicious cleans
 (likely hallucinations) before they overwrite the original.
 
-Usage:
-    python -m vectorless.indexing.ocr --doc-id uu-3-2025
-    python -m vectorless.indexing.ocr --category UU --force
+Public entry: `clean_doc(doc_id, force=False, verbose=True)`. CLI access
+lives at `scripts/parser/clean_ocr.py`. This module is library-only.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -26,7 +24,6 @@ if hasattr(sys.stdout, "reconfigure"):
 from ..ids import doc_category
 from ..llm import call as llm_call
 from ..models import OCR_CLEAN_MODEL
-from .targets import resolve_targets
 
 INDEX_PASAL = Path("data/index_pasal")
 
@@ -182,30 +179,3 @@ def clean_doc(doc_id: str, force: bool = False, verbose: bool = True) -> dict:
     }
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[])
-    ap.add_argument("--category", help="Process every doc in this jenis_folder")
-    ap.add_argument("--force", action="store_true", help="Re-clean leaves already marked ocr_cleaned")
-    args = ap.parse_args()
-
-    targets = resolve_targets(list(args.doc_ids), args.category)
-    print(f"Cleaning OCR for {len(targets)} doc(s)")
-    totals = {"elapsed_s": 0.0, "llm_calls": 0, "total_tokens": 0, "fixes_total": 0, "rejected": 0}
-    for did in targets:
-        try:
-            stats = clean_doc(did, force=args.force)
-        except FileNotFoundError as e:
-            print(f"  SKIP missing: {e}")
-            continue
-        for k in totals:
-            totals[k] += stats[k]
-        print()
-
-    print(f"Total: {totals['elapsed_s']:.0f}s, {totals['llm_calls']} calls, "
-          f"{totals['total_tokens']:,} tokens, fixes={totals['fixes_total']}, "
-          f"rejected={totals['rejected']}")
-
-
-if __name__ == "__main__":
-    main()

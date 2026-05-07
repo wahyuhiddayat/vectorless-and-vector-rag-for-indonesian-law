@@ -5,13 +5,11 @@ the leaf text. Internal-node summaries call the LLM with the children's
 titles + summaries (so the parent describes its scope, not its raw text).
 The mutated tree is written back to the same path.
 
-Usage:
-    python -m vectorless.indexing.summary --doc-id uu-3-2025
-    python -m vectorless.indexing.summary --category UU --granularity ayat --force
+Public entry: `annotate_doc(doc_id, granularity="pasal", force=False, verbose=True)`.
+CLI access lives at `scripts/parser/add_node_summary.py`. Library-only.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 import threading
@@ -25,7 +23,6 @@ from ..ids import doc_category
 from ..llm import call as llm_call
 from ..models import SUMMARY_MODEL
 from . import GRANULARITY_INDEX_MAP as GRANULARITY_INDEX
-from .targets import resolve_targets
 
 
 LEAF_PROMPT = """\
@@ -182,31 +179,3 @@ def annotate_doc(doc_id: str, granularity: str = "pasal",
     return {"elapsed_s": round(elapsed, 2), **counter, **stats}
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[], help="Doc to annotate (repeatable)")
-    ap.add_argument("--category", help="Annotate every doc in this jenis_folder")
-    ap.add_argument("--granularity", choices=list(GRANULARITY_INDEX), default="pasal")
-    ap.add_argument("--force", action="store_true", help="Re-summarise nodes that already have a summary")
-    args = ap.parse_args()
-
-    targets = resolve_targets(list(args.doc_ids), args.category)
-    print(f"Annotating {len(targets)} doc(s) at granularity={args.granularity}")
-    totals = {"elapsed_s": 0.0, "llm_calls": 0, "total_tokens": 0, "failed": 0}
-    for did in targets:
-        try:
-            stats = annotate_doc(did, granularity=args.granularity, force=args.force)
-        except FileNotFoundError as e:
-            print(f"  SKIP missing: {e}")
-            continue
-        for k in totals:
-            totals[k] += stats[k]
-        print()
-
-    suffix = f" failed={totals['failed']}" if totals["failed"] else ""
-    print(f"Total: {totals['elapsed_s']:.0f}s, {totals['llm_calls']} calls, "
-          f"{totals['total_tokens']:,} tokens{suffix}")
-
-
-if __name__ == "__main__":
-    main()

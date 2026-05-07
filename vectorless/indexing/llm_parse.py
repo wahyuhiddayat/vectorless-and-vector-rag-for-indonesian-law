@@ -1,15 +1,16 @@
 """LLM-first parser: extract pasal-level structure from PDF text.
 
-Top-level entry: `parse_doc(doc_id, model=None, dry_run=False)`. The model
-is resolved per-doc from the category registry when None.
+Public entry: `parse_doc(doc_id, model=None, dry_run=False)`. The model
+is resolved per-doc from the category registry when None. Side effect on
+non-dry runs: writes the parsed doc to `data/index_pasal/<CAT>/<doc_id>.json`
+(creating a one-shot backup of any prior version under
+`data/index_pasal_pre_llm_parse/`).
 
-Usage as CLI:
-    python -m vectorless.indexing.llm_parse --doc-id uu-3-2025
-    python -m vectorless.indexing.llm_parse --category UU --dry-run
+CLI access lives at `scripts/parser/llm_parse.py`. This module is
+library-only.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import shutil
@@ -32,7 +33,6 @@ from .pdf import (
     format_pdf_pages,
     load_pdf_pages,
 )
-from .targets import resolve_targets
 from .tree import (
     _PASAL_TITLE_RE,
     _sanitize_node_id,
@@ -1214,41 +1214,3 @@ def _append_audit(entry: dict) -> None:
         json.dump(existing, f, ensure_ascii=False, indent=2)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[],
-                    help="Doc to parse (repeatable)")
-    ap.add_argument("--category",
-                    help="Parse every doc in this jenis_folder (e.g. UU, OJK)")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Preview only, do not overwrite index")
-    args = ap.parse_args()
-
-    targets = resolve_targets(list(args.doc_ids), args.category)
-    print(f"Targets: {len(targets)} docs")
-    if not targets:
-        return
-
-    for i, doc_id in enumerate(targets, 1):
-        print(f"\n[{i}/{len(targets)}] {doc_id}")
-        try:
-            audit = parse_doc(doc_id, dry_run=args.dry_run)
-        except Exception as exc:
-            audit = {
-                "doc_id": doc_id,
-                "status": "error",
-                "error": f"unhandled: {exc}",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }
-        _append_audit(audit)
-        status = audit.get("status")
-        msg = f"  status: {status}"
-        if "pasal_count" in audit:
-            msg += f"  pasals: {audit['pasal_count']} (pdf regex: {audit.get('pdf_pasal_regex_count', '?')})"
-        if audit.get("validation_errors"):
-            msg += f"  errors: {audit['validation_errors'][:2]}"
-        print(msg, flush=True)
-
-
-if __name__ == "__main__":
-    main()
