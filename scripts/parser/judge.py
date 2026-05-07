@@ -25,6 +25,7 @@ load_dotenv()
 
 from scripts.parser._common import load_pdf_pages  # noqa: E402
 from vectorless.models import JUDGE_MODEL  # noqa: E402
+from vectorless.indexing.targets import resolve_targets  # noqa: E402
 
 INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 REPORT_PATH = REPO_ROOT / "data" / "judge_report.json"
@@ -118,11 +119,6 @@ Scoring:
 - <0.50      FAIL  — severe coverage loss or broken structure
 
 Cap ocr_issues at 10 most impactful samples. Reply with ONLY the JSON."""
-
-
-def _load_registry() -> dict:
-    with open(REGISTRY_PATH, encoding="utf-8") as f:
-        return json.load(f)
 
 
 def _find_index_path(doc_id: str) -> Path | None:
@@ -225,39 +221,13 @@ def _save_reports(reports: list[dict]) -> None:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
 
-def _resolve_targets(specific: list[str], category: str | None) -> list[str]:
-    if specific:
-        return specific
-    if not category:
-        raise SystemExit("must pass --doc-id(s) or --category")
-    reg = _load_registry()
-    target = category.upper()
-    return sorted(
-        did for did, entry in reg.items()
-        if (entry.get("jenis_folder") or "").upper() == target
-    )
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Gemini-based judge for parsed index quality")
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[])
     ap.add_argument("--category", help="Judge every doc in this jenis_folder")
-    ap.add_argument("--source",
-                    help="Override INDEX_PASAL source root (e.g. data/index_pasal_eval/v4-flash). "
-                         "Use with --report to run judge on a bake-off parse without touching the canonical report.")
-    ap.add_argument("--report",
-                    help="Override REPORT_PATH output (e.g. data/judge_report_v4-flash.json).")
     args = ap.parse_args()
 
-    global INDEX_PASAL, REPORT_PATH
-    if args.source:
-        INDEX_PASAL = (REPO_ROOT / args.source).resolve()
-        print(f"Source override: {INDEX_PASAL}")
-    if args.report:
-        REPORT_PATH = (REPO_ROOT / args.report).resolve()
-        print(f"Report override: {REPORT_PATH}")
-
-    targets = _resolve_targets(list(args.doc_ids), args.category)
+    targets = resolve_targets(list(args.doc_ids), args.category)
 
     print(f"judging {len(targets)} docs with {JUDGE_MODEL}")
     reports: list[dict] = []
@@ -295,15 +265,12 @@ def main() -> None:
     )
     print(f"report: {REPORT_PATH}")
 
-    if args.source:
-        print("skipping corpus_status refresh (--source override active)")
-    else:
-        try:
-            from scripts.parser.corpus_status import build_status, write_status
-            write_status(build_status())
-            print("corpus_status.json refreshed")
-        except Exception as exc:
-            print(f"warning: corpus_status refresh failed: {exc}")
+    try:
+        from scripts.parser.corpus_status import build_status, write_status
+        write_status(build_status())
+        print("corpus_status.json refreshed")
+    except Exception as exc:
+        print(f"warning: corpus_status refresh failed: {exc}")
 
 
 if __name__ == "__main__":

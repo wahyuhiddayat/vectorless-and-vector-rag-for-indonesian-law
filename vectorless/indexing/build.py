@@ -36,9 +36,9 @@ from .parser import (  # noqa: E402
     iter_leaves,
     strip_ocr_headers,
 )
+from .targets import resolve_targets  # noqa: E402
 from ..ids import doc_category  # noqa: E402
 
-REGISTRY_PATH = Path("data/raw/registry.json")
 INDEXING_LOGS_DIR = Path("data/indexing_logs")
 
 GRANULARITY_INDEX_MAP = {
@@ -89,34 +89,15 @@ def build_catalog(index_dir: Path) -> list[dict]:
     return catalog
 
 
-def _load_registry() -> dict:
-    if not REGISTRY_PATH.exists():
-        raise FileNotFoundError(f"registry not found at {REGISTRY_PATH}")
-    with open(REGISTRY_PATH, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _resolve_targets(doc_ids: list[str], category: str | None) -> list[str]:
-    if doc_ids:
-        return doc_ids
-    if not category:
-        raise SystemExit("must pass --doc-id(s) or --category")
-    reg = _load_registry()
-    target = category.upper()
-    return sorted(
-        did for did, entry in reg.items()
-        if (entry.get("jenis_folder") or "").upper() == target
-    )
-
-
 def _update_cost_log(granularity: str, doc_id: str, entry: dict) -> None:
     """Replace one document entry in the per-granularity cost log."""
     INDEXING_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     path = INDEXING_LOGS_DIR / f"cost_{granularity}.json"
-    data = {}
+    data: dict = {}
     if path.exists():
         try:
-            data = json.load(open(path, encoding="utf-8"))
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
         except json.JSONDecodeError:
             data = {}
     data[doc_id] = entry
@@ -277,7 +258,7 @@ def main() -> None:
                     help="Skip docs already fully indexed across all 3 granularities")
     args = ap.parse_args()
 
-    targets = _resolve_targets(list(args.doc_ids), args.category)
+    targets = resolve_targets(list(args.doc_ids), args.category)
     if args.skip_existing:
         before = len(targets)
         targets = [d for d in targets if not all(

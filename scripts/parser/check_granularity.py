@@ -25,8 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from vectorless.indexing.parser import _find_fuzzy_markers  # noqa: E402
-
-REGISTRY_PATH = REPO_ROOT / "data" / "raw" / "registry.json"
+from vectorless.indexing.targets import resolve_targets  # noqa: E402
 INDEX_DIR = {
     "pasal": REPO_ROOT / "data" / "index_pasal",
     "ayat": REPO_ROOT / "data" / "index_ayat",
@@ -122,19 +121,6 @@ def check_doc(doc_id: str) -> dict:
     return report
 
 
-def _resolve_targets(doc_ids: list[str], category: str | None) -> list[str]:
-    if doc_ids:
-        return doc_ids
-    if not category:
-        raise SystemExit("must pass --doc-id(s) or --category")
-    reg = json.load(open(REGISTRY_PATH, encoding="utf-8"))
-    target = category.upper()
-    return sorted(
-        did for did, entry in reg.items()
-        if (entry.get("jenis_folder") or "").upper() == target
-    )
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Granularity validation via sequence scan")
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[])
@@ -147,7 +133,7 @@ def main() -> None:
     doc_ids = list(args.doc_ids)
     if args.doc_ids_csv:
         doc_ids.extend([x.strip() for x in args.doc_ids_csv.split(",") if x.strip()])
-    targets = _resolve_targets(doc_ids, args.category)
+    targets = resolve_targets(doc_ids, args.category)
 
     print(f"checking {len(targets)} docs\n")
     reports = []

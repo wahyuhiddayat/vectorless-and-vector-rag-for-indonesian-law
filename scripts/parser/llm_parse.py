@@ -28,18 +28,13 @@ from scripts.parser._common import (  # noqa: E402
 import time  # noqa: E402
 
 from vectorless.llm import call as llm_call  # noqa: E402
-from vectorless.categories import (  # noqa: E402
-    DEFAULT_PARSER_MODEL as MODEL_NAME,
-    parse_model_for_category,
-)
-
-# True when --model CLI flag was passed; disables per-category resolution
-# in parse_doc so that bake-off and ad-hoc overrides win uniformly.
-_MODEL_FORCED = False
+from vectorless.categories import parse_model_for_category  # noqa: E402
+from vectorless.indexing.metadata import build_metadata  # noqa: E402
+from vectorless.indexing.targets import resolve_targets  # noqa: E402
 
 
-def call_llm(prompt: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
-    """Call the configured LLM for structured JSON parse output.
+def call_llm(prompt: str, model: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
+    """Call the LLM for structured JSON parse output.
 
     Returns (parsed_obj, usage). Retries (transient errors and JSON parse
     failures) are handled inside vectorless.llm.call.
@@ -47,7 +42,7 @@ def call_llm(prompt: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
     t0 = time.time()
     parsed, base_usage = llm_call(
         prompt,
-        model=MODEL_NAME,
+        model=model,
         max_completion_tokens=max_output_tokens,
         return_usage=True,
     )
@@ -59,7 +54,7 @@ def call_llm(prompt: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
         "elapsed_s": round(time.time() - t0, 3),
     }
     return parsed, usage
-from vectorless.indexing.metadata import build_metadata  # noqa: E402
+
 
 INDEX_PASAL = REPO_ROOT / "data" / "index_pasal"
 BACKUP_DIR = REPO_ROOT / "data" / "index_pasal_pre_llm_parse"
@@ -880,14 +875,14 @@ def _pasals_in_page_range(
     return [f"Pasal {n}" for n in sorted(nums, key=_key)]
 
 
-def _run_llm(prompt: str) -> tuple[dict | None, dict, str | None]:
+def _run_llm(prompt: str, model: str) -> tuple[dict | None, dict, str | None]:
     """Single LLM call + JSON normalization. Returns (obj, usage, error).
 
     JSON parsing and transient retries are handled inside call_llm. Caller
     only normalizes alias keys (e.g. 'name' -> 'title').
     """
     try:
-        obj, usage = call_llm(prompt)
+        obj, usage = call_llm(prompt, model=model)
     except Exception as exc:
         return None, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0, "elapsed_s": 0.0}, f"llm call: {exc}"
     _normalize_keys(obj)
@@ -1100,8 +1095,13 @@ def _chunk_by_pasal(
     return ranges
 
 
-def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
-    """Parse one document and return its audit record."""
+def parse_doc(doc_id: str, *, model: str | None = None, dry_run: bool = False) -> dict:
+    """Parse one document and return its audit record.
+
+    The parser model is resolved from the document's category registry
+    entry when `model` is None, which is the normal path. Pass an explicit
+    `model` to override (e.g. for ad-hoc parser experiments).
+    """
     audit: dict = {
         "doc_id": doc_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -1115,13 +1115,9 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
         audit["error"] = f"metadata: {exc}"
         return audit
 
-    # Resolve parser model for this doc's category. CLI override (when the
-    # script is run with --model) wins; otherwise route by jenis_folder so
-    # expansion categories pick up PARSE_MODEL_EXPANSION automatically.
-    if not _MODEL_FORCED:
-        global MODEL_NAME
-        MODEL_NAME = parse_model_for_category(meta.get("jenis_folder", ""))
-    audit["model"] = MODEL_NAME
+    if model is None:
+        model = parse_model_for_category(meta.get("jenis_folder", ""))
+    audit["model"] = model
 
     judul = meta["judul"]
     is_perubahan = meta["is_perubahan"]
@@ -1162,8 +1158,8 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     if not use_chunked:
         prompt = build_prompt(doc_id, judul, is_perubahan, pdf_text_full)
         est_tokens = len(prompt) // 4
-        print(f"  calling Gemini ({est_tokens:,} input tokens, whole doc)...", flush=True)
-        obj, usage, err = _run_llm(prompt)
+        print(f"  calling {model} ({est_tokens:,} input tokens, whole doc)...", flush=True)
+        obj, usage, err = _run_llm(prompt, model)
         _accumulate_usage(agg_usage, usage)
         if err:
             audit["status"] = "error"
@@ -1200,7 +1196,7 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
                 f"{est:,} input tokens...",
                 flush=True,
             )
-            return i, _run_llm(prompt)
+            return i, _run_llm(prompt, model)
 
         with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
             futures = [pool.submit(_worker, i, s, e) for i, (s, e) in enumerate(ranges)]
@@ -1247,7 +1243,7 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
     final_doc = dict(meta)
     final_doc["structure"] = structure
     final_doc["parser_method"] = "llm_parse"
-    final_doc["llm_parse_model"] = MODEL_NAME
+    final_doc["llm_parse_model"] = model
     final_doc["llm_parse_applied_at"] = datetime.now(timezone.utc).isoformat()
 
     audit["pasal_count"] = count_pasals_in_tree(structure)
@@ -1285,33 +1281,27 @@ def _accumulate_usage(dst: dict, src: dict) -> None:
         dst[k] = (dst.get(k, 0) or 0) + (src.get(k, 0) or 0)
 
 
-def _load_targets(specific: list[str] | None, category: str | None) -> list[str]:
-    """Return the document IDs requested on the CLI."""
-    if specific:
-        return specific
-    if not category:
-        raise RuntimeError("must pass --doc-id(s) or --category")
-    reg_path = REPO_ROOT / "data" / "raw" / "registry.json"
-    if not reg_path.exists():
-        raise RuntimeError(f"registry not found at {reg_path}")
-    reg = json.load(open(reg_path, encoding="utf-8"))
-    target = category.upper()
-    return sorted(
-        doc_id for doc_id, entry in reg.items()
-        if (entry.get("jenis_folder") or "").upper() == target
-    )
-
-
 def _append_audit(entry: dict) -> None:
+    """Append one audit record to AUDIT_LOG, preserving prior entries.
+
+    A corrupt log (invalid JSON, or a non-list root) is renamed with a
+    `.corrupt-<ts>` suffix and a fresh log starts. Silently resetting the
+    log to `[]` would lose history; this preserves the bad file for later
+    inspection while letting the current run continue.
+    """
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     existing: list = []
     if AUDIT_LOG.exists():
         try:
-            existing = json.load(open(AUDIT_LOG, encoding="utf-8"))
-            if not isinstance(existing, list):
-                existing = []
-        except Exception:
-            existing = []
+            with open(AUDIT_LOG, encoding="utf-8") as f:
+                loaded = json.load(f)
+        except json.JSONDecodeError as exc:
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            quarantine = AUDIT_LOG.with_suffix(f".corrupt-{ts}.json")
+            AUDIT_LOG.rename(quarantine)
+            print(f"warning: audit log was unparseable ({exc}); moved to {quarantine.name}", flush=True)
+            loaded = []
+        existing = loaded if isinstance(loaded, list) else []
     existing.append(entry)
     with open(AUDIT_LOG, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
@@ -1325,27 +1315,9 @@ def main() -> None:
                     help="Parse every doc in this jenis_folder (e.g. UU, OJK)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview only, do not overwrite index")
-    ap.add_argument("--model",
-                    help="Override PARSE_MODEL pin for this run (e.g. deepseek-v4-flash, deepseek-v4-pro). "
-                         "Use with --output-dir for parser bake-off without overwriting canonical index.")
-    ap.add_argument("--output-dir",
-                    help="Override INDEX_PASAL output root for this run (e.g. data/index_pasal_eval/v4-flash). "
-                         "Backups, restore, and AUDIT_LOG follow the override.")
     args = ap.parse_args()
 
-    global MODEL_NAME, INDEX_PASAL, BACKUP_DIR, AUDIT_LOG, _MODEL_FORCED
-    if args.model:
-        MODEL_NAME = args.model
-        _MODEL_FORCED = True
-        print(f"Model override: {MODEL_NAME}")
-    if args.output_dir:
-        INDEX_PASAL = (REPO_ROOT / args.output_dir).resolve()
-        BACKUP_DIR = INDEX_PASAL.parent / (INDEX_PASAL.name + "_pre_llm_parse")
-        AUDIT_LOG = INDEX_PASAL.parent / f"llm_parse_log_{INDEX_PASAL.name}.json"
-        INDEX_PASAL.mkdir(parents=True, exist_ok=True)
-        print(f"Output override: {INDEX_PASAL}")
-
-    targets = _load_targets(list(args.doc_ids) or None, args.category)
+    targets = resolve_targets(list(args.doc_ids), args.category)
     print(f"Targets: {len(targets)} docs")
     if not targets:
         return
