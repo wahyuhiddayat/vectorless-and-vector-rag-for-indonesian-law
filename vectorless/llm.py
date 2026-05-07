@@ -228,9 +228,10 @@ def _call_deepseek(prompt: str, model: str, max_tokens: int) -> tuple[str, int, 
     """One DeepSeek Chat Completions call. Returns (text, input_tokens, output_tokens).
 
     Uses OpenAI-compatible endpoint at api.deepseek.com. JSON output mode is
-    supported for both v4-flash and v4-pro. Thinking mode is on by default
-    on the v4 line, which is the desired behavior for hierarchical legal
-    parsing where reasoning helps with cross-reference resolution.
+    supported for both v4-flash and v4-pro. Thinking is disabled here to
+    mirror gpt-5's `reasoning_effort="minimal"` for structured-extraction
+    callers (parser, judge): empirically the V4 default thinking=on bloats
+    output ~5x without quality lift on prompt-driven JSON tasks.
     """
     cli = _deepseek_client()
     kwargs: dict = {
@@ -239,6 +240,7 @@ def _call_deepseek(prompt: str, model: str, max_tokens: int) -> tuple[str, int, 
         "response_format": {"type": "json_object"},
         "max_tokens": max_tokens,
         "temperature": 0.0,
+        "extra_body": {"thinking": {"type": "disabled"}},
     }
     resp = cli.chat.completions.create(**kwargs)
     text = (resp.choices[0].message.content or "").strip()

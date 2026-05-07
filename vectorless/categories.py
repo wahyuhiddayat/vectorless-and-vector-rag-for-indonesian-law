@@ -82,8 +82,13 @@ CATEGORIES: tuple[Category, ...] = (
     Category(111, "PERMEN_ATRBPN", "Kementerian/Lembaga", prefix="permen-atr-kepala-bpn"),
     Category(182, "PERMENKES", "Kementerian/Lembaga"),
     Category(230, "PERATURAN_BPOM", "Kementerian/Lembaga"),
-    # Expansion categories (added 2026-05-07+, parser per ADR-008).
-    Category(59, "PERATURAN_KPU", "Kementerian/Lembaga", "deepseek-v4-pro"),
+    # Expansion categories (added 2026-05-07+).
+    # Note. ADR-008 originally pinned deepseek-v4-pro for expansion based on
+    # bake-off cost+quality parity. Reverted to gpt-5 in practice: thinking-on
+    # was 14x slower per pasal, thinking-off untested on Indonesian legal text,
+    # and the absolute cost saving (~$2 for 24 docs) didn't justify the latency
+    # and methodology footnote. See ADR-009 (planned addendum).
+    Category(59, "PERATURAN_KPU", "Kementerian/Lembaga"),
 )
 
 
