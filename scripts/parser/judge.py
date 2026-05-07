@@ -242,7 +242,20 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Gemini-based judge for parsed index quality")
     ap.add_argument("--doc-id", action="append", dest="doc_ids", default=[])
     ap.add_argument("--category", help="Judge every doc in this jenis_folder")
+    ap.add_argument("--source",
+                    help="Override INDEX_PASAL source root (e.g. data/index_pasal_eval/v4-flash). "
+                         "Use with --report to run judge on a bake-off parse without touching the canonical report.")
+    ap.add_argument("--report",
+                    help="Override REPORT_PATH output (e.g. data/judge_report_v4-flash.json).")
     args = ap.parse_args()
+
+    global INDEX_PASAL, REPORT_PATH
+    if args.source:
+        INDEX_PASAL = (REPO_ROOT / args.source).resolve()
+        print(f"Source override: {INDEX_PASAL}")
+    if args.report:
+        REPORT_PATH = (REPO_ROOT / args.report).resolve()
+        print(f"Report override: {REPORT_PATH}")
 
     targets = _resolve_targets(list(args.doc_ids), args.category)
 
@@ -282,12 +295,15 @@ def main() -> None:
     )
     print(f"report: {REPORT_PATH}")
 
-    try:
-        from scripts.parser.corpus_status import build_status, write_status
-        write_status(build_status())
-        print("corpus_status.json refreshed")
-    except Exception as exc:
-        print(f"warning: corpus_status refresh failed: {exc}")
+    if args.source:
+        print("skipping corpus_status refresh (--source override active)")
+    else:
+        try:
+            from scripts.parser.corpus_status import build_status, write_status
+            write_status(build_status())
+            print("corpus_status.json refreshed")
+        except Exception as exc:
+            print(f"warning: corpus_status refresh failed: {exc}")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,14 @@ from scripts.parser._common import (  # noqa: E402
 import time  # noqa: E402
 
 from vectorless.llm import call as llm_call  # noqa: E402
-from vectorless.models import PARSE_MODEL as MODEL_NAME  # noqa: E402
+from vectorless.categories import (  # noqa: E402
+    DEFAULT_PARSER_MODEL as MODEL_NAME,
+    parse_model_for_category,
+)
+
+# True when --model CLI flag was passed; disables per-category resolution
+# in parse_doc so that bake-off and ad-hoc overrides win uniformly.
+_MODEL_FORCED = False
 
 
 def call_llm(prompt: str, max_output_tokens: int = 65536) -> tuple[dict, dict]:
@@ -1108,6 +1115,14 @@ def parse_doc(doc_id: str, dry_run: bool = False) -> dict:
         audit["error"] = f"metadata: {exc}"
         return audit
 
+    # Resolve parser model for this doc's category. CLI override (when the
+    # script is run with --model) wins; otherwise route by jenis_folder so
+    # expansion categories pick up PARSE_MODEL_EXPANSION automatically.
+    if not _MODEL_FORCED:
+        global MODEL_NAME
+        MODEL_NAME = parse_model_for_category(meta.get("jenis_folder", ""))
+    audit["model"] = MODEL_NAME
+
     judul = meta["judul"]
     is_perubahan = meta["is_perubahan"]
     total_pages = meta["total_pages"]
@@ -1310,7 +1325,25 @@ def main() -> None:
                     help="Parse every doc in this jenis_folder (e.g. UU, OJK)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview only, do not overwrite index")
+    ap.add_argument("--model",
+                    help="Override PARSE_MODEL pin for this run (e.g. deepseek-v4-flash, deepseek-v4-pro). "
+                         "Use with --output-dir for parser bake-off without overwriting canonical index.")
+    ap.add_argument("--output-dir",
+                    help="Override INDEX_PASAL output root for this run (e.g. data/index_pasal_eval/v4-flash). "
+                         "Backups, restore, and AUDIT_LOG follow the override.")
     args = ap.parse_args()
+
+    global MODEL_NAME, INDEX_PASAL, BACKUP_DIR, AUDIT_LOG, _MODEL_FORCED
+    if args.model:
+        MODEL_NAME = args.model
+        _MODEL_FORCED = True
+        print(f"Model override: {MODEL_NAME}")
+    if args.output_dir:
+        INDEX_PASAL = (REPO_ROOT / args.output_dir).resolve()
+        BACKUP_DIR = INDEX_PASAL.parent / (INDEX_PASAL.name + "_pre_llm_parse")
+        AUDIT_LOG = INDEX_PASAL.parent / f"llm_parse_log_{INDEX_PASAL.name}.json"
+        INDEX_PASAL.mkdir(parents=True, exist_ok=True)
+        print(f"Output override: {INDEX_PASAL}")
 
     targets = _load_targets(list(args.doc_ids) or None, args.category)
     print(f"Targets: {len(targets)} docs")

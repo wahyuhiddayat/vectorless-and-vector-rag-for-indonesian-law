@@ -13,12 +13,18 @@ import argparse
 import json
 import logging
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import unquote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+# Allow `python scraper/bpk_scraper.py` (script form) to import vectorless.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from vectorless.categories import JENIS_MAP, KATEGORI_MAP  # noqa: E402,F401
 
 
 BASE_URL = "https://peraturan.bpk.go.id"
@@ -37,76 +43,6 @@ HEADERS = {
 }
 
 NON_RETRYABLE_STATUS = {400, 401, 403, 404, 405, 410, 451}
-
-# Jenis ID to short folder name.
-JENIS_MAP = {
-    # Pusat
-    8: "UU",
-    9: "PERPU",
-    10: "PP",
-    11: "PERPRES",
-    # Daerah
-    19: "PERDA",
-    20: "PERGUB",
-    23: "PERBUP",
-    30: "PERWALI",
-    # Kementerian/Lembaga, fixed at 20 per Notes/01-corpus/categories.md
-    154: "PERMEN_PUPR",
-    40: "PERMENDAGRI",
-    42: "PMK",
-    69: "PERMENPERIN",
-    170: "PERMENAG",
-    241: "PERATURAN_POLRI",
-    54: "PERATURAN_BSSN",
-    202: "PERMENBUMN",
-    67: "PERMENDAG",
-    186: "PERMENDIKBUD",
-    78: "PERATURAN_BI",
-    80: "PERATURAN_OJK",
-    95: "PERATURAN_MA",
-    105: "PERMENAKER",
-    278: "PERMENKOMDIGI",
-    242: "PERMENDIKBUDRISTEK",
-    147: "PERMEN_ESDM",
-    111: "PERMEN_ATRBPN",
-    182: "PERMENKES",
-    230: "PERATURAN_BPOM",
-}
-
-# Jenis ID to broad category group.
-KATEGORI_MAP = {
-    # Pusat
-    8: "Pusat",
-    9: "Pusat",
-    10: "Pusat",
-    11: "Pusat",
-    # Daerah
-    19: "Daerah",
-    20: "Daerah",
-    23: "Daerah",
-    30: "Daerah",
-    # Kementerian/Lembaga
-    154: "Kementerian/Lembaga",
-    40: "Kementerian/Lembaga",
-    42: "Kementerian/Lembaga",
-    69: "Kementerian/Lembaga",
-    170: "Kementerian/Lembaga",
-    241: "Kementerian/Lembaga",
-    54: "Kementerian/Lembaga",
-    202: "Kementerian/Lembaga",
-    67: "Kementerian/Lembaga",
-    186: "Kementerian/Lembaga",
-    78: "Kementerian/Lembaga",
-    80: "Kementerian/Lembaga",
-    95: "Kementerian/Lembaga",
-    105: "Kementerian/Lembaga",
-    278: "Kementerian/Lembaga",
-    242: "Kementerian/Lembaga",
-    147: "Kementerian/Lembaga",
-    111: "Kementerian/Lembaga",
-    182: "Kementerian/Lembaga",
-    230: "Kementerian/Lembaga",
-}
 
 log = logging.getLogger("bpk_scraper")
 

@@ -4,6 +4,7 @@ Routes by model name prefix:
   gpt-*, o1, o3, o4   -> OpenAI Chat Completions
   claude-*            -> Anthropic Messages API
   gemini-*            -> Google GenAI on Vertex AI
+  deepseek-*          -> DeepSeek (OpenAI-compatible) Chat Completions
 
 Public surface (unchanged from prior single-vendor impl):
   client(), call(prompt, model, ...), get_stats(), reset_counters(),
@@ -32,6 +33,7 @@ MODEL = RETRIEVAL_MODEL
 _openai_cache = None
 _anthropic_cache = None
 _vertex_cache = None
+_deepseek_cache = None
 _input_tokens = 0
 _output_tokens = 0
 _calls = 0
@@ -62,6 +64,24 @@ def _anthropic_client():
             sys.exit(1)
         _anthropic_cache = Anthropic(api_key=api_key, timeout=300.0, max_retries=0)
     return _anthropic_cache
+
+
+def _deepseek_client():
+    """Lazy-init DeepSeek client (OpenAI-compatible)."""
+    global _deepseek_cache
+    if _deepseek_cache is None:
+        from openai import OpenAI
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            print("ERROR: DEEPSEEK_API_KEY not set.")
+            sys.exit(1)
+        _deepseek_cache = OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com/v1",
+            timeout=300.0,
+            max_retries=0,
+        )
+    return _deepseek_cache
 
 
 def _vertex_client():
@@ -101,6 +121,8 @@ def _backend(model: str) -> str:
         return "anthropic"
     if model.startswith("gemini-"):
         return "vertex"
+    if model.startswith("deepseek-"):
+        return "deepseek"
     raise ValueError(f"Unknown model family: {model!r}")
 
 
@@ -202,6 +224,29 @@ def _call_anthropic(prompt: str, model: str, max_tokens: int) -> tuple[str, int,
     return text, in_tok, out_tok
 
 
+def _call_deepseek(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
+    """One DeepSeek Chat Completions call. Returns (text, input_tokens, output_tokens).
+
+    Uses OpenAI-compatible endpoint at api.deepseek.com. JSON output mode is
+    supported for both v4-flash and v4-pro. Thinking mode is on by default
+    on the v4 line, which is the desired behavior for hierarchical legal
+    parsing where reasoning helps with cross-reference resolution.
+    """
+    cli = _deepseek_client()
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+    }
+    resp = cli.chat.completions.create(**kwargs)
+    text = (resp.choices[0].message.content or "").strip()
+    in_tok = getattr(resp.usage, "prompt_tokens", 0) or 0
+    out_tok = getattr(resp.usage, "completion_tokens", 0) or 0
+    return text, in_tok, out_tok
+
+
 def _call_vertex(prompt: str, model: str, max_tokens: int) -> tuple[str, int, int]:
     """One Vertex AI Gemini call. Returns (text, input_tokens, output_tokens)."""
     cli = _vertex_client()
@@ -235,6 +280,8 @@ def _call_backend(prompt: str, model: str, max_tokens: int) -> tuple[str, int, i
         return _call_anthropic(prompt, model, max_tokens)
     if backend == "vertex":
         return _call_vertex(prompt, model, max_tokens)
+    if backend == "deepseek":
+        return _call_deepseek(prompt, model, max_tokens)
     raise ValueError(f"Unknown backend: {backend}")
 
 
