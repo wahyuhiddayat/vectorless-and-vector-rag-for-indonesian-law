@@ -32,12 +32,22 @@ class Category:
             "Kementerian/Lembaga".
         parser_model: Model name passed to the LLM dispatcher when parsing
             documents in this category. Defaults to DEFAULT_PARSER_MODEL.
+        prefix: Doc-id prefix used to map a scraped doc_id back to this
+            category (`vectorless.ids.doc_category`). When empty, derived
+            from the folder name. Override for categories where the
+            scraped slug doesn't match the folder, e.g. `PERMENAG` slugs
+            as `peraturan-menag` and `PERATURAN_MA` slugs as `perma`.
     """
 
     jenis_id: int
     folder: str
     scope: str
     parser_model: str = DEFAULT_PARSER_MODEL
+    prefix: str = ""
+
+    def doc_id_prefix(self) -> str:
+        """Return the doc_id prefix for this category."""
+        return self.prefix or self.folder.lower().replace("_", "-")
 
 
 CATEGORIES: tuple[Category, ...] = (
@@ -56,24 +66,24 @@ CATEGORIES: tuple[Category, ...] = (
     Category(40, "PERMENDAGRI", "Kementerian/Lembaga"),
     Category(42, "PMK", "Kementerian/Lembaga"),
     Category(69, "PERMENPERIN", "Kementerian/Lembaga"),
-    Category(170, "PERMENAG", "Kementerian/Lembaga"),
+    Category(170, "PERMENAG", "Kementerian/Lembaga", prefix="peraturan-menag"),
     Category(241, "PERATURAN_POLRI", "Kementerian/Lembaga"),
     Category(54, "PERATURAN_BSSN", "Kementerian/Lembaga"),
-    Category(202, "PERMENBUMN", "Kementerian/Lembaga"),
+    Category(202, "PERMENBUMN", "Kementerian/Lembaga", prefix="permen-bumn"),
     Category(67, "PERMENDAG", "Kementerian/Lembaga"),
     Category(186, "PERMENDIKBUD", "Kementerian/Lembaga"),
     Category(78, "PERATURAN_BI", "Kementerian/Lembaga"),
     Category(80, "PERATURAN_OJK", "Kementerian/Lembaga"),
-    Category(95, "PERATURAN_MA", "Kementerian/Lembaga"),
+    Category(95, "PERATURAN_MA", "Kementerian/Lembaga", prefix="perma"),
     Category(105, "PERMENAKER", "Kementerian/Lembaga"),
     Category(278, "PERMENKOMDIGI", "Kementerian/Lembaga"),
     Category(242, "PERMENDIKBUDRISTEK", "Kementerian/Lembaga"),
     Category(147, "PERMEN_ESDM", "Kementerian/Lembaga"),
-    Category(111, "PERMEN_ATRBPN", "Kementerian/Lembaga"),
+    Category(111, "PERMEN_ATRBPN", "Kementerian/Lembaga", prefix="permen-atr-kepala-bpn"),
     Category(182, "PERMENKES", "Kementerian/Lembaga"),
     Category(230, "PERATURAN_BPOM", "Kementerian/Lembaga"),
-    # Future expansion appended here, e.g.
-    #   Category(NNN, "PERMEN_LHK", "Kementerian/Lembaga", "deepseek-v4-pro"),
+    # Expansion categories (added 2026-05-07+, parser per ADR-008).
+    Category(59, "PERATURAN_KPU", "Kementerian/Lembaga", "deepseek-v4-pro"),
 )
 
 
