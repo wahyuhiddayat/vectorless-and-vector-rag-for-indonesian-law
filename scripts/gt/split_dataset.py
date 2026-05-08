@@ -164,14 +164,43 @@ def sha256_of_list(items: list[str]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def write_outputs(result: dict, seed: int, ratio: tuple[float, float, float]) -> None:
-    """Persist split files and manifest."""
+def to_jsonable(value):
+    """Convert sets to sorted lists so the record is JSON-serializable."""
+    if isinstance(value, set):
+        return sorted(value)
+    if isinstance(value, dict):
+        return {k: to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_jsonable(v) for v in value]
+    return value
+
+
+def write_jsonl_split(testset: dict, qids: list[str], path: Path) -> None:
+    """Emit one JSONL per split, full GT records with sets serialized as lists.
+
+    Powers the HF Dataset Viewer (tabular preview) for the published mirror.
+    Eval pipeline does not read these files, it consumes validated_testset.pkl
+    plus the qid lookup. Re-derived from the pickle every split run, so they
+    cannot drift from the canonical source.
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        for qid in sorted(qids):
+            item = testset[qid]
+            record = {"query_id": qid}
+            for key, value in item.items():
+                record[key] = to_jsonable(value)
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def write_outputs(testset: dict, result: dict, seed: int, ratio: tuple[float, float, float]) -> None:
+    """Persist split files, manifest, and per-split JSONL records."""
     SPLITS_DIR.mkdir(parents=True, exist_ok=True)
     for name in ("train", "val", "test"):
         path = SPLITS_DIR / f"{name}_qids.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(result[name], f, indent=2)
             f.write("\n")
+        write_jsonl_split(testset, result[name], SPLITS_DIR / f"{name}.jsonl")
 
     manifest = {
         "seed": seed,
@@ -314,8 +343,10 @@ def main() -> int:
         print("Dry run, no files written.")
         return 0
 
-    write_outputs(result, args.seed, ratio)
-    print(f"Wrote {SPLITS_DIR}/{{train,val,test}}_qids.json and split_manifest.json")
+    write_outputs(testset, result, args.seed, ratio)
+    print(f"Wrote {SPLITS_DIR}/{{train,val,test}}_qids.json")
+    print(f"Wrote {SPLITS_DIR}/{{train,val,test}}.jsonl  (HF Viewer)")
+    print(f"Wrote {SPLITS_DIR}/split_manifest.json")
     print()
     print("Next.")
     print("  python scripts/gt/split_dataset.py --verify     # confirm reproducibility")
