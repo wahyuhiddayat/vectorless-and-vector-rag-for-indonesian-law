@@ -8,13 +8,11 @@ Adding a category = one Category() entry. Removing = delete the entry.
 No other config files to touch.
 
 Parser model selection rationale.
-  - 28 fixed BPK categories (per Notes/01-corpus/categories.md) use the
-    DEFAULT_PARSER_MODEL (gpt-5), parser frozen per ADR-001.
-  - Expansion categories added after 2026-05-07 use deepseek-v4-pro,
-    validated via the bake-off in ADR-008 (verdict parity 5/6 OK with
-    gpt-5, see Notes/05-experiments/2026-05-07-deepseek-bakeoff/results.md).
-  - Cross-family rule (parser != judge) holds for both gpt-5 and
-    deepseek-v4-pro against the Gemini 2.5 Pro judge.
+  - All active BPK categories use DEFAULT_PARSER_MODEL (gpt-5).
+  - The category registry still carries parser_model so future category
+    overrides can be explicit, but no current category overrides it.
+  - Cross-family validation is preserved because the parser is OpenAI and
+    the parser judge is Vertex Gemini 2.5 Pro.
 """
 from dataclasses import dataclass
 
@@ -82,12 +80,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(111, "PERMEN_ATRBPN", "Kementerian/Lembaga", prefix="permen-atr-kepala-bpn"),
     Category(182, "PERMENKES", "Kementerian/Lembaga"),
     Category(230, "PERATURAN_BPOM", "Kementerian/Lembaga"),
-    # Expansion categories (added 2026-05-07+).
-    # Note. ADR-008 originally pinned deepseek-v4-pro for expansion based on
-    # bake-off cost+quality parity. Reverted to gpt-5 in practice: thinking-on
-    # was 14x slower per pasal, thinking-off untested on Indonesian legal text,
-    # and the absolute cost saving (~$2 for 24 docs) didn't justify the latency
-    # and methodology footnote. See ADR-009 (planned addendum).
+    # Expansion categories currently use the same parser as the fixed scope.
     Category(59, "PERATURAN_KPU", "Kementerian/Lembaga"),
     Category(106, "PERMENKOMINFO", "Kementerian/Lembaga"),
     Category(46, "PERMENKUMHAM", "Kementerian/Lembaga"),

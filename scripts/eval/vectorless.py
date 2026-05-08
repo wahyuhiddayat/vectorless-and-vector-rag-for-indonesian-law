@@ -1,4 +1,4 @@
-"""Vectorless evaluation harness.
+﻿"""Vectorless evaluation harness.
 
 Evaluates current vectorless retrieval systems against
 data/validated_testset.pkl across pasal / ayat / rincian and writes
@@ -43,7 +43,7 @@ TESTSET_FILE = REPO_ROOT / "data/validated_testset.pkl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/eval_runs"
 WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 
-# RQ1 matrix per ADR Notes/06-decisions/2026-05-04-llm-retrieval-redesign.md.
+# RQ1 matrix per ADR Notes/06-decisions/vectorless-llm-retrieval.md.
 # llm-tree is deprecated and dropped from the default SYSTEMS list. It remains
 # callable for reproducibility via the worker dispatcher (CLI --systems llm-tree).
 SYSTEMS = [

@@ -1,4 +1,4 @@
-"""Reranker stage for vector RAG. Scores first-stage candidates and reorders.
+﻿"""Reranker stage for vector RAG. Scores first-stage candidates and reorders.
 
 Two backends supported via sentence-transformers `CrossEncoder` API. Both load
 HuggingFace models locally, no API call.
@@ -12,7 +12,7 @@ Backends:
 
 The "none" reranker is a no-op pass-through, used for the R0 baseline.
 
-See Notes/06-decisions/2026-05-04-rq2-reranker-iv.md for model selection rationale.
+See Notes/06-decisions/vector-reranker-axis.md for model selection rationale.
 """
 
 from .common import _RERANKER_REGISTRY

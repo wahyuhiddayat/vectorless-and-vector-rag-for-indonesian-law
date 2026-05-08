@@ -1,7 +1,7 @@
-"""LLM tree-based retrieval for Indonesian legal QA. DEPRECATED.
+﻿"""LLM tree-based retrieval for Indonesian legal QA. DEPRECATED.
 
 Status: Replaced by `llm-agentic-doc` (`vectorless/retrieval/llm/agentic.py`)
-in the RQ1 matrix per ADR `Notes/06-decisions/2026-05-04-llm-retrieval-redesign.md`.
+in the RQ1 matrix per ADR `Notes/06-decisions/vectorless-llm-retrieval.md`.
 This module remains importable and CLI-callable for reproducibility of older
 experiment runs (notably `Notes/05-experiments/2026-04-28-uu-pilot-25q/`),
 but is no longer in the default eval `SYSTEMS` list.
@@ -88,7 +88,7 @@ def _build_tree_skeleton(nodes: list[dict], depth: int = 0) -> str:
         indent = "  " * depth
         line = f"{indent}{node['node_id']} {node['title']}"
         if node.get("summary"):
-            line += f" — {node['summary']}"
+            line += f" â€” {node['summary']}"
         lines.append(line)
         if "nodes" in node:
             lines.append(_build_tree_skeleton(node["nodes"], depth + 1))

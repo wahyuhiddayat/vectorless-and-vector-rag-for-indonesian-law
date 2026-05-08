@@ -1,4 +1,4 @@
-"""
+﻿"""
 Shared utilities for vector RAG retrieval pipelines.
 
 Contains: embedding loader, query embedding, log persistence.
@@ -31,14 +31,14 @@ RERANKER = os.environ.get("VECTOR_RERANKER", "none")
 LOG_DIR = Path("data/retrieval_logs")
 
 # First-stage candidate count fed to the reranker. Final top-k=10 returned to caller.
-# 50 chosen per Notes/06-decisions/2026-05-04-rq2-reranker-iv.md, balances recall ceiling
+# 50 chosen per Notes/06-decisions/vector-reranker-axis.md, balances recall ceiling
 # with reranker latency budget. See ADR for rationale and source citations.
 RERANKER_TOP_N = 50
 
 
 # RQ2 axis. Indonesian specialization gradient (breadth vs depth of training data).
 # All three are XLM-R or BERT-family encoders, sentence-transformers compatible,
-# Qdrant cosine, dense-only. See Notes/06-decisions/2026-05-03-embedding-model-axis.md.
+# Qdrant cosine, dense-only. See Notes/06-decisions/embedding-model-axis.md.
 _EMBEDDING_MODEL_MAP: dict[str, dict] = {
     "bge-m3": {
         # Tier 1. Broad multilingual contrastive. XLM-R-large, MIT, native 8K ctx.
@@ -68,7 +68,7 @@ _EMBEDDING_MODEL_MAP: dict[str, dict] = {
 
 
 # RQ2 reranker IV. Scoring-paradigm tier (no-rerank, encoder cross-attention, LLM pointwise).
-# See Notes/06-decisions/2026-05-04-rq2-reranker-iv.md for axis justification and model selection.
+# See Notes/06-decisions/vector-reranker-axis.md for axis justification and model selection.
 _RERANKER_REGISTRY: dict[str, dict] = {
     "none": {
         # R0. No reranker. First-stage Qdrant top-k=10 returned directly.
