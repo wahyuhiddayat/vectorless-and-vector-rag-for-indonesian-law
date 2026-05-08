@@ -254,7 +254,7 @@ python -m vectorless.retrieval.hybrid.search "Apa syarat penyadapan?" --bm25_top
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `query` | *(required)* | Legal question in Indonesian |
-| `--bm25_top_k N` | `10` | How many BM25 candidates to pass to LLM for reranking. The LLM then picks 1-3 from these |
+| `--bm25_top_k N` | `20` | How many BM25 candidates to pass to LLM for reranking |
 
 ---
 
@@ -305,7 +305,7 @@ from vectorless.retrieval.llm import search as llm
 
 strategies = {
     "bm25_flat": lambda q: bm25_flat.retrieve(q, top_k=5),
-    "hybrid": lambda q: hybrid.retrieve(q, bm25_top_k=10),
+    "hybrid": lambda q: hybrid.retrieve(q, bm25_top_k=20),
     "llm_full": lambda q: llm.retrieve(q, strategy="full"),
 }
 
