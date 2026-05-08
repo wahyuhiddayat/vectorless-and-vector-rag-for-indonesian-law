@@ -59,6 +59,28 @@ def cell_key(item: dict) -> tuple[str, str]:
     return cat, qtype
 
 
+SPLIT_NAMES = ("train", "val", "test")
+
+
+def hamilton_targets(total: int, ratio: tuple[float, float, float]) -> dict[str, int]:
+    """Return global per-split target counts via Hamilton's largest-remainder.
+
+    Floor each exact share, then distribute the leftover slots one by one to
+    the splits with the largest fractional remainder. Tie-break by SPLIT_NAMES
+    order (train > val > test) for determinism.
+    """
+    exact = {name: ratio[i] * total for i, name in enumerate(SPLIT_NAMES)}
+    floors = {name: int(exact[name]) for name in SPLIT_NAMES}
+    leftover = total - sum(floors.values())
+    fractions = {name: exact[name] - floors[name] for name in SPLIT_NAMES}
+    order = sorted(SPLIT_NAMES,
+                   key=lambda s: (-fractions[s], SPLIT_NAMES.index(s)))
+    counts = dict(floors)
+    for i in range(leftover):
+        counts[order[i]] += 1
+    return counts
+
+
 def allocate_cell(
     qids: list[str],
     seed: int,
@@ -66,84 +88,154 @@ def allocate_cell(
     qtype: str,
     ratio: tuple[float, float, float],
     rr_state: dict,
-) -> tuple[list[str], list[str], list[str]]:
-    """Allocate one (category, query_type) cell into train, val, test.
+) -> tuple[dict[str, list[str]], dict[str, float]]:
+    """Allocate one (category, query_type) cell via Hamilton's largest-remainder.
 
-    Determinism, sort qids alphabetically, then shuffle with a per-cell
-    seed derived from f"{seed}-{cat}-{qtype}". Cells with N=1 go entirely
-    to train. Cells with N=2 send the first to train and the second to
-    whichever of val or test currently has fewer queries (round-robin via
-    rr_state). Larger cells use rounded proportional allocation with a
-    guard so test never drops below 1 when N>=4.
+    Returns (allocs, fractions). allocs is {train, val, test: [qids]}. fractions
+    is the per-split fractional preference (exact - floor) used later by the
+    global rebalance pass to decide which cells donate slots.
+
+    Determinism, sort qids alphabetically, then shuffle with a per-cell seed
+    derived from f"{seed}-{cat}-{qtype}". Cell N=1 goes entirely to train. Cell
+    N=2 sends the first to train and the second to whichever of val or test has
+    fewer queries so far (round-robin via rr_state). Cells N>=3 use Hamilton,
+    floor each exact share then assign the leftover slots to splits with the
+    largest fractional remainder.
     """
     qids_sorted = sorted(qids)
     rng = random.Random(f"{seed}-{cat}-{qtype}")
     rng.shuffle(qids_sorted)
 
     n = len(qids_sorted)
+    empty_fracs = {s: 0.0 for s in SPLIT_NAMES}
     if n == 0:
-        return [], [], []
+        return {"train": [], "val": [], "test": []}, empty_fracs
     if n == 1:
-        return qids_sorted[:], [], []
+        return {"train": qids_sorted[:], "val": [], "test": []}, empty_fracs
     if n == 2:
         first = qids_sorted[:1]
         second = qids_sorted[1:]
         if rr_state["val"] <= rr_state["test"]:
             rr_state["val"] += 1
-            return first, second, []
+            return {"train": first, "val": second, "test": []}, empty_fracs
         rr_state["test"] += 1
-        return first, [], second
+        return {"train": first, "val": [], "test": second}, empty_fracs
 
-    train_p, val_p, _ = ratio
-    n_train = round(train_p * n)
-    n_val = round(val_p * n)
-    n_test = n - n_train - n_val
+    exact = {name: ratio[i] * n for i, name in enumerate(SPLIT_NAMES)}
+    floors = {name: int(exact[name]) for name in SPLIT_NAMES}
+    leftover = n - sum(floors.values())
+    fractions = {name: exact[name] - floors[name] for name in SPLIT_NAMES}
+    order = sorted(SPLIT_NAMES,
+                   key=lambda s: (-fractions[s], SPLIT_NAMES.index(s)))
+    counts = dict(floors)
+    for i in range(leftover):
+        counts[order[i]] += 1
 
-    if n_test == 0 and n >= 4:
-        n_train -= 1
-        n_test = 1
-    if n_val == 0 and n >= 4:
-        if n_train > 0:
-            n_train -= 1
-            n_val = 1
-        elif n_test > 1:
-            n_test -= 1
-            n_val = 1
+    cursor = 0
+    allocs: dict[str, list[str]] = {}
+    for name in SPLIT_NAMES:
+        allocs[name] = qids_sorted[cursor:cursor + counts[name]]
+        cursor += counts[name]
+    return allocs, fractions
 
-    train = qids_sorted[:n_train]
-    val = qids_sorted[n_train:n_train + n_val]
-    test = qids_sorted[n_train + n_val:]
-    return train, val, test
+
+def global_rebalance(per_cell: list[dict], targets: dict[str, int]) -> None:
+    """Shift slots between splits within cells until totals match targets.
+
+    per_cell is a list of {cell_key, allocs, fractions, n}. Mutates in place.
+    Each iteration picks the most over-allocated split (donor side) and the
+    most under-allocated split (recipient side), then moves one qid from a
+    donor cell. Donor preference order, cells with the largest current
+    over_split allocation first (so donating one slot does not skew the cell
+    much), then cells where over_split's fractional was lowest (the slot was
+    the cell's least-preferred), then by cell_key for deterministic tie-break.
+    Sorting by current allocation descending spreads donations across many
+    cells instead of draining a single cell repeatedly.
+    """
+    def totals() -> dict[str, int]:
+        out = {s: 0 for s in SPLIT_NAMES}
+        for entry in per_cell:
+            for s in SPLIT_NAMES:
+                out[s] += len(entry["allocs"][s])
+        return out
+
+    cur = totals()
+    safety = 1000
+    while cur != targets and safety > 0:
+        safety -= 1
+        diffs = {s: targets[s] - cur[s] for s in SPLIT_NAMES}
+        under = max(diffs, key=lambda s: diffs[s])
+        over = min(diffs, key=lambda s: diffs[s])
+        if diffs[under] <= 0 or diffs[over] >= 0:
+            break
+
+        candidates = [e for e in per_cell if len(e["allocs"][over]) > 0]
+        if not candidates:
+            raise RuntimeError(
+                f"Cannot rebalance, no cell has {over} allocation to donate."
+            )
+        candidates.sort(key=lambda e: (
+            -len(e["allocs"][over]),
+            e["fractions"][over],
+            e["cell_key"],
+        ))
+        donor = candidates[0]
+
+        qid = donor["allocs"][over].pop()
+        donor["allocs"][under].append(qid)
+        cur[over] -= 1
+        cur[under] += 1
+
+    if cur != targets:
+        raise RuntimeError(f"Rebalance failed to converge, totals={cur} targets={targets}")
 
 
 def split(testset: dict, seed: int, ratio: tuple[float, float, float]) -> dict:
     """Build the split assignment for the entire testset.
 
     Returns a dict with train, val, test qid lists plus per-cell stats.
+    Two-phase, Hamilton per cell then global rebalance to hit exact targets.
     """
     cells: dict[tuple[str, str], list[str]] = defaultdict(list)
     for qid, item in testset.items():
         cells[cell_key(item)].append(qid)
 
+    rr_state = {"val": 0, "test": 0}
+    per_cell: list[dict] = []
+    for (cat, qtype) in sorted(cells.keys()):
+        qids = cells[(cat, qtype)]
+        allocs, fractions = allocate_cell(qids, seed, cat, qtype, ratio, rr_state)
+        per_cell.append({
+            "cell_key": f"{cat}__{qtype}",
+            "category": cat,
+            "query_type": qtype,
+            "n": len(qids),
+            "allocs": allocs,
+            "fractions": fractions,
+        })
+
+    targets = hamilton_targets(sum(len(e["allocs"]["train"])
+                                    + len(e["allocs"]["val"])
+                                    + len(e["allocs"]["test"])
+                                    for e in per_cell), ratio)
+
+    global_rebalance(per_cell, targets)
+
     train_all: list[str] = []
     val_all: list[str] = []
     test_all: list[str] = []
-    rr_state = {"val": 0, "test": 0}
     cell_stats: list[dict] = []
-
-    for (cat, qtype) in sorted(cells.keys()):
-        qids = cells[(cat, qtype)]
-        tr, va, te = allocate_cell(qids, seed, cat, qtype, ratio, rr_state)
-        train_all.extend(tr)
-        val_all.extend(va)
-        test_all.extend(te)
+    for entry in per_cell:
+        train_all.extend(entry["allocs"]["train"])
+        val_all.extend(entry["allocs"]["val"])
+        test_all.extend(entry["allocs"]["test"])
         cell_stats.append({
-            "category": cat,
-            "query_type": qtype,
-            "n_total": len(qids),
-            "n_train": len(tr),
-            "n_val": len(va),
-            "n_test": len(te),
+            "category": entry["category"],
+            "query_type": entry["query_type"],
+            "n_total": entry["n"],
+            "n_train": len(entry["allocs"]["train"]),
+            "n_val": len(entry["allocs"]["val"]),
+            "n_test": len(entry["allocs"]["test"]),
         })
 
     train_all.sort()
@@ -155,6 +247,7 @@ def split(testset: dict, seed: int, ratio: tuple[float, float, float]) -> dict:
         "val": val_all,
         "test": test_all,
         "cells": cell_stats,
+        "targets": targets,
     }
 
 
@@ -239,6 +332,7 @@ def print_stats(testset: dict, result: dict) -> None:
             by_split_cat[split_name][cell_key(item)[0]] += 1
 
     total = sum(len(result[s]) for s in ("train", "val", "test"))
+    targets = result.get("targets", {})
     print()
     print("=" * 70)
     print("SPLIT STATISTICS")
@@ -247,7 +341,13 @@ def print_stats(testset: dict, result: dict) -> None:
     for split_name in ("train", "val", "test"):
         n = len(result[split_name])
         pct = 100.0 * n / total if total else 0.0
-        print(f"  {split_name:5s}  {n:4d}  ({pct:5.1f}%)")
+        target = targets.get(split_name)
+        if target is not None:
+            delta = n - target
+            delta_str = f"  target={target}  delta={delta:+d}"
+        else:
+            delta_str = ""
+        print(f"  {split_name:5s}  {n:4d}  ({pct:5.1f}%){delta_str}")
 
     print("\nBy query_type per split:")
     types = ["factual", "paraphrased", "multihop"]
