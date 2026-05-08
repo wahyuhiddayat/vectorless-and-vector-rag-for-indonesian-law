@@ -89,6 +89,8 @@ CATEGORIES: tuple[Category, ...] = (
     # and the absolute cost saving (~$2 for 24 docs) didn't justify the latency
     # and methodology footnote. See ADR-009 (planned addendum).
     Category(59, "PERATURAN_KPU", "Kementerian/Lembaga"),
+    Category(106, "PERMENKOMINFO", "Kementerian/Lembaga"),
+    Category(46, "PERMENKUMHAM", "Kementerian/Lembaga"),
 )
 
 
