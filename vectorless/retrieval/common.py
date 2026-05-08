@@ -93,6 +93,7 @@ def load_all_leaf_nodes() -> list[dict]:
                 "navigation_path": node.get("navigation_path", ""),
                 "text": node.get("text", ""),
                 "penjelasan": node.get("penjelasan"),
+                "summary": node.get("summary", ""),
             })
     return all_leaves
 

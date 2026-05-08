@@ -133,6 +133,7 @@ def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
                 "text": node["text"],
                 "navigation_path": node.get("navigation_path", ""),
                 "penjelasan": node.get("penjelasan"),
+                "summary": node.get("summary", ""),
             })
     return leaves
 
@@ -164,34 +165,48 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
                 "node_id": leaf["node_id"],
                 "title": leaf["title"],
                 "navigation_path": leaf["navigation_path"],
+                "text": leaf["text"],
+                "penjelasan": leaf.get("penjelasan"),
+                "summary": leaf.get("summary", ""),
                 "bm25_score": round(float(score), 4),
                 "snippet": snippet,
             })
     return candidates
 
 
+CANDIDATE_TEXT_CAP = 5000
+
+
 def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
     """Ask the LLM to rank all candidates from most to least relevant.
 
-    RankGPT-style full permutation generation (Sun et al. 2023, EMNLP). Caller
-    validates via `validate_llm_ranking` to drop hallucinations and append
-    missing IDs, so the final ranking always covers the full candidate set.
+    RankGPT-style full permutation generation (Sun et al. 2023, EMNLP). Each
+    candidate exposes summary plus full text and penjelasan (capped at 5000
+    chars to match agentic read budget) so the reranker has access to the
+    same content that BM25 stage 1 scored over, ensuring fair stage-1 vs
+    stage-2 comparison. Caller validates via `validate_llm_ranking` to drop
+    hallucinations and append missing IDs.
     """
     candidates_for_prompt = []
     for c in candidates:
-        candidates_for_prompt.append({
+        entry = {
             "node_id": c["node_id"],
             "title": c["title"],
             "navigation_path": c["navigation_path"],
-            "snippet": c["snippet"],
-        })
+            "summary": c.get("summary", ""),
+            "text": (c.get("text") or "")[:CANDIDATE_TEXT_CAP],
+        }
+        penjelasan = c.get("penjelasan")
+        if penjelasan and penjelasan != "Cukup jelas.":
+            entry["penjelasan"] = penjelasan[:CANDIDATE_TEXT_CAP]
+        candidates_for_prompt.append(entry)
 
     candidates_text = json.dumps(candidates_for_prompt, ensure_ascii=False, indent=2)
     n_candidates = len(candidates)
 
     prompt = f"""\
 Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari "{doc_title}".
-Setiap kandidat memiliki cuplikan teks (snippet) dari isinya.
+Setiap kandidat memiliki ringkasan (summary), isi teks (text), dan penjelasan resmi (jika ada).
 
 Pertanyaan: {query}
 
@@ -213,7 +228,7 @@ Aturan:
 - "ranking" tidak boleh ada duplikat
 - Setiap node_id harus muncul di input (tidak boleh hallucinate)
 - Urutan menentukan ranking (index 0 = paling relevan)
-- Pertimbangkan ISI snippet dan navigation_path
+- Pertimbangkan ISI text dan penjelasan, summary, dan navigation_path
 - Kembalikan HANYA JSON
 """
 

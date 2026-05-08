@@ -61,7 +61,12 @@ def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[di
 
 
 def _bm25_level_search(query: str, nodes: list[dict], top_k: int = 3) -> list[dict]:
-    """Score nodes at one level using BM25 on title and summary.
+    """Score non-leaf nodes at one tree level using BM25 on title and summary.
+
+    Used for navigation through aggregator levels (Bab, Bagian, Pasal-with-ayat).
+    These nodes do not have direct text content, so descriptors (title and
+    LLM-generated summary) are the natural representation for pruning the
+    subtree search.
 
     Args:
         query: Legal question in Indonesian.
@@ -98,12 +103,61 @@ def _bm25_level_search(query: str, nodes: list[dict], top_k: int = 3) -> list[di
     return results
 
 
+def _bm25_leaf_search(query: str, leaves: list[dict], doc_title: str,
+                      top_k: int = 3) -> list[dict]:
+    """Score leaf nodes using BM25 on the same fields as bm25-flat.
+
+    Leaf nodes are the decision-point of bm25-tree (the final ranking output).
+    To preserve decision-point fairness with bm25-flat, leaves are scored over
+    `doc_title + navigation_path + text + penjelasan`, the same fields that
+    bm25-flat uses per leaf. Excludes summary (LLM-generated, kept distinct
+    from pure lexical paradigm) and title (subset of navigation_path).
+
+    Args:
+        query: Legal question in Indonesian.
+        leaves: List of leaf nodes (terminal nodes without children).
+        doc_title: Document title (judul) from the parent doc context.
+        top_k: Number of top leaves to select.
+
+    Returns:
+        List of selected leaves with their BM25 scores.
+    """
+    if not leaves:
+        return []
+
+    corpus = []
+    for leaf in leaves:
+        combined = doc_title + " " + leaf.get("navigation_path", "") + " " + leaf.get("text", "")
+        if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
+            combined += " " + leaf["penjelasan"]
+        corpus.append(tokenize(combined))
+
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(tokenize(query))
+
+    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    results = []
+    for idx, score in ranked[:top_k]:
+        leaf = leaves[idx]
+        results.append({
+            "node_id": leaf["node_id"],
+            "title": leaf.get("title", ""),
+            "summary": leaf.get("summary", ""),
+            "bm25_score": round(float(score), 4),
+            "has_children": False,
+            "_node_ref": leaf,
+        })
+
+    return results
+
+
 def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
                 verbose: bool = True) -> dict:
     """Navigate the document tree level-by-level using BM25.
 
-    At each level, BM25 scores nodes by title+summary and selects top-k.
-    Continues drilling down until reaching leaf nodes.
+    Non-leaf levels score by title+summary (descriptors of subtree). Leaf
+    level scores by doc_title+navigation_path+text+penjelasan, mirroring
+    bm25-flat per-leaf scoring for decision-point fairness.
 
     Args:
         query: Legal question in Indonesian.
@@ -124,7 +178,13 @@ def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
     round_num = 1
 
     while round_num <= max_rounds:
-        selected = _bm25_level_search(query, current_nodes, top_k=top_k_per_level)
+        all_leaves = all(not (n.get("nodes")) for n in current_nodes)
+        if all_leaves:
+            selected = _bm25_leaf_search(query, current_nodes, doc_title,
+                                         top_k=top_k_per_level)
+        else:
+            selected = _bm25_level_search(query, current_nodes,
+                                          top_k=top_k_per_level)
 
         if not selected:
             break
