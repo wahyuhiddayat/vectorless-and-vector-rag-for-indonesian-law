@@ -80,6 +80,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="Comma-separated query types (factual, paraphrased, multihop)")
     ap.add_argument("--per-type-limit", type=int, default=None,
                     help="Stratified sample, pick N items per query_type")
+    ap.add_argument("--split", choices=["train", "val", "test"], default=None,
+                    help="Restrict to one of train, val, test (data/splits/). "
+                         "Test split requires EVAL_ALLOW_TEST=1.")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR),
                     help="Base directory for eval runs")
     ap.add_argument("--worker-timeout-s", type=int, default=PROCESS_TIMEOUT_S,
@@ -135,6 +138,7 @@ def main() -> int:
     selected_queries = eval_io.select_queries(
         testset, args.doc_id, args.query_limit, args.random_seed,
         query_types=qtypes, per_type_limit=args.per_type_limit,
+        split=args.split,
     )
     if not selected_queries:
         raise SystemExit("No queries matched the requested filters.")
@@ -166,6 +170,7 @@ def main() -> int:
         query_limit=args.query_limit,
         label=label,
         run_kind="vectorless",
+        split=args.split,
     )
 
     runner.preflight()

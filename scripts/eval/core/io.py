@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import os
 import pickle
 import re
 import shutil
 from pathlib import Path
+
+
+SPLITS_DIR = Path("data/splits")
+TEST_SEAL_ENV = "EVAL_ALLOW_TEST"
 
 
 # ----------------------------------------------------------------------
@@ -43,6 +49,25 @@ def load_testset(path: Path) -> dict[str, dict]:
         return pickle.load(f)
 
 
+def load_split_qids(split: str, splits_dir: Path | None = None) -> list[str]:
+    """Read the qid list for one of train, val, test from data/splits/."""
+    base = splits_dir if splits_dir is not None else SPLITS_DIR
+    path = base / f"{split}_qids.json"
+    if not path.exists():
+        raise SystemExit(
+            f"Split file not found, {path}. Run scripts/gt/split_dataset.py first."
+        )
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def split_fingerprint(split: str, splits_dir: Path | None = None) -> str:
+    """Sha256 of the qid list, mirroring the manifest format."""
+    qids = load_split_qids(split, splits_dir)
+    payload = "\n".join(sorted(qids)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def select_queries(
     testset: dict[str, dict],
     doc_id: str | None,
@@ -50,15 +75,28 @@ def select_queries(
     random_seed: int | None = None,
     query_types: list[str] | None = None,
     per_type_limit: int | None = None,
+    split: str | None = None,
+    splits_dir: Path | None = None,
 ) -> list[tuple[str, dict]]:
     """Select a query subset for evaluation.
 
-    Filtering precedence, doc_id -> query_types -> per_type_limit -> query_limit.
-    per_type_limit picks N items per query_type (stratified). When combined
-    with random_seed the selection within each type is sampled rather than
-    head-of-list.
+    Filtering precedence, split -> doc_id -> query_types -> per_type_limit -> query_limit.
+    The split filter reads data/splits/<split>_qids.json. Test split is sealed,
+    callers must set EVAL_ALLOW_TEST=1 to opt in. per_type_limit picks N items
+    per query_type (stratified). When combined with random_seed the selection
+    within each type is sampled rather than head-of-list.
     """
     items = sorted(testset.items(), key=lambda kv: kv[0])
+    if split:
+        if split not in {"train", "val", "test"}:
+            raise SystemExit(f"Unknown split, {split}. Choose train, val, or test.")
+        if split == "test" and os.environ.get(TEST_SEAL_ENV) != "1":
+            raise SystemExit(
+                "Test split is sealed. Set EVAL_ALLOW_TEST=1 to confirm "
+                "intentional final-report usage."
+            )
+        keep = set(load_split_qids(split, splits_dir))
+        items = [(qid, item) for qid, item in items if qid in keep]
     if doc_id:
         items = [(qid, item) for qid, item in items if item.get("gold_doc_id") == doc_id]
     if query_types:

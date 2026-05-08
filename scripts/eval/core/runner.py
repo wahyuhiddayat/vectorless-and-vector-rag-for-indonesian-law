@@ -171,6 +171,7 @@ class EvalRunner:
         qdrant_path: str | None = None,
         qdrant_url: str | None = None,
         run_kind: str = "vectorless",
+        split: str | None = None,
     ):
         self.repo_root = repo_root
         self.worker_script = worker_script
@@ -196,6 +197,7 @@ class EvalRunner:
         self.qdrant_path = qdrant_path
         self.qdrant_url = qdrant_url
         self.run_kind = run_kind
+        self.split = split
 
         self.logger = ProgressLogger(run_dir / "progress.log")
         self.started_at = datetime.now()
@@ -205,12 +207,15 @@ class EvalRunner:
 
     def _build_config(self) -> dict:
         """Snapshot the run configuration. Used for both write and resume diff."""
+        split_fp = eval_io.split_fingerprint(self.split) if self.split else None
         return {
             "run_kind": self.run_kind,
             "label": self.label,
             "started_at": self.started_at.isoformat(timespec="seconds"),
             "testset_file": str(self.testset_file.relative_to(self.repo_root)),
             "testset_fingerprint": gt_fingerprint(self.testset_file),
+            "split": self.split,
+            "split_fingerprint": split_fp,
             "systems": self.systems,
             "granularities": self.granularities,
             "top_k": self.top_k,
@@ -241,6 +246,7 @@ class EvalRunner:
         keys = (
             "run_kind", "testset_file", "systems", "granularities",
             "top_k", "cutoffs", "doc_id", "query_limit", "random_seed",
+            "split", "split_fingerprint",
         )
         return {k: cfg.get(k) for k in keys}
 

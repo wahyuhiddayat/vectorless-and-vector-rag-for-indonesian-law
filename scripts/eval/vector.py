@@ -191,12 +191,15 @@ def run_one_query_with_retry(
 
 def build_config(args, label: str, selected_queries: list, cutoffs: list[int]) -> dict:
     """Snapshot the run configuration for write + resume diff."""
+    split_fp = eval_io.split_fingerprint(args.split) if args.split else None
     return {
         "run_kind": "vector",
         "label": label,
         "started_at": datetime.now().isoformat(timespec="seconds"),
         "testset_file": str(TESTSET_FILE.relative_to(REPO_ROOT)),
         "testset_fingerprint": gt_fingerprint(TESTSET_FILE),
+        "split": args.split,
+        "split_fingerprint": split_fp,
         "systems": args.systems_list,
         "granularities": args.granularities_list,
         "embedding_models": args.embedding_models_list,
@@ -224,7 +227,7 @@ def build_config(args, label: str, selected_queries: list, cutoffs: list[int]) -
 _RESUME_SIGNATURE_KEYS = (
     "run_kind", "testset_file", "systems", "granularities",
     "embedding_models", "rerankers", "top_k", "cutoffs", "doc_id",
-    "query_limit", "random_seed",
+    "query_limit", "random_seed", "split", "split_fingerprint",
 )
 
 
@@ -277,6 +280,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="Comma-separated query types (factual, paraphrased, multihop)")
     ap.add_argument("--per-type-limit", type=int, default=None,
                     help="Stratified sample, pick N items per query_type")
+    ap.add_argument("--split", choices=["train", "val", "test"], default=None,
+                    help="Restrict to one of train, val, test (data/splits/). "
+                         "Test split requires EVAL_ALLOW_TEST=1.")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     ap.add_argument("--worker-timeout-s", type=int, default=PROCESS_TIMEOUT_S)
     ap.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
@@ -325,6 +331,7 @@ def main() -> int:  # noqa: C901
     selected_queries = eval_io.select_queries(
         testset, args.doc_id, args.query_limit, args.random_seed,
         query_types=qtypes, per_type_limit=args.per_type_limit,
+        split=args.split,
     )
     if not selected_queries:
         raise SystemExit("No queries matched the requested filters.")
