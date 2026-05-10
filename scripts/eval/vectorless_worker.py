@@ -71,12 +71,6 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         # Sampling 100 of >1900 leaves makes recall near-zero by construction.
         return module.retrieve(query, max_candidates=10**9, verbose=False)
 
-    if system == "llm-tree":
-        from vectorless.retrieval.llm import tree as module
-
-        module.save_log = lambda _result: None
-        return module.retrieve(query, verbose=False)
-
     if system == "llm-agentic-doc":
         from vectorless.retrieval.llm import agentic as module
 
@@ -100,8 +94,7 @@ def main() -> int:
     ap.add_argument("--system", required=True, choices=[
         "bm25-flat", "bm25-tree",
         "hybrid-flat", "hybrid-tree",
-        "llm-flat", "llm-tree",
-        "llm-agentic-doc",
+        "llm-flat", "llm-agentic-doc",
     ])
     ap.add_argument("--granularity", required=True, choices=["pasal", "ayat", "rincian"])
     ap.add_argument("--query", required=True)

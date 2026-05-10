@@ -4,8 +4,7 @@ The LLM acts as an agent. The full document outline (titles and summaries
 without leaf text) is exposed in the prompt context so the agent always
 sees the complete map of the active document. Each step the agent picks
 one of inspect_doc, expand, read, or submit, observes the result, then
-plans the next step. This contrasts with llm-tree which forces a fixed
-level-by-level drill.
+plans the next step.
 
 doc_search picks one document from the catalog first, then the agent
 navigates inside that document. This mirrors PageIndex, which scopes its
@@ -28,7 +27,44 @@ from ..common import (
     load_catalog, load_doc, find_node, extract_nodes, save_log,
     raptor_finalize, tokenize,
 )
-from .tree import doc_search
+
+
+def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
+    """Ask the LLM to pick relevant documents from the catalog."""
+    docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
+
+    prompt = f"""\
+Kamu diberi daftar Undang-Undang Indonesia beserta metadata-nya.
+Pilih UU yang relevan untuk menjawab pertanyaan hukum berikut.
+
+Pertanyaan: {query}
+
+Daftar UU:
+{docs_text}
+
+Balas dalam format JSON:
+{{
+  "thinking": "<penalaran singkat mengapa UU tersebut relevan>",
+  "doc_ids": ["doc_id_1", "doc_id_2"]
+}}
+
+Aturan:
+- Pilih hanya UU yang benar-benar relevan (biasanya 1-2 saja)
+- Jika tidak ada yang relevan, kembalikan doc_ids kosong: []
+- Perhatikan bidang, subjek, dan materi_pokok untuk menentukan relevansi
+- Kembalikan HANYA JSON, tanpa teks lain
+"""
+
+    result = llm_call(prompt)
+
+    valid_ids = {d["doc_id"] for d in catalog}
+    result["doc_ids"] = [doc_id for doc_id in result.get("doc_ids", []) if doc_id in valid_ids]
+
+    if verbose:
+        print(f"\n[Doc Search] Selected: {result.get('doc_ids', [])}")
+        print(f"  Reasoning: {result.get('thinking', '')[:200]}")
+
+    return result
 
 
 MAX_ACTIONS = 25

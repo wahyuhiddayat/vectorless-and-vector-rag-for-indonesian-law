@@ -80,7 +80,6 @@ CATEGORIES: tuple[Category, ...] = (
     Category(111, "PERMEN_ATRBPN", "Kementerian/Lembaga", prefix="permen-atr-kepala-bpn"),
     Category(182, "PERMENKES", "Kementerian/Lembaga"),
     Category(230, "PERATURAN_BPOM", "Kementerian/Lembaga"),
-    # Expansion categories currently use the same parser as the fixed scope.
     Category(59, "PERATURAN_KPU", "Kementerian/Lembaga"),
     Category(106, "PERMENKOMINFO", "Kementerian/Lembaga"),
     Category(46, "PERMENKUMHAM", "Kementerian/Lembaga"),
