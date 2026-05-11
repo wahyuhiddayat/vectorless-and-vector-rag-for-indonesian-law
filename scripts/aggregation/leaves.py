@@ -7,9 +7,9 @@ scripts/gt/select_gt_docs.py:count_leaves so numbers stay comparable
 across the GT pipeline and corpus reporting.
 
 Usage:
-    python scripts/parser/count_leaves.py
-    python scripts/parser/count_leaves.py --granularity pasal
-    python scripts/parser/count_leaves.py --json-only
+    python scripts/aggregation/leaves.py
+    python scripts/aggregation/leaves.py --granularity pasal
+    python scripts/aggregation/leaves.py --json-only
 """
 import argparse
 import json

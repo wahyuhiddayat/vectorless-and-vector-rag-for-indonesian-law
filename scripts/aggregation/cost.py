@@ -16,9 +16,9 @@ A top-level "totals" block sums across all three granularities so the
 overall corpus indexing cost can be quoted directly.
 
 Usage:
-    python scripts/parser/aggregate_cost.py
-    python scripts/parser/aggregate_cost.py --granularity pasal
-    python scripts/parser/aggregate_cost.py --json-only
+    python scripts/aggregation/cost.py
+    python scripts/aggregation/cost.py --granularity pasal
+    python scripts/aggregation/cost.py --json-only
 """
 import argparse
 import json

@@ -15,9 +15,9 @@ Errored queries (`worker_ok=false`) are counted but excluded from
 cost rollups, since their token and elapsed counts are unreliable.
 
 Usage:
-    python scripts/parser/aggregate_retrieval_cost.py
-    python scripts/parser/aggregate_retrieval_cost.py --run run04_vectorless_25q
-    python scripts/parser/aggregate_retrieval_cost.py --json-only
+    python scripts/aggregation/retrieval_cost.py
+    python scripts/aggregation/retrieval_cost.py --run run04_vectorless_25q
+    python scripts/aggregation/retrieval_cost.py --json-only
 """
 import argparse
 import json

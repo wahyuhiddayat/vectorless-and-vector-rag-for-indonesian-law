@@ -1,16 +1,17 @@
-"""Aggregate per-category audit log counts from Notes/01-corpus/audit/.
+"""Aggregate per-category audit log counts from the NotebookLM audit notes.
 
-Parses every audit markdown file under the audit directory, counts the
-LAYAK and TIDAK LAYAK rows in each Markdown table, and writes the result
-to data/audit_aggregate.json plus a printed summary table.
+Parses every audit markdown file under Notes/Internal/Audit Corpus NotebookLM
+(grouped by Pusat, Daerah, Kementerian Lembaga), counts the LAYAK and TIDAK
+LAYAK rows in each Markdown table, and writes the result to
+data/audit_aggregate.json plus a printed summary table.
 
-Each audit file may contain multiple tables (one per BPK pagination
-batch). All tables in a file are summed into a single per-category total.
+Each audit file may contain multiple tables (one per BPK pagination batch).
+All tables in a file are summed into a single per-category total.
 
 Usage:
-    python scripts/parser/aggregate_audit.py
-    python scripts/parser/aggregate_audit.py --audit-dir ../Notes/01-corpus/audit
-    python scripts/parser/aggregate_audit.py --json-only
+    python scripts/aggregation/audit.py
+    python scripts/aggregation/audit.py --audit-dir "../Notes/Internal/Audit Corpus NotebookLM"
+    python scripts/aggregation/audit.py --json-only
 """
 import argparse
 import json
@@ -22,18 +23,18 @@ from pathlib import Path
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_AUDIT_DIR = Path("../Notes/01-corpus/audit")
+DEFAULT_AUDIT_DIR = Path("../Notes/Internal/Audit Corpus NotebookLM")
 DEFAULT_OUTPUT = Path("data/audit_aggregate.json")
-SCOPE_FOLDERS = ("pusat", "daerah", "kementerian-lembaga")
+SCOPE_FOLDERS = ("Pusat", "Daerah", "Kementerian Lembaga")
 
 
 def normalize_layak(cell: str) -> str | None:
     """Map a Layak? cell value to one of LAYAK, TIDAK_LAYAK, or None.
 
     Accepts the variations seen across audit files, including bolded
-    cells, "Ya"/"Tidak", "LAYAK"/"TIDAK LAYAK", and minor whitespace.
-    Returns None for cells that cannot be classified, so the caller
-    can flag them.
+    cells, Ya, Tidak, LAYAK, TIDAK LAYAK, and minor whitespace. Returns
+    None for cells that cannot be classified, so the caller can flag
+    them as unknown rows for manual inspection.
     """
     s = re.sub(r"[*_`]", "", cell or "").strip().lower()
     if not s:
@@ -50,8 +51,8 @@ def parse_audit_file(path: Path) -> dict:
 
     A row is a Markdown table line whose Layak column resolves via
     normalize_layak. Multiple tables in the same file are summed. Rows
-    with an unrecognised Layak cell are returned in the unknown list
-    so they can be inspected manually.
+    with an unrecognised Layak cell are returned in the unknown list so
+    they can be inspected manually.
     """
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -72,7 +73,7 @@ def parse_audit_file(path: Path) -> dict:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
 
         if not in_table:
-            # First row of a new table: must be the header row.
+            # First row of a new table must be the header.
             lowered = [c.lower() for c in cells]
             if any("layak" in c for c in lowered):
                 layak_idx = next(i for i, c in enumerate(lowered) if "layak" in c)
