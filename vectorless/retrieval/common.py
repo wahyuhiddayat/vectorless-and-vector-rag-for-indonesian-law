@@ -16,20 +16,6 @@ DATA_INDEX = Path(os.environ.get("DATA_INDEX", "data/index_pasal"))
 LOG_DIR = Path("data/retrieval_logs")
 
 
-# Indonesian stopwords. Scope: KWIC anchor selection only (see _content_tokens
-# below). NOT applied to BM25 tokenization. Faisal et al. (2024, IJAIN 10(3))
-# Table 5 reports stopword removal decreases BM25 EM on Indonesian legal QA
-# from 29.73 to 26.49 percent. BM25 IDF naturally downweights common terms.
-STOPWORDS = {
-    "dan", "atau", "yang", "di", "ke", "dari", "untuk", "dengan",
-    "pada", "dalam", "ini", "itu", "adalah", "oleh", "sebagai",
-    "tidak", "akan", "telah", "dapat", "harus", "setiap", "suatu",
-    "antara", "atas", "secara", "serta", "bahwa", "tentang",
-    "berdasarkan", "sebagaimana", "dimaksud", "tersebut",
-    "ayat", "huruf", "angka",
-}
-
-
 def tokenize(text: str) -> list[str]:
     """Lowercase, regex split on [a-z0-9]+, drop length-1 tokens.
 
@@ -38,16 +24,6 @@ def tokenize(text: str) -> list[str]:
     legal QA. BM25 IDF naturally downweights common terms.
     """
     return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 1]
-
-
-def _content_tokens(text: str) -> list[str]:
-    """Tokenize and drop STOPWORDS. Used by KWIC snippet anchor selection.
-
-    Stopword removal helps here because we need a content word to anchor
-    the snippet window, and anchoring on a particle (e.g. "yang") would
-    almost always match position 0 of the leaf text.
-    """
-    return [t for t in tokenize(text) if t not in STOPWORDS]
 
 
 def load_catalog() -> list[dict]:
@@ -96,28 +72,6 @@ def load_all_leaf_nodes() -> list[dict]:
                 "summary": node.get("summary", ""),
             })
     return all_leaves
-
-
-def extract_kwic_snippet(text: str, query: str, window: int = 200) -> str:
-    """Window of text around the first matching query token; falls back to text head."""
-    text_lower = text.lower()
-    best_pos = -1
-    for token in _content_tokens(query):
-        pos = text_lower.find(token)
-        if pos != -1 and (best_pos == -1 or pos < best_pos):
-            best_pos = pos
-
-    if best_pos == -1:
-        return text[: window * 2]
-
-    start = max(0, best_pos - window)
-    end = min(len(text), best_pos + window)
-    snippet = text[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet += "..."
-    return snippet
 
 
 def find_node(nodes: list[dict], node_id: str) -> dict | None:

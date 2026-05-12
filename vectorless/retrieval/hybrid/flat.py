@@ -4,7 +4,7 @@ BM25 global search across all leaf nodes, followed by LLM reranking.
 No tree structure is used. This is the flat variant of hybrid retrieval.
 
 Stage 1: BM25 search across ALL leaf nodes (same corpus as bm25-flat).
-Stage 2: LLM reranks top-K BM25 candidates using KWIC text snippets.
+Stage 2: LLM reranks top-K BM25 candidates using full leaf text (capped at 5000 chars).
 
 Unlike the tree-based hybrid strategy that navigates within a selected doc,
 this variant searches the full leaf node corpus directly, eliminating the
@@ -23,14 +23,14 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, load_all_leaf_nodes, extract_kwic_snippet, save_log,
+    tokenize, load_all_leaf_nodes, save_log,
     validate_llm_ranking,
 )
 
 
 def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
                          verbose: bool = True) -> list[dict]:
-    """Return BM25-ranked leaf candidates with KWIC snippets."""
+    """Return BM25-ranked leaf candidates."""
     corpus = []
     for leaf in leaves:
         enriched = leaf["doc_title"] + " " + leaf["navigation_path"] + " " + leaf["text"]
@@ -47,7 +47,6 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
         if score <= 0:
             continue
         leaf = leaves[idx]
-        snippet = extract_kwic_snippet(leaf["text"], query)
         candidates.append({
             "doc_id": leaf["doc_id"],
             "doc_title": leaf["doc_title"],
@@ -58,7 +57,6 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
             "penjelasan": leaf.get("penjelasan"),
             "summary": leaf.get("summary", ""),
             "bm25_score": round(float(score), 4),
-            "snippet": snippet,
         })
 
     if verbose:

@@ -26,7 +26,7 @@ from rank_bm25 import BM25Okapi
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     tokenize, load_catalog, load_doc, find_node, extract_nodes,
-    extract_kwic_snippet, save_log, validate_llm_ranking, DATA_INDEX,
+    save_log, validate_llm_ranking, DATA_INDEX,
 )
 
 
@@ -160,7 +160,6 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
     for idx, score in ranked[:top_k]:
         if score > 0:
             leaf = leaves[idx]
-            snippet = extract_kwic_snippet(leaf["text"], query)
             candidates.append({
                 "node_id": leaf["node_id"],
                 "title": leaf["title"],
@@ -169,7 +168,6 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
                 "penjelasan": leaf.get("penjelasan"),
                 "summary": leaf.get("summary", ""),
                 "bm25_score": round(float(score), 4),
-                "snippet": snippet,
             })
     return candidates
 
