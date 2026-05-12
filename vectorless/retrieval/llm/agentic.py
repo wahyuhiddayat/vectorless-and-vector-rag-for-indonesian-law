@@ -24,7 +24,7 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    load_catalog, load_doc, find_node, extract_nodes, save_log,
+    load_catalog, load_doc, find_node, save_log,
     raptor_finalize, tokenize,
 )
 
@@ -292,17 +292,29 @@ def _collect_doc_leaf_ids(doc: dict) -> list[dict]:
                     "title": n.get("title", ""),
                     "text": n.get("text", ""),
                     "navigation_path": n.get("navigation_path", ""),
+                    "penjelasan": n.get("penjelasan"),
                 })
 
     _walk(doc.get("structure") or [])
     return leaves
 
 
-def _bm25_rank_leaves(query: str, leaves: list[dict]) -> list[str]:
-    """BM25-rank a doc's leaves against the query. Returns leaf node_ids."""
+def _bm25_rank_leaves(query: str, leaves: list[dict], doc_title: str = "") -> list[str]:
+    """BM25-rank a doc's leaves against the query. Returns leaf node_ids.
+
+    Uses the same enriched corpus as bm25-flat (doc_title + navigation_path +
+    text + penjelasan) so the RAPTOR fallback produces rankings comparable to
+    bm25-flat. Without this alignment, agentic's fallback would be a weaker
+    BM25 than bm25-flat and bias the comparison.
+    """
     if not leaves:
         return []
-    corpus = [tokenize(leaf["text"]) for leaf in leaves]
+    corpus = []
+    for leaf in leaves:
+        enriched = doc_title + " " + leaf.get("navigation_path", "") + " " + leaf.get("text", "")
+        if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
+            enriched += " " + leaf["penjelasan"]
+        corpus.append(tokenize(enriched))
     bm25 = BM25Okapi(corpus)
     scores = bm25.get_scores(tokenize(query))
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
@@ -502,7 +514,7 @@ def retrieve(query: str,
     submitted_ids = [s["node_id"] for s in selected]
     visited_ids = _collect_visited_node_ids(scratchpad)
     doc_leaves = _collect_doc_leaf_ids(primary_doc)
-    bm25_fallback_ids = _bm25_rank_leaves(query, doc_leaves)
+    bm25_fallback_ids = _bm25_rank_leaves(query, doc_leaves, doc_title=primary_doc_title)
     final_ids, slot_labels = raptor_finalize(
         submitted_ids=submitted_ids,
         visited_ids=visited_ids,
@@ -521,7 +533,11 @@ def retrieve(query: str,
                 "submitted": submitted,
                 "scratchpad": scratchpad,
             },
-            "error": "Agent did not select any valid node and BM25 fallback returned no leaves",
+            "error": (
+                f"Agent submitted no valid node and BM25 fallback returned no leaves "
+                f"(doc_leaves={len(doc_leaves)}, submitted={len(submitted_ids)}, "
+                f"visited={len(visited_ids)})"
+            ),
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
                         "step_metrics": timings},
         }

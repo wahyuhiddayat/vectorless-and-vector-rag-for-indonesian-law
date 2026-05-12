@@ -30,8 +30,14 @@ from ..common import (
 )
 
 
-def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[dict]:
-    """Rank catalog entries with BM25 over the metadata fields."""
+def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
+    """Rank catalog entries with BM25 over the metadata fields.
+
+    Returns a single doc by default because the downstream pipeline picks
+    `doc_ids[0]` from the merged (LLM picks, BM25 picks) list. LLM picks
+    take precedence; BM25 only matters as a fallback when the LLM returns
+    no docs. A wider BM25 top_k would be dead code under that merge rule.
+    """
     corpus = []
     for doc in catalog:
         combined = " ".join([

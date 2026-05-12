@@ -48,7 +48,7 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         from vectorless.retrieval.bm25 import tree as module
 
         module.save_log = lambda _result: None
-        return module.retrieve(query, verbose=False)
+        return module.retrieve(query, top_k=top_k, verbose=False)
 
     if system == "hybrid-flat":
         from vectorless.retrieval.hybrid import flat as module

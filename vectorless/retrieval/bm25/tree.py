@@ -10,7 +10,7 @@ tree structure for navigation, unlike LLM-based approaches.
 
 Usage:
     python -m vectorless.retrieval.bm25.tree "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.bm25.tree "Apa syarat penyadapan?" --top_k_per_level 3
+    python -m vectorless.retrieval.bm25.tree "Apa syarat penyadapan?" --top_k_per_level 3 --top_k 10
 """
 
 import argparse
@@ -152,7 +152,7 @@ def _bm25_leaf_search(query: str, leaves: list[dict], doc_title: str,
 
 
 def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
-                verbose: bool = True) -> dict:
+                top_k: int = 10, verbose: bool = True) -> dict:
     """Navigate the document tree level-by-level using BM25.
 
     Non-leaf levels score by title+summary (descriptors of subtree). Leaf
@@ -162,7 +162,11 @@ def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
     Args:
         query: Legal question in Indonesian.
         doc: Loaded document dict with structure field.
-        top_k_per_level: Max nodes to select at each level.
+        top_k_per_level: Beam width during traversal (how many nodes to
+            drill into at each non-leaf level).
+        top_k: Final number of leaves to return at the leaf level.
+            Separate from top_k_per_level so the beam can stay narrow
+            (paradigm choice) while the output matches the eval cutoff.
         verbose: Print progress.
 
     Returns:
@@ -181,7 +185,7 @@ def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
         all_leaves = all(not (n.get("nodes")) for n in current_nodes)
         if all_leaves:
             selected = _bm25_leaf_search(query, current_nodes, doc_title,
-                                         top_k=top_k_per_level)
+                                         top_k=top_k)
         else:
             selected = _bm25_level_search(query, current_nodes,
                                           top_k=top_k_per_level)
@@ -226,7 +230,8 @@ def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
     return {"steps": steps, "node_ids": current_ids}
 
 
-def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict:
+def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
+             verbose: bool = True) -> dict:
     """Full BM25 tree retrieval pipeline.
 
     1. BM25 doc search to select document.
@@ -235,7 +240,8 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
 
     Args:
         query: Legal question in Indonesian.
-        top_k_per_level: Max nodes to select at each tree level.
+        top_k_per_level: Beam width during traversal (paradigm choice).
+        top_k: Final number of leaves to return (matches eval cutoff).
         verbose: Print progress.
 
     Returns:
@@ -248,7 +254,7 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
     if verbose:
         print(f"{'='*60}")
         print(f"Query: {query}")
-        print(f"Strategy: bm25-tree (top_k_per_level={top_k_per_level})")
+        print(f"Strategy: bm25-tree (top_k_per_level={top_k_per_level}, top_k={top_k})")
         print(f"{'='*60}")
 
     snap = snapshot_counters()
@@ -274,7 +280,7 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
     doc = load_doc(doc_id)
 
     tree_result = tree_search(query, doc, top_k_per_level=top_k_per_level,
-                              verbose=verbose)
+                              top_k=top_k, verbose=verbose)
     node_ids = tree_result.get("node_ids", [])
     steps["tree_search"] = step_metrics(t_step, snap)
 
@@ -326,10 +332,13 @@ def main():
         description="BM25 tree (hierarchical) retrieval for Indonesian legal QA")
     ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--top_k_per_level", type=int, default=3,
-                    help="Max nodes to select at each tree level (default: 3)")
+                    help="Beam width during traversal (default: 3)")
+    ap.add_argument("--top_k", type=int, default=10,
+                    help="Final number of leaves returned (default: 10)")
     args = ap.parse_args()
 
-    result = retrieve(args.query, top_k_per_level=args.top_k_per_level)
+    result = retrieve(args.query, top_k_per_level=args.top_k_per_level,
+                      top_k=args.top_k)
     print(f"\n{'-'*60}")
     print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
