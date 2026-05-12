@@ -153,81 +153,120 @@ def _bm25_leaf_search(query: str, leaves: list[dict], doc_title: str,
 
 def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
                 top_k: int = 10, verbose: bool = True) -> dict:
-    """Navigate the document tree level-by-level using BM25.
+    """Navigate the document tree using BM25 beam search; rank leaves at the end.
 
-    Non-leaf levels score by title+summary (descriptors of subtree). Leaf
-    level scores by doc_title+navigation_path+text+penjelasan, mirroring
-    bm25-flat per-leaf scoring for decision-point fairness.
+    Two-phase design:
+      1. Beam navigation. At each non-leaf level, BM25 scores nodes by
+         title+summary and selects top `top_k_per_level` to drill into.
+         Any leaf encountered at a beam level is added to the candidate
+         pool (preserved across iterations, not discarded when the loop
+         continues to deeper levels).
+      2. Final ranking. After the beam exits (all reached, no children
+         left, or max_rounds hit), BM25 re-scores the full candidate pool
+         on doc_title+navigation_path+text+penjelasan (identical to
+         bm25-flat for decision-point fairness) and returns top `top_k`.
+
+    The pool accumulator avoids the earlier bug where leaves selected
+    at mixed-depth intermediate levels were dropped when the iteration
+    continued. With heterogeneous legal-document trees (some Bab skip
+    Bagian directly to Pasal), this preserved every leaf the beam
+    deemed promising.
 
     Args:
         query: Legal question in Indonesian.
         doc: Loaded document dict with structure field.
-        top_k_per_level: Beam width during traversal (how many nodes to
-            drill into at each non-leaf level).
-        top_k: Final number of leaves to return at the leaf level.
-            Separate from top_k_per_level so the beam can stay narrow
-            (paradigm choice) while the output matches the eval cutoff.
+        top_k_per_level: Beam width during traversal.
+        top_k: Final number of leaves to return after pool re-ranking.
         verbose: Print progress.
 
     Returns:
-        Dict with steps (navigation trace) and node_ids (final leaf nodes).
+        Dict with steps (navigation trace), node_ids (final ranked leaves),
+        and pool_size (number of leaves the beam reached, for diagnostics).
     """
     structure = doc["structure"]
     doc_title = doc.get("judul", "")
     steps = []
     max_rounds = 8
 
+    candidate_pool: list[dict] = []
+    seen_leaf_ids: set[str] = set()
+
+    def _add_to_pool(leaves_to_add):
+        for leaf in leaves_to_add:
+            lid = leaf.get("node_id", "")
+            if lid and lid not in seen_leaf_ids:
+                candidate_pool.append(leaf)
+                seen_leaf_ids.add(lid)
+
     current_nodes = structure
-    current_ids = []
     round_num = 1
 
     while round_num <= max_rounds:
         all_leaves = all(not (n.get("nodes")) for n in current_nodes)
-        if all_leaves:
-            selected = _bm25_leaf_search(query, current_nodes, doc_title,
-                                         top_k=top_k)
-        else:
-            selected = _bm25_level_search(query, current_nodes,
-                                          top_k=top_k_per_level)
 
+        if all_leaves:
+            _add_to_pool(current_nodes)
+            steps.append({
+                "round": round_num,
+                "level": f"level-{round_num}",
+                "all_leaves": True,
+                "options_shown": [n.get("title", "") for n in current_nodes],
+                "added_to_pool": [n.get("node_id", "") for n in current_nodes],
+            })
+            if verbose:
+                print(f"\n[BM25 Tree - Round {round_num}] All-leaves level reached; "
+                      f"added {len(current_nodes)} leaves to candidate pool.")
+            break
+
+        selected = _bm25_level_search(query, current_nodes,
+                                      top_k=top_k_per_level)
         if not selected:
             break
 
         steps.append({
             "round": round_num,
             "level": f"level-{round_num}",
+            "all_leaves": False,
             "options_shown": [n.get("title", "") for n in current_nodes],
             "selected": [s["node_id"] for s in selected],
             "scores": {s["node_id"]: s["bm25_score"] for s in selected},
         })
 
         if verbose:
-            print(f"\n[BM25 Tree - Round {round_num}] Selected:")
+            print(f"\n[BM25 Tree - Round {round_num}] Beam selected:")
             for s in selected:
                 print(f"  {s['node_id']} {s['title']} (BM25: {s['bm25_score']:.4f})")
 
-        final_ids = []
         need_drill = []
-
         for s in selected:
             node_ref = s["_node_ref"]
             if s["has_children"]:
                 need_drill.extend(node_ref.get("nodes", []))
             else:
-                final_ids.append(s["node_id"])
+                _add_to_pool([node_ref])
 
         if not need_drill:
-            current_ids = final_ids
             break
 
         current_nodes = need_drill
-        current_ids = final_ids
         round_num += 1
 
-    if not current_ids and selected:
-        current_ids = [s["node_id"] for s in selected]
+    if not candidate_pool:
+        return {"steps": steps, "node_ids": [], "pool_size": 0}
 
-    return {"steps": steps, "node_ids": current_ids}
+    final_ranked = _bm25_leaf_search(query, candidate_pool, doc_title,
+                                     top_k=top_k)
+    final_ids = [s["node_id"] for s in final_ranked]
+
+    if verbose:
+        print(f"\n[BM25 Tree - Final Ranking] Re-ranked pool of "
+              f"{len(candidate_pool)} leaves, returned top-{len(final_ids)}.")
+
+    return {
+        "steps": steps,
+        "node_ids": final_ids,
+        "pool_size": len(candidate_pool),
+    }
 
 
 def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
