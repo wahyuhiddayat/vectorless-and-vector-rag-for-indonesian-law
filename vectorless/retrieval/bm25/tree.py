@@ -24,7 +24,7 @@ from ..common import (
 )
 
 
-def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 3) -> list[dict]:
+def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
     """Rank catalog entries with BM25 over the metadata fields.
 
     Args:
@@ -255,7 +255,7 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
     t_step = time.time()
 
     catalog = load_catalog()
-    doc_results = _bm25_doc_search(query, catalog, top_k=1)
+    doc_results = _bm25_doc_search(query, catalog)
     steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_results:
