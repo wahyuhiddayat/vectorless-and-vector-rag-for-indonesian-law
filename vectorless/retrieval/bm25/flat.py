@@ -10,7 +10,6 @@ cascading failure problem where doc-level metadata mismatch blocks retrieval.
 
 Usage:
     python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?"
-    python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?" --top_k 5
     python -m vectorless.retrieval.bm25.flat "Apa syarat penyadapan?" --top_k 10
 """
 
@@ -29,7 +28,7 @@ from ..common import (
 # FLAT SEARCH (single-stage across all documents)
 # ============================================================
 
-def flat_search(query: str, leaves: list[dict], top_k: int = 5,
+def flat_search(query: str, leaves: list[dict], top_k: int = 10,
                 verbose: bool = True) -> list[dict]:
     """BM25 search across ALL leaf nodes from ALL documents.
 
@@ -79,7 +78,7 @@ def flat_search(query: str, leaves: list[dict], top_k: int = 5,
 # MAIN PIPELINE
 # ============================================================
 
-def retrieve(query: str, top_k: int = 5, verbose: bool = True) -> dict:
+def retrieve(query: str, top_k: int = 10, verbose: bool = True) -> dict:
     """Full flat BM25 retrieval: load all leaves → search → answer.
 
     Args:
@@ -153,7 +152,7 @@ def main():
     ap = argparse.ArgumentParser(
         description="BM25 flat (single-stage) retrieval for Indonesian legal QA")
     ap.add_argument("query", help="Legal question in Indonesian")
-    ap.add_argument("--top_k", type=int, default=5, help="Number of results (default: 5)")
+    ap.add_argument("--top_k", type=int, default=10, help="Number of results (default: 10)")
     args = ap.parse_args()
 
     result = retrieve(args.query, top_k=args.top_k)
