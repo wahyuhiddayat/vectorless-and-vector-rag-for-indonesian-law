@@ -255,7 +255,7 @@ def retrieve(query: str, top_k_per_level: int = 3, verbose: bool = True) -> dict
     t_step = time.time()
 
     catalog = load_catalog()
-    doc_results = _bm25_doc_search(query, catalog)
+    doc_results = _bm25_doc_search(query, catalog, top_k=1)
     steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_results:
