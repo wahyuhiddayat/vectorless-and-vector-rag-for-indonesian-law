@@ -66,10 +66,12 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         from vectorless.retrieval.llm import flat as module
 
         module.save_log = lambda _result: None
-        # Disable random sampling. With a 70-doc corpus the entire flat list
-        # fits inside Gemini Flash 1M context (rincian peaks at ~760K tokens).
-        # Sampling 100 of >1900 leaves makes recall near-zero by construction.
-        return module.retrieve(query, max_candidates=10**9, verbose=False)
+        # llm-flat now uses chunked listwise reranking (RankGPT-style,
+        # Sun et al. 2023 EMNLP) which handles any corpus size by
+        # processing chunks of `window_size` candidates per LLM call.
+        # No need to pass a sampling cap; the full corpus is ranked
+        # via tournament elimination across rounds.
+        return module.retrieve(query, top_k=top_k, verbose=False)
 
     if system == "llm-agentic-doc":
         from vectorless.retrieval.llm import agentic as module
