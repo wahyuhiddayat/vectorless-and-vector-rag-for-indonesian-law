@@ -16,20 +16,9 @@ import time
 from collections import Counter
 from pathlib import Path
 
-# Mirror the category-derivation logic used by vectorless/retrieval/common.py
-# without creating a hard import dependency on the retrieval package.
-_MULTI_WORD_PREFIXES = {
-    "peraturan-bssn": "PERATURAN_BSSN",
-    "peraturan-ojk": "PERATURAN_OJK",
-}
-
-
-def doc_category(doc_id: str) -> str:
-    low = (doc_id or "").lower()
-    for prefix, folder in _MULTI_WORD_PREFIXES.items():
-        if low.startswith(prefix + "-"):
-            return folder
-    return (doc_id or "").split("-")[0].upper()
+# Import the authoritative category mapping from vectorless.ids.
+# Avoids drift from a second manual implementation.
+from vectorless.ids import doc_category
 
 
 GRANULARITY_INDEX_DIR = {
