@@ -24,10 +24,11 @@ from rank_bm25 import BM25Okapi
 from ...llm import reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     tokenize, load_catalog, load_doc, extract_nodes, save_log, doc_corpus_string,
+    DOC_PICK_TOP_K,
 )
 
 
-def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
+def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K) -> list[dict]:
     """Rank catalog entries with BM25 over the doc corpus string.
 
     Corpus per doc comes from `doc_corpus_string` (metadata + the aggregated
@@ -267,25 +268,33 @@ def tree_search(query: str, doc: dict, top_k_per_level: int = 3,
         "steps": steps,
         "node_ids": final_ids,
         "pool_size": len(candidate_pool),
+        "reached_leaves": candidate_pool,
     }
 
 
 def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
-             verbose: bool = True) -> dict:
-    """Full BM25 tree retrieval pipeline.
+             top_k_docs: int = DOC_PICK_TOP_K, verbose: bool = True) -> dict:
+    """Full BM25 tree retrieval pipeline, multi-doc top-K.
 
-    1. BM25 doc search to select document.
-    2. BM25 tree navigation level-by-level.
-    3. Answer generation from retrieved leaf nodes.
+    1. BM25 doc search to select top-K docs from catalog.
+    2. BM25 tree navigation level-by-level in each picked doc.
+    3. Cross-doc merge of reached leaves, BM25 final re-rank globally.
+
+    Multi-doc top-K=3 (default) follows IR multi-stage-retrieval practice.
+    The doc-pick stage still exploits catalog-level structure (paradigm
+    distinction from flat methods), and the within-doc beam still
+    exploits hierarchical structure, but the candidate pool spans up to
+    K docs to soften single-doc cascade failures.
 
     Args:
         query: Legal question in Indonesian.
         top_k_per_level: Beam width during traversal (paradigm choice).
         top_k: Final number of leaves to return (matches eval cutoff).
+        top_k_docs: Number of docs picked at stage 1.
         verbose: Print progress.
 
     Returns:
-        Dict with query, strategy, search results, answer, sources, and metrics.
+        Dict with query, strategy, search results, sources, and metrics.
     """
     reset_counters()
     t_start = time.time()
@@ -294,53 +303,106 @@ def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
     if verbose:
         print(f"{'='*60}")
         print(f"Query: {query}")
-        print(f"Strategy: bm25-tree (top_k_per_level={top_k_per_level}, top_k={top_k})")
+        print(f"Strategy: bm25-tree (top_k_docs={top_k_docs}, "
+              f"top_k_per_level={top_k_per_level}, top_k={top_k})")
         print(f"{'='*60}")
 
     snap = snapshot_counters()
     t_step = time.time()
 
     catalog = load_catalog()
-    doc_results = _bm25_doc_search(query, catalog)
+    doc_results = _bm25_doc_search(query, catalog, top_k=top_k_docs)
     steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_results:
         return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [],
                 "error": "No relevant documents found"}
 
+    picked_doc_ids = [r["doc_id"] for r in doc_results]
+
     if verbose:
-        print(f"\n[Doc Search - BM25] Selected: {[r['doc_id'] for r in doc_results]}")
+        print(f"\n[Doc Search - BM25] Selected: {picked_doc_ids}")
         for r in doc_results:
             print(f"  {r['doc_id']} (BM25: {r['bm25_score']:.4f})")
 
     snap = snapshot_counters()
     t_step = time.time()
 
-    doc_id = doc_results[0]["doc_id"]
-    doc = load_doc(doc_id)
+    merged_leaves: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    per_doc_pool_sizes: dict[str, int] = {}
+    tree_search_per_doc: dict[str, dict] = {}
 
-    tree_result = tree_search(query, doc, top_k_per_level=top_k_per_level,
-                              top_k=top_k, verbose=verbose)
-    node_ids = tree_result.get("node_ids", [])
+    for doc_meta in doc_results:
+        doc_id = doc_meta["doc_id"]
+        doc = load_doc(doc_id)
+        tree_result = tree_search(query, doc, top_k_per_level=top_k_per_level,
+                                  top_k=top_k, verbose=verbose)
+        tree_search_per_doc[doc_id] = {
+            "steps": tree_result.get("steps", []),
+            "pool_size": tree_result.get("pool_size", 0),
+        }
+        per_doc_pool_sizes[doc_id] = tree_result.get("pool_size", 0)
+        for leaf in tree_result.get("reached_leaves", []) or []:
+            nid = leaf.get("node_id", "")
+            key = (doc_id, nid)
+            if not nid or key in seen_keys:
+                continue
+            tagged = dict(leaf)
+            tagged["_doc_id"] = doc_id
+            tagged["_doc_title"] = doc.get("judul", "")
+            merged_leaves.append(tagged)
+            seen_keys.add(key)
+
     steps["tree_search"] = step_metrics(t_step, snap)
 
-    if not node_ids:
-        return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [doc_id],
-                "error": "No relevant nodes found"}
+    if not merged_leaves:
+        return {"query": query, "strategy": "bm25-tree",
+                "picked_doc_ids": picked_doc_ids,
+                "error": "No leaves reached across picked docs"}
 
-    nodes = extract_nodes(doc, node_ids)
+    corpus = []
+    for leaf in merged_leaves:
+        enriched = (leaf["_doc_title"] + " "
+                    + (leaf.get("navigation_path") or "") + " "
+                    + (leaf.get("text") or ""))
+        if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
+            enriched += " " + leaf["penjelasan"]
+        corpus.append(tokenize(enriched))
 
-    if not nodes:
-        return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [doc_id],
-                "node_ids": node_ids, "error": "Selected nodes not found in tree"}
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(tokenize(query))
+    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+
+    final_picks: list[dict] = []
+    for idx, score in ranked:
+        if score <= 0:
+            continue
+        leaf = merged_leaves[idx]
+        final_picks.append({
+            "doc_id": leaf["_doc_id"],
+            "node_id": leaf["node_id"],
+            "title": leaf.get("title", ""),
+            "navigation_path": leaf.get("navigation_path", ""),
+            "bm25_score": round(float(score), 4),
+        })
+        if len(final_picks) >= top_k:
+            break
+
+    if not final_picks:
+        return {"query": query, "strategy": "bm25-tree",
+                "picked_doc_ids": picked_doc_ids,
+                "error": "All merged leaves scored <= 0"}
 
     sources = []
-    for node in nodes:
+    for pos, pick in enumerate(final_picks):
         sources.append({
-            "doc_id": doc_id,
-            "node_id": node["node_id"],
-            "title": node["title"],
-            "navigation_path": node["navigation_path"],
+            "doc_id": pick["doc_id"],
+            "node_id": pick["node_id"],
+            "title": pick["title"],
+            "navigation_path": pick["navigation_path"],
+            "bm25_score": pick["bm25_score"],
+            "rerank_position": pos,
         })
 
     elapsed = time.time() - t_start
@@ -349,9 +411,11 @@ def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
     result = {
         "query": query,
         "strategy": "bm25-tree",
-        "picked_doc_ids": [doc_id],
+        "picked_doc_ids": picked_doc_ids,
         "doc_search": {"rankings": doc_results},
-        "tree_search": tree_result,
+        "tree_search_per_doc": tree_search_per_doc,
+        "per_doc_pool_sizes": per_doc_pool_sizes,
+        "merged_pool_size": len(merged_leaves),
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -376,14 +440,16 @@ def main():
                     help="Beam width during traversal (default: 3)")
     ap.add_argument("--top_k", type=int, default=10,
                     help="Final number of leaves returned (default: 10)")
+    ap.add_argument("--top_k_docs", type=int, default=DOC_PICK_TOP_K,
+                    help=f"Number of docs picked at stage 1 (default: {DOC_PICK_TOP_K})")
     args = ap.parse_args()
 
     result = retrieve(args.query, top_k_per_level=args.top_k_per_level,
-                      top_k=args.top_k)
+                      top_k=args.top_k, top_k_docs=args.top_k_docs)
     print(f"\n{'-'*60}")
     print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
-        print(f"  > {src['navigation_path']}")
+        print(f"  > [{src['doc_id']}] {src['navigation_path']}")
     print(f"{'-'*60}")
 
 

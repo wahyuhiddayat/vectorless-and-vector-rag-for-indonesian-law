@@ -15,6 +15,16 @@ load_dotenv()
 DATA_INDEX = Path(os.environ.get("DATA_INDEX", "data/index_pasal"))
 LOG_DIR = Path("data/retrieval_logs")
 
+DOC_PICK_TOP_K = 3
+"""Standard top-K doc-pick for the multi-doc tree paradigm.
+
+Tree variants (bm25-tree, hybrid-tree, llm-agentic-doc) pick up to K=3 docs at
+stage 1, then navigate each hierarchy independently and merge. K=3 sits in the
+center of the IR multi-stage-retrieval default range (LangChain K=4, LlamaIndex
+K=5, RAG production K=3-10). K=1 was the original single-doc PageIndex setting
+which assumes single-doc input, not applicable to a 308-doc corpus.
+"""
+
 
 def tokenize(text: str) -> list[str]:
     """Lowercase, regex split on [a-z0-9]+, drop length-1 tokens.

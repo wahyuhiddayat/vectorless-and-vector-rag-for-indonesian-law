@@ -29,10 +29,8 @@ from ..common import (
     load_catalog, load_doc, find_node, save_log,
     agentic_finalize, tokenize,
     doc_corpus_string, catalog_for_llm_prompt,
+    DOC_PICK_TOP_K,
 )
-
-
-DOC_PICK_TOP_K = 3
 
 
 def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K) -> list[str]:
@@ -95,20 +93,24 @@ Aturan:
     llm_doc_ids = [doc_id for doc_id in llm_result.get("doc_ids", []) if doc_id in valid_ids]
     bm25_doc_ids = _bm25_doc_search(query, catalog, top_k=top_k)
 
+    # Interleave LLM and BM25 picks so neither signal dominates. LLM gets
+    # priority at each position (semantic precedence), but BM25 always has
+    # a slot if both lists have entries at that rank. This matters when
+    # LLM picks semantically-related-but-keyword-mismatched docs while BM25
+    # picks the lexically-matching doc that actually contains the answer.
     merged: list[str] = []
     merge_source: dict[str, str] = {}
-    for doc_id in llm_doc_ids:
-        if doc_id not in merge_source:
-            merged.append(doc_id)
-            merge_source[doc_id] = "llm"
+    for i in range(max(len(llm_doc_ids), len(bm25_doc_ids))):
+        for src_label, src_list in (("llm", llm_doc_ids), ("bm25", bm25_doc_ids)):
+            if i < len(src_list):
+                doc_id = src_list[i]
+                if doc_id not in merge_source:
+                    merged.append(doc_id)
+                    merge_source[doc_id] = src_label
+                    if len(merged) >= top_k:
+                        break
         if len(merged) >= top_k:
             break
-    for doc_id in bm25_doc_ids:
-        if len(merged) >= top_k:
-            break
-        if doc_id not in merge_source:
-            merged.append(doc_id)
-            merge_source[doc_id] = "bm25"
 
     result = {
         "doc_ids": merged,
@@ -128,12 +130,12 @@ Aturan:
     return result
 
 
-MAX_ACTIONS = 20
-MAX_READS = 15
+MAX_ACTIONS = 30
+MAX_READS = 18
 OBSERVATION_RENDER_CAP = 1800
 SCRATCHPAD_RECENT_FULL = 2
 DEFAULT_TOP_K = 10
-VALID_ACTIONS = ("inspect_doc", "expand", "read", "submit")
+VALID_ACTIONS = ("expand", "read", "submit")
 
 
 def _node_view(node: dict) -> dict:
@@ -150,8 +152,20 @@ def _node_view(node: dict) -> dict:
     return out
 
 
-def _tool_inspect_doc(doc: dict) -> dict:
-    """Full recursive tree structure of a document, no leaf text."""
+def _resolve_doc(picked_docs: dict[str, dict], doc_id: str) -> dict | None:
+    """Return the picked doc by id, or None if not in scope."""
+    if not doc_id:
+        return None
+    return picked_docs.get(doc_id)
+
+
+def _tool_inspect_doc(picked_docs: dict[str, dict], doc_id: str) -> dict:
+    """Full recursive tree structure of one picked document, no leaf text."""
+    doc = _resolve_doc(picked_docs, doc_id)
+    if doc is None:
+        return {
+            "error": f"doc_id '{doc_id}' is not in the picked set; valid: {list(picked_docs.keys())}",
+        }
     return {
         "doc_id": doc.get("doc_id", ""),
         "judul": doc.get("judul", ""),
@@ -160,12 +174,7 @@ def _tool_inspect_doc(doc: dict) -> dict:
 
 
 def _render_tree_outline(nodes: list[dict], depth: int = 0) -> str:
-    """Render the full document tree as an indented outline for the prompt.
-
-    Returns all nodes at all levels — identical to PageIndex's
-    get_document_structure(). The agent sees the complete tree structure
-    from the start, exactly like PageIndex.
-    """
+    """Render one document's tree as an indented outline."""
     lines: list[str] = []
     indent = "  " * depth
     for n in nodes:
@@ -182,32 +191,60 @@ def _render_tree_outline(nodes: list[dict], depth: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _tool_expand(doc: dict, node_id: str) -> dict:
-    """Children of one internal node. Helps the agent focus on a subtree."""
+def _render_multidoc_outline(picked_docs: dict[str, dict]) -> str:
+    """Render outlines for K picked docs, concatenated with doc headers.
+
+    Each doc section is prefixed with `=== DOC: {doc_id} -- {judul} ===` so
+    the agent can target tools by doc_id. Node ids are still unique within
+    a doc (LLM parser guarantees this), but the agent must always include
+    doc_id when calling expand/read/submit.
+    """
+    parts: list[str] = []
+    for doc_id, doc in picked_docs.items():
+        judul = doc.get("judul", "")
+        parts.append(f"=== DOC: {doc_id} -- {judul} ===")
+        parts.append(_render_tree_outline(doc.get("structure", [])))
+        parts.append("")
+    return "\n".join(parts).rstrip()
+
+
+def _tool_expand(picked_docs: dict[str, dict], doc_id: str, node_id: str) -> dict:
+    """Children of one internal node in the named picked doc."""
+    doc = _resolve_doc(picked_docs, doc_id)
+    if doc is None:
+        return {
+            "error": f"doc_id '{doc_id}' is not in the picked set; valid: {list(picked_docs.keys())}",
+        }
     node = find_node(doc.get("structure", []), node_id)
     if node is None:
-        return {"error": f"node_id '{node_id}' not found in doc '{doc.get('doc_id')}'"}
+        return {"error": f"node_id '{node_id}' not found in doc '{doc_id}'"}
     children = node.get("nodes") or []
     if not children:
         return {
             "error": f"node_id '{node_id}' has no children, it is already a leaf",
+            "doc_id": doc_id,
             "title": node.get("title", ""),
         }
     return {
-        "doc_id": doc.get("doc_id", ""),
+        "doc_id": doc_id,
         "parent": {"node_id": node_id, "title": node.get("title", ""),
                    "navigation_path": node.get("navigation_path", "")},
         "children": [_node_view(c) for c in children],
     }
 
 
-def _tool_read(doc: dict, node_id: str) -> dict:
-    """Full text of one leaf node, plus penjelasan if any."""
+def _tool_read(picked_docs: dict[str, dict], doc_id: str, node_id: str) -> dict:
+    """Full text of one leaf node in the named picked doc, plus penjelasan."""
+    doc = _resolve_doc(picked_docs, doc_id)
+    if doc is None:
+        return {
+            "error": f"doc_id '{doc_id}' is not in the picked set; valid: {list(picked_docs.keys())}",
+        }
     node = find_node(doc.get("structure", []), node_id)
     if node is None:
-        return {"error": f"node_id '{node_id}' not found in doc '{doc.get('doc_id')}'"}
+        return {"error": f"node_id '{node_id}' not found in doc '{doc_id}'"}
     out = {
-        "doc_id": doc.get("doc_id", ""),
+        "doc_id": doc_id,
         "node_id": node_id,
         "title": node.get("title", ""),
         "navigation_path": node.get("navigation_path", ""),
@@ -219,8 +256,14 @@ def _tool_read(doc: dict, node_id: str) -> dict:
     return out
 
 
-def _parse_node_ref(ref, default_doc_id: str) -> tuple[str | None, str | None]:
-    """Accept dict, 'doc_id/node_id' string, or bare node_id, scoped to default_doc_id."""
+def _parse_node_ref(ref, default_doc_id: str | None = None) -> tuple[str | None, str | None]:
+    """Accept dict, 'doc_id/node_id' string, or bare node_id.
+
+    Multi-doc mode requires the agent to always provide `doc_id` either as a
+    dict field, as a path prefix, or implicitly via `default_doc_id`. A bare
+    node_id without any doc_id context returns (None, node_id) which the
+    caller should reject as ambiguous.
+    """
     if isinstance(ref, dict):
         return ref.get("doc_id") or default_doc_id, ref.get("node_id")
     if isinstance(ref, str):
@@ -252,31 +295,41 @@ def _render_scratchpad(scratchpad: list[dict]) -> str:
 
 def _build_prompt(query: str, scratchpad: list[dict],
                   actions_left: int, reads_left: int,
-                  primary_doc_id: str, primary_doc_title: str,
-                  tree_outline: str) -> str:
-    """Build the next-step prompt for the agent.
+                  picked_docs: dict[str, dict],
+                  multidoc_outline: str) -> str:
+    """Build the next-step prompt for the agent in multi-doc mode.
 
-    PageIndex-style: the full document structure is exposed upfront.
-    The agent inspects it, uses expand() to focus on a subtree,
-    read() to verify leaf content, and submit() to finalize.
+    The agent sees K=3 picked docs upfront (full hierarchical outlines)
+    and must include `doc_id` in every tool args. Submit accepts
+    `doc_id/node_id` ref strings so the final ranking can mix nodes from
+    any of the picked docs.
     """
+    doc_headers = "\n".join(
+        f"  - {did} -- {doc.get('judul', '')}"
+        for did, doc in picked_docs.items()
+    )
     return (
         "Kamu adalah agen retrieval dokumen hukum.\n"
-        "Tugas: temukan node paling relevan (pasal/ayat/rincian) untuk menjawab pertanyaan.\n\n"
-        f"Pertanyaan: {query}\n"
-        f"Dokumen: {primary_doc_id} — {primary_doc_title}\n\n"
-        "── STRUKTUR DOKUMEN ──\n"
-        f"{tree_outline}\n\n"
+        "Tugas: temukan node paling relevan (pasal/ayat/rincian) untuk menjawab pertanyaan.\n"
+        "Kamu diberi beberapa UU kandidat, dan harus eksplor satu atau beberapa untuk\n"
+        "menemukan jawaban paling tepat. Setiap tool wajib menyertakan doc_id.\n\n"
+        f"Pertanyaan: {query}\n\n"
+        f"── KANDIDAT UU ({len(picked_docs)} doc) ──\n"
+        f"{doc_headers}\n\n"
+        "── STRUKTUR PER DOKUMEN (outline lengkap) ──\n"
+        f"{multidoc_outline}\n\n"
+        "Outline di atas sudah berisi semua node dengan title + ringkasan.\n"
+        "Kamu TIDAK perlu request outline lagi -- langsung lompat ke expand/read/submit.\n\n"
         "── TOOLS ──\n"
-        "- inspect_doc()       lihat struktur lengkap (title + ringkasan)\n"
-        "- expand(node_id)     lihat anak-anak node, fokus pada satu cabang\n"
-"- read(node_id)       baca teks LENGKAP satu node (pasal/ayat/rincian)\n"
-"- submit(node_ids)    finalisasi ranking [paling relevan, ..., kurang relevan] (max 10)\n\n"
-"-- ALUR KERJA --\n"
-"1. Scan struktur → identifikasi cabang yang tematis relevan\n"
-"2. expand() → lihat sub-node dalam cabang itu\n"
-"3. read() → baca teks lengkap untuk verifikasi\n"
-        "4. submit() → kirimkan node_ids terurut (paling relevan pertama)\n\n"
+        "- expand(doc_id, node_id)        lihat anak-anak node di doc itu (jika perlu detail tambahan)\n"
+        "- read(doc_id, node_id)          baca teks LENGKAP satu node (untuk verifikasi)\n"
+        "- submit(node_ids)               finalisasi ranking, format `doc_id/node_id`,\n"
+        "                                  terurut paling relevan dulu (max 10)\n\n"
+        "── ALUR KERJA ──\n"
+        "1. Scan outline lintas doc -> identifikasi node tematis relevan (boleh > 1 doc)\n"
+        "2. read(doc_id, node_id) -> verifikasi teks lengkap kandidat utama\n"
+        "3. expand(doc_id, node_id) -> jika butuh lihat sub-node\n"
+        "4. submit([\"doc_id/node_id\", ...]) -> kirim ranking final ASAP\n\n"
         f"── SISA ANGGARAN ──\n"
         f"Action: {actions_left} | Read: {reads_left}\n"
         "Gunakan read() secara selektif — hanya untuk verifikasi.\n\n"
@@ -285,15 +338,19 @@ def _build_prompt(query: str, scratchpad: list[dict],
         "── FORMAT ──\n"
         "{\n"
         '  "thinking": "...",\n'
-        '  "action": "inspect_doc" | "expand" | "read" | "submit",\n'
+        '  "action": "expand" | "read" | "submit",\n'
         '  "args": { ... }\n'
         "}\n\n"
         "Apa langkah selanjutnya?\n"
     )
 
 
-def _siblings_hint(doc: dict, missing_id: str, limit: int = 5) -> list[str]:
-    """Best-effort list of node_ids near the missing id, to help the agent self-correct."""
+def _siblings_hint_multidoc(picked_docs: dict[str, dict], doc_id: str,
+                            missing_id: str, limit: int = 5) -> list[str]:
+    """Best-effort list of node_ids near the missing id within one doc."""
+    doc = picked_docs.get(doc_id)
+    if doc is None:
+        return []
     all_ids: list[str] = []
 
     def _walk(nodes):
@@ -310,12 +367,13 @@ def _siblings_hint(doc: dict, missing_id: str, limit: int = 5) -> list[str]:
     return near[:limit] if near else all_ids[:limit]
 
 
-def _collect_visited_node_ids(scratchpad: list[dict]) -> list[str]:
-    """Collect node_ids the agent visited via read or expand, by visit recency.
+def _collect_visited_refs(scratchpad: list[dict]) -> list[str]:
+    """Collect refs (doc_id/node_id) the agent visited, most-recent first.
 
-    Most recently visited first. Read targets and expanded children are both
-    treated as visited. Used as the second layer of the RAPTOR-style fallback
-    when the agent's submit list does not fill the top_k slots.
+    Read targets and expanded children are both treated as visited. Used as
+    the second layer of the agentic_finalize fallback when the agent's
+    submit list does not fill the top_k slots. Refs are encoded as
+    "doc_id/node_id" strings to disambiguate across multi-doc navigation.
     """
     visited: list[str] = []
     seen: set[str] = set()
@@ -324,17 +382,22 @@ def _collect_visited_node_ids(scratchpad: list[dict]) -> list[str]:
         obs = entry.get("observation") or {}
         if "error" in obs:
             continue
+        doc_id = obs.get("doc_id", "")
         if action == "read":
             nid = obs.get("node_id")
-            if nid and nid not in seen:
-                visited.append(nid)
-                seen.add(nid)
+            if nid and doc_id:
+                ref = f"{doc_id}/{nid}"
+                if ref not in seen:
+                    visited.append(ref)
+                    seen.add(ref)
         elif action == "expand":
             for child in obs.get("children") or []:
                 nid = child.get("node_id")
-                if nid and nid not in seen:
-                    visited.append(nid)
-                    seen.add(nid)
+                if nid and doc_id:
+                    ref = f"{doc_id}/{nid}"
+                    if ref not in seen:
+                        visited.append(ref)
+                        seen.add(ref)
     return visited
 
 
@@ -360,42 +423,45 @@ def _collect_doc_leaf_ids(doc: dict) -> list[dict]:
     return leaves
 
 
-def _bm25_rank_leaves(query: str, leaves: list[dict], doc_title: str = "") -> list[str]:
-    """BM25-rank a doc's leaves against the query. Returns leaf node_ids.
+def _bm25_rank_multidoc_refs(query: str, picked_docs: dict[str, dict]) -> list[str]:
+    """BM25-rank leaves across all picked docs. Returns refs `doc_id/node_id`.
 
-    Uses the same enriched corpus as bm25-flat (doc_title + navigation_path +
-    text + penjelasan) so the RAPTOR fallback produces rankings comparable to
-    bm25-flat. Without this alignment, agentic's fallback would be a weaker
-    BM25 than bm25-flat and bias the comparison.
+    Enrichment per leaf = doc_title + navigation_path + text + penjelasan,
+    consistent with bm25-flat for cross-paradigm fairness. The rank spans
+    every leaf in every picked doc as one cross-doc corpus, so the layer-3
+    fallback never blames stage-1 doc-pick for missed leaves.
     """
-    if not leaves:
+    leaf_records: list[tuple[str, str, dict]] = []  # (ref, doc_title, leaf)
+    for doc_id, doc in picked_docs.items():
+        title = doc.get("judul", "")
+        for leaf in _collect_doc_leaf_ids(doc):
+            ref = f"{doc_id}/{leaf['node_id']}"
+            leaf_records.append((ref, title, leaf))
+    if not leaf_records:
         return []
     corpus = []
-    for leaf in leaves:
-        enriched = doc_title + " " + leaf.get("navigation_path", "") + " " + leaf.get("text", "")
+    for _, title, leaf in leaf_records:
+        enriched = title + " " + (leaf.get("navigation_path") or "") + " " + (leaf.get("text") or "")
         if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
             enriched += " " + leaf["penjelasan"]
         corpus.append(tokenize(enriched))
     bm25 = BM25Okapi(corpus)
     scores = bm25.get_scores(tokenize(query))
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
-    return [leaves[i]["node_id"] for i, _ in ranked]
+    return [leaf_records[i][0] for i, _ in ranked]
 
 
 def retrieve(query: str,
              max_actions: int = MAX_ACTIONS, max_reads: int = MAX_READS,
-             top_k: int = DEFAULT_TOP_K, verbose: bool = True) -> dict:
-    """Run the agentic LLM retrieval pipeline for one query.
+             top_k: int = DEFAULT_TOP_K, top_k_docs: int = DOC_PICK_TOP_K,
+             verbose: bool = True) -> dict:
+    """Run the multi-doc agentic LLM retrieval pipeline for one query.
 
-    Args:
-        query: Indonesian legal question.
-        max_actions: hard cap on agent steps before forced fallback.
-        max_reads: hard cap on read tool calls (other tools are uncapped).
-        verbose: print step traces during the loop.
-
-    Returns:
-        Result dict compatible with the existing eval schema. The
-        sources field is what the eval harness reads for Recall and MRR.
+    Stage 1: LLM + BM25 merged doc-pick (top-K=3 by default).
+    Stage 2: agent loop, full outline of all picked docs exposed upfront,
+        tools require `doc_id` arg, submit accepts `doc_id/node_id` refs.
+    Stage 3: agentic_finalize 3-layer fallback (submit, visited, BM25
+        ranked across ALL picked docs' leaves) pads to top_k.
     """
     reset_counters()
     t_start = time.time()
@@ -404,7 +470,8 @@ def retrieve(query: str,
     if verbose:
         print("=" * 60)
         print(f"Query: {query}")
-        print("Strategy: llm-agentic-doc")
+        print(f"Strategy: llm-agentic-doc (top_k_docs={top_k_docs}, "
+              f"max_actions={max_actions}, max_reads={max_reads})")
         print("=" * 60)
 
     catalog = load_catalog()
@@ -420,10 +487,10 @@ def retrieve(query: str,
 
     snap = snapshot_counters()
     t_step = time.time()
-    doc_result = doc_search(query, catalog, verbose=verbose)
+    doc_result = doc_search(query, catalog, top_k=top_k_docs, verbose=verbose)
     timings["doc_search"] = step_metrics(t_step, snap)
 
-    doc_ids = doc_result.get("doc_ids", [])
+    doc_ids = doc_result.get("doc_ids", [])[:top_k_docs]
     if not doc_ids:
         return {
             "query": query,
@@ -434,15 +501,18 @@ def retrieve(query: str,
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
                         "step_metrics": timings},
         }
-    primary_doc_id = doc_ids[0]
-    primary_doc = _get_doc(primary_doc_id)
-    primary_doc_title = primary_doc.get("judul", "")
-    tree_outline = _render_tree_outline(primary_doc.get("structure", []))
+
+    picked_docs: dict[str, dict] = {did: _get_doc(did) for did in doc_ids}
+    multidoc_outline = _render_multidoc_outline(picked_docs)
+
     scratchpad.append({
         "step": 0,
         "action": "doc_search",
         "args": {},
-        "observation": {"doc_id": primary_doc_id, "judul": primary_doc_title},
+        "observation": {
+            "doc_ids": doc_ids,
+            "doc_titles": {did: doc.get("judul", "") for did, doc in picked_docs.items()},
+        },
     })
 
     snap = snapshot_counters()
@@ -459,9 +529,8 @@ def retrieve(query: str,
             query, scratchpad,
             actions_left=max_actions - actions_used,
             reads_left=max_reads - reads_used,
-            primary_doc_id=primary_doc_id,
-            primary_doc_title=primary_doc_title,
-            tree_outline=tree_outline,
+            picked_docs=picked_docs,
+            multidoc_outline=multidoc_outline,
         )
 
         try:
@@ -487,29 +556,36 @@ def retrieve(query: str,
         observation: dict = {}
 
         if action == "inspect_doc":
-            observation = _tool_inspect_doc(primary_doc)
+            doc_id = args.get("doc_id") or (doc_ids[0] if doc_ids else "")
+            observation = _tool_inspect_doc(picked_docs, doc_id)
 
         elif action == "expand":
+            doc_id = args.get("doc_id")
             node_id = args.get("node_id")
-            if not node_id:
+            if not doc_id:
+                observation = {"error": f"expand requires doc_id (one of {doc_ids})."}
+            elif not node_id:
                 observation = {"error": "expand requires node_id."}
             else:
-                obs = _tool_expand(primary_doc, node_id)
-                if "error" in obs:
-                    obs["hint_nearby"] = _siblings_hint(primary_doc, node_id)
+                obs = _tool_expand(picked_docs, doc_id, node_id)
+                if "error" in obs and doc_id in picked_docs:
+                    obs["hint_nearby"] = _siblings_hint_multidoc(picked_docs, doc_id, node_id)
                 observation = obs
 
         elif action == "read":
             if reads_used >= max_reads:
                 observation = {"error": f"Read budget exhausted ({max_reads}). Submit soon."}
             else:
+                doc_id = args.get("doc_id")
                 node_id = args.get("node_id")
-                if not node_id:
+                if not doc_id:
+                    observation = {"error": f"read requires doc_id (one of {doc_ids})."}
+                elif not node_id:
                     observation = {"error": "read requires node_id."}
                 else:
-                    obs = _tool_read(primary_doc, node_id)
-                    if "error" in obs:
-                        obs["hint_nearby"] = _siblings_hint(primary_doc, node_id)
+                    obs = _tool_read(picked_docs, doc_id, node_id)
+                    if "error" in obs and doc_id in picked_docs:
+                        obs["hint_nearby"] = _siblings_hint_multidoc(picked_docs, doc_id, node_id)
                     observation = obs
                     if "error" not in obs:
                         reads_used += 1
@@ -520,15 +596,15 @@ def retrieve(query: str,
             resolved: list[dict] = []
             invalid: list[str] = []
             for ref in refs:
-                doc_id, node_id = _parse_node_ref(ref, default_doc_id=primary_doc_id)
+                doc_id, node_id = _parse_node_ref(ref, default_doc_id=None)
                 if not (doc_id and node_id):
-                    invalid.append(str(ref))
+                    invalid.append(f"{ref!r} (missing doc_id, use 'doc_id/node_id' format)")
                     continue
-                if doc_id != primary_doc_id:
-                    invalid.append(f"{doc_id}/{node_id} (out of scope)")
+                if doc_id not in picked_docs:
+                    invalid.append(f"{doc_id}/{node_id} (doc not in picked set)")
                     continue
-                if find_node(primary_doc.get("structure", []), node_id) is None:
-                    invalid.append(f"{doc_id}/{node_id} (not found)")
+                if find_node(picked_docs[doc_id].get("structure", []), node_id) is None:
+                    invalid.append(f"{doc_id}/{node_id} (node not found)")
                     continue
                 key = (doc_id, node_id)
                 if key not in {(s["doc_id"], s["node_id"]) for s in resolved}:
@@ -573,18 +649,18 @@ def retrieve(query: str,
 
     timings["agent_loop"] = step_metrics(t_step, snap)
 
-    submitted_ids = [s["node_id"] for s in selected]
-    visited_ids = _collect_visited_node_ids(scratchpad)
-    doc_leaves = _collect_doc_leaf_ids(primary_doc)
-    bm25_fallback_ids = _bm25_rank_leaves(query, doc_leaves, doc_title=primary_doc_title)
-    final_ids, slot_labels = agentic_finalize(
-        submitted_ids=submitted_ids,
-        visited_ids=visited_ids,
-        fallback_ids=bm25_fallback_ids,
+    submitted_refs = [f"{s['doc_id']}/{s['node_id']}" for s in selected]
+    visited_refs = _collect_visited_refs(scratchpad)
+    bm25_fallback_refs = _bm25_rank_multidoc_refs(query, picked_docs)
+
+    final_refs, slot_labels = agentic_finalize(
+        submitted_ids=submitted_refs,
+        visited_ids=visited_refs,
+        fallback_ids=bm25_fallback_refs,
         top_k=top_k,
     )
 
-    if not final_ids:
+    if not final_refs:
         return {
             "query": query,
             "strategy": "llm-agentic-doc",
@@ -598,24 +674,29 @@ def retrieve(query: str,
             },
             "error": (
                 f"Agent submitted no valid node and BM25 fallback returned no leaves "
-                f"(doc_leaves={len(doc_leaves)}, submitted={len(submitted_ids)}, "
-                f"visited={len(visited_ids)})"
+                f"(submitted={len(submitted_refs)}, visited={len(visited_refs)})"
             ),
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
                         "step_metrics": timings},
         }
 
     sources: list[dict] = []
-    for pos, (nid, src_label) in enumerate(zip(final_ids, slot_labels)):
-        node = find_node(primary_doc.get("structure", []), nid) or {}
+    for pos, (ref, src_label) in enumerate(zip(final_refs, slot_labels)):
+        doc_id, _, nid = ref.partition("/")
+        doc = picked_docs.get(doc_id) or {}
+        node = find_node(doc.get("structure", []), nid) or {}
         sources.append({
-            "doc_id": primary_doc_id,
+            "doc_id": doc_id,
             "node_id": nid,
             "title": node.get("title", ""),
             "navigation_path": node.get("navigation_path", ""),
             "rerank_position": pos,
             "submission_source": src_label,
         })
+
+    final_ids = [s["node_id"] for s in sources]
+    submitted_ids = [s["node_id"] for s in selected]
+    visited_ids = [r.split("/", 1)[1] for r in visited_refs if "/" in r]
 
     submission_source_counts = {
         "agent_submit": slot_labels.count("agent_submit"),
@@ -665,12 +746,14 @@ def main() -> None:
     ap.add_argument("--max-reads", type=int, default=MAX_READS,
                     help=f"Hard cap on read tool calls (default {MAX_READS})")
     ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K,
-                    help=f"Final ranked output length after RAPTOR fallback (default {DEFAULT_TOP_K})")
+                    help=f"Final ranked output length after fallback (default {DEFAULT_TOP_K})")
+    ap.add_argument("--top-k-docs", type=int, default=DOC_PICK_TOP_K,
+                    help=f"Number of docs picked at stage 1 (default {DOC_PICK_TOP_K})")
     args = ap.parse_args()
 
     result = retrieve(args.query,
                       max_actions=args.max_actions, max_reads=args.max_reads,
-                      top_k=args.top_k)
+                      top_k=args.top_k, top_k_docs=args.top_k_docs)
 
     print("\n" + "-" * 60)
     print("DASAR HUKUM:")

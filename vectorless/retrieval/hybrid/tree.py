@@ -29,21 +29,17 @@ from ..common import (
     tokenize, load_catalog, load_doc, find_node, extract_nodes,
     save_log, validate_llm_ranking, DATA_INDEX,
     doc_corpus_string, catalog_for_llm_prompt,
+    DOC_PICK_TOP_K,
 )
 
 
-def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
+def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K) -> list[dict]:
     """Rank catalog entries with BM25 over the doc corpus string.
 
     Corpus per doc comes from `doc_corpus_string` (metadata + the aggregated
     `doc_summary_text` from indexing.build) so doc-level signal is rich
     enough to actually rank docs by topical match instead of the 15-20
-    token metadata baseline.
-
-    Returns a single doc by default because the downstream pipeline picks
-    `doc_ids[0]` from the merged (LLM picks, BM25 picks) list. LLM picks
-    take precedence; BM25 only matters as a fallback when the LLM returns
-    no docs. A wider BM25 top_k would be dead code under that merge rule.
+    token metadata baseline. Returns up to `top_k` docs above zero score.
     """
     corpus = [tokenize(doc_corpus_string(doc)) for doc in catalog]
 
@@ -98,9 +94,16 @@ Aturan:
     return llm_call(prompt)
 
 
-def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
-    """Merge BM25 catalog hits with the LLM's document picks."""
-    bm25_results = _bm25_doc_search(query, catalog)
+def doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K,
+               verbose: bool = True) -> dict:
+    """Merge BM25 catalog hits with the LLM's document picks, cap at top_k.
+
+    LLM picks take precedence; BM25 picks fill remaining slots up to
+    `top_k`. Both stages are recall-oriented (1-3 docs each), so the merge
+    rarely produces fewer than `top_k` docs unless the catalog is genuinely
+    empty of topical overlap.
+    """
+    bm25_results = _bm25_doc_search(query, catalog, top_k=top_k)
     llm_result = _llm_doc_search(query, catalog)
 
     bm25_ids = [r["doc_id"] for r in bm25_results]
@@ -109,20 +112,30 @@ def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
     valid_ids = {d["doc_id"] for d in catalog}
     llm_ids = [doc_id for doc_id in llm_ids if doc_id in valid_ids]
 
-    seen = set()
-    merged_ids = []
-    for doc_id in llm_ids + bm25_ids:
-        if doc_id not in seen:
-            seen.add(doc_id)
-            merged_ids.append(doc_id)
-
-    bm25_scores = {r["doc_id"]: r["bm25_score"] for r in bm25_results}
+    # Interleave LLM and BM25 picks so neither signal dominates. LLM gets
+    # priority at each position (semantic precedence), but BM25 always has
+    # a slot if both lists have entries at that rank. This matters when
+    # LLM picks semantically-related-but-keyword-mismatched docs while BM25
+    # picks the lexically-matching doc that actually contains the answer.
+    seen: set[str] = set()
+    merged_ids: list[str] = []
+    for i in range(max(len(llm_ids), len(bm25_ids))):
+        for source in (llm_ids, bm25_ids):
+            if i < len(source):
+                doc_id = source[i]
+                if doc_id not in seen:
+                    seen.add(doc_id)
+                    merged_ids.append(doc_id)
+                    if len(merged_ids) >= top_k:
+                        break
+        if len(merged_ids) >= top_k:
+            break
 
     if verbose:
         print(f"\n[Doc Search - Hybrid]")
         print(f"  BM25 hits: {bm25_ids}")
         print(f"  LLM picks: {llm_ids}")
-        print(f"  Merged: {merged_ids}")
+        print(f"  Merged (top-{top_k}): {merged_ids}")
         if llm_result.get("thinking"):
             print(f"  LLM reasoning: {llm_result['thinking'][:200]}")
 
@@ -176,38 +189,43 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
     target = max(top_k, 10)
     candidates = []
-    for idx, score in ranked:
-        if score > 0:
-            leaf = leaves[idx]
-            candidates.append({
-                "node_id": leaf["node_id"],
-                "title": leaf["title"],
-                "navigation_path": leaf["navigation_path"],
-                "text": leaf["text"],
-                "penjelasan": leaf.get("penjelasan"),
-                "summary": leaf.get("summary", ""),
-                "bm25_score": round(float(score), 4),
-            })
-        if len(candidates) >= target:
-            break
+    for idx, score in ranked[:target]:
+        leaf = leaves[idx]
+        candidates.append({
+            "node_id": leaf["node_id"],
+            "title": leaf["title"],
+            "navigation_path": leaf["navigation_path"],
+            "text": leaf["text"],
+            "penjelasan": leaf.get("penjelasan"),
+            "summary": leaf.get("summary", ""),
+            "bm25_score": round(float(score), 4),
+        })
     return candidates
 
 
-def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
-    """Ask the LLM to rank all candidates from most to least relevant.
+def _llm_rerank_multidoc(query: str, candidates: list[dict]) -> dict:
+    """Ask the LLM to rank candidates from multiple docs in a single call.
 
-    Listwise reranking: the LLM sees all candidates (full text, title,
-    navigation path, penjelasan) in a single prompt and produces a complete
-    ordering. Candidates are shuffled before this call to mitigate anchor
-    bias from the BM25 ordering. The caller validates via
-    `validate_llm_ranking` to drop hallucinations and append missing IDs.
+    Listwise reranking across docs: each candidate carries its `doc_id` and
+    `doc_title` so the reranker can disambiguate when nodes share titles or
+    navigation paths across documents. Candidates are shuffled before this
+    call to mitigate anchor bias from the BM25 ordering, and the caller
+    validates via `validate_llm_ranking` to drop hallucinations and append
+    missing ids.
+
+    The candidate key (the unique id the LLM ranks) is `doc_id/node_id` so
+    cross-doc nodes never collide. `validate_llm_ranking` operates on this
+    string id; the caller resolves back to (doc_id, node_id) tuples.
     """
     candidates_for_prompt = []
     for c in candidates:
+        key = f"{c['doc_id']}/{c['node_id']}"
         entry = {
-            "node_id": c["node_id"],
-            "title": c["title"],
-            "navigation_path": c["navigation_path"],
+            "ref": key,
+            "doc_id": c["doc_id"],
+            "doc_title": c.get("doc_title", ""),
+            "title": c.get("title", ""),
+            "navigation_path": c.get("navigation_path", ""),
             "text": c.get("text") or "",
         }
         penjelasan = c.get("penjelasan")
@@ -219,81 +237,48 @@ def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
     n_candidates = len(candidates)
 
     prompt = f"""\
-Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari "{doc_title}".
-Setiap kandidat memiliki isi teks (text), dan penjelasan resmi (jika ada).
+Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari beberapa UU dalam katalog.
+Setiap kandidat punya `ref` (format "doc_id/node_id"), doc_id, doc_title, navigation_path, text, dan penjelasan resmi (jika ada).
 
 Pertanyaan: {query}
 
-Kandidat Pasal:
+Kandidat Pasal (lintas UU):
 {candidates_text}
 
 Tugas: Urutkan SELURUH {n_candidates} kandidat dari paling relevan ke paling tidak relevan
-untuk menjawab pertanyaan. Output harus berisi SEMUA {n_candidates} node_ids dari input,
-tanpa duplikat dan tanpa node_id yang tidak ada di input.
+untuk menjawab pertanyaan. Output harus berisi SEMUA {n_candidates} ref dari input,
+tanpa duplikat dan tanpa ref yang tidak ada di input.
 
 Balas dalam format JSON:
 {{
-  "thinking": "<penalaran singkat tentang kriteria ranking>",
-  "ranking": ["node_id_paling_relevan", "node_id_kedua", "...", "node_id_paling_tidak_relevan"]
+  "thinking": "<penalaran singkat tentang kriteria ranking lintas UU>",
+  "ranking": ["doc_id_1/node_id_1", "doc_id_2/node_id_2", "..."]
 }}
 
 Aturan:
-- "ranking" HARUS berisi tepat {n_candidates} node_ids
+- "ranking" HARUS berisi tepat {n_candidates} ref
 - "ranking" tidak boleh ada duplikat
-- Setiap node_id harus muncul di input (tidak boleh hallucinate)
+- Setiap ref harus muncul di input (tidak boleh hallucinate)
 - Urutan menentukan ranking (index 0 = paling relevan)
-- Pertimbangkan isi text, penjelasan, dan navigation_path
+- Pertimbangkan isi text, penjelasan, navigation_path, dan doc_title untuk konteks lintas UU
 - Kembalikan HANYA JSON
 """
 
     return llm_call(prompt)
 
 
-def node_search(query: str, doc: dict, bm25_top_k: int = 20,
-                verbose: bool = True) -> dict:
-    """Run BM25 candidate search and LLM reranking within one document."""
-    candidates = _bm25_node_candidates(query, doc, top_k=bm25_top_k)
+def retrieve(query: str, bm25_top_k: int = 20, top_k: int = 10,
+             top_k_docs: int = DOC_PICK_TOP_K, verbose: bool = True) -> dict:
+    """Run the multi-doc hybrid retrieval pipeline for one query.
 
-    if not candidates:
-        return {"node_ids": [], "bm25_candidates": [], "llm_rerank": {}}
+    Stage 1: BM25 + LLM merge doc-pick (top-K=3).
+    Stage 2: BM25 leaf candidates per picked doc, concatenated.
+    Stage 3: single LLM listwise rerank across all cross-doc candidates.
 
-    if verbose:
-        print(f"\n[Node Search - BM25 Candidates] Top {len(candidates)}:")
-        for c in candidates:
-            print(f"  {c['node_id']} {c['title']} (BM25: {c['bm25_score']:.4f})")
-            print(f"    path: {c['navigation_path']}")
-
-    # Shuffle to mitigate anchor bias from BM25 order
-    shuffled = list(candidates)
-    random.shuffle(shuffled)
-
-    rerank_result = _llm_rerank(query, shuffled, doc.get("judul", ""))
-
-    # Track hallucinations before validation
-    raw_ranking = rerank_result.get("ranking", [])
-    valid_ids = {c["node_id"] for c in candidates}
-    n_hallucinated = sum(1 for nid in raw_ranking if nid not in valid_ids)
-
-    ranked_ids = validate_llm_ranking(raw_ranking, candidates)
-    rerank_result["validated_ranking"] = ranked_ids
-    rerank_result["llm_ranking_length"] = len(raw_ranking)
-    rerank_result["validated_ranking_length"] = len(ranked_ids)
-    rerank_result["n_hallucinated"] = n_hallucinated
-
-    if verbose:
-        print(f"\n[Node Search - LLM Rerank] Ranked {len(ranked_ids)} candidates")
-        if rerank_result.get("thinking"):
-            print(f"  Reasoning: {rerank_result['thinking'][:200]}")
-
-    return {
-        "node_ids": ranked_ids,
-        "bm25_candidates": candidates,
-        "llm_rerank": rerank_result,
-    }
-
-
-def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
-    """Run the catalog-first hybrid retrieval pipeline for one query."""
+    LLM call count: 2 (doc-pick + cross-doc rerank), independent of K. The
+    rerank prompt grows linearly with K but fits comfortably in Gemini's
+    1M context at K=3 (about 30K tokens of candidate text).
+    """
     reset_counters()
     t_start = time.time()
     steps: dict = {}
@@ -301,14 +286,14 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     if verbose:
         print(f"{'='*60}")
         print(f"Query: {query}")
-        print(f"Strategy: hybrid (bm25_top_k={bm25_top_k})")
+        print(f"Strategy: hybrid (top_k_docs={top_k_docs}, bm25_top_k={bm25_top_k})")
         print(f"{'='*60}")
 
     snap = snapshot_counters()
     t_step = time.time()
 
     catalog = load_catalog()
-    doc_result = doc_search(query, catalog, verbose=verbose)
+    doc_result = doc_search(query, catalog, top_k=top_k_docs, verbose=verbose)
     doc_ids = doc_result.get("doc_ids", [])
     steps["doc_search"] = step_metrics(t_step, snap)
 
@@ -319,34 +304,71 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     snap = snapshot_counters()
     t_step = time.time()
 
-    doc_id = doc_ids[0]
-    doc = load_doc(doc_id)
+    all_candidates: list[dict] = []
+    per_doc_candidate_counts: dict[str, int] = {}
+    loaded_docs: dict[str, dict] = {}
+    for did in doc_ids:
+        doc = load_doc(did)
+        loaded_docs[did] = doc
+        cands = _bm25_node_candidates(query, doc, top_k=bm25_top_k)
+        per_doc_candidate_counts[did] = len(cands)
+        for c in cands:
+            tagged = dict(c)
+            tagged["doc_id"] = did
+            tagged["doc_title"] = doc.get("judul", "")
+            all_candidates.append(tagged)
 
-    node_result = node_search(query, doc, bm25_top_k=bm25_top_k, verbose=verbose)
-    node_ids = node_result.get("node_ids", [])
-    steps["node_search"] = step_metrics(t_step, snap)
+    if verbose:
+        print(f"\n[Node Search - BM25 Candidates] Multi-doc total {len(all_candidates)}:")
+        for did, cnt in per_doc_candidate_counts.items():
+            print(f"  {did}: {cnt} candidates")
 
-    if not node_ids:
+    if not all_candidates:
         return {"query": query, "strategy": "hybrid", "picked_doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
-    nodes = extract_nodes(doc, node_ids)
+    # Shuffle to mitigate anchor bias from BM25 order before LLM rerank.
+    shuffled = list(all_candidates)
+    random.shuffle(shuffled)
 
-    if not nodes:
-        return {"query": query, "strategy": "hybrid", "picked_doc_ids": doc_ids,
-                "node_ids": node_ids, "error": "Selected nodes not found in tree"}
+    rerank_result = _llm_rerank_multidoc(query, shuffled)
+    raw_ranking = rerank_result.get("ranking", [])
+    valid_refs = {f"{c['doc_id']}/{c['node_id']}" for c in all_candidates}
+    n_hallucinated = sum(1 for r in raw_ranking if r not in valid_refs)
 
-    bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
+    pseudo_candidates = [
+        {"node_id": f"{c['doc_id']}/{c['node_id']}"} for c in all_candidates
+    ]
+    validated_refs = validate_llm_ranking(raw_ranking, pseudo_candidates)
+    rerank_result["validated_ranking"] = validated_refs
+    rerank_result["llm_ranking_length"] = len(raw_ranking)
+    rerank_result["validated_ranking_length"] = len(validated_refs)
+    rerank_result["n_hallucinated"] = n_hallucinated
+    steps["node_rerank"] = step_metrics(t_step, snap)
+
+    if verbose:
+        print(f"\n[Node Search - LLM Rerank Multi-doc] Ranked {len(validated_refs)} candidates")
+        if rerank_result.get("thinking"):
+            print(f"  Reasoning: {rerank_result['thinking'][:200]}")
+
+    candidate_by_ref = {f"{c['doc_id']}/{c['node_id']}": c for c in all_candidates}
     sources = []
-    for pos, node in enumerate(nodes):
+    for pos, ref in enumerate(validated_refs[:top_k]):
+        c = candidate_by_ref.get(ref)
+        if not c:
+            continue
         sources.append({
-            "doc_id": doc_id,
-            "node_id": node["node_id"],
-            "title": node["title"],
-            "navigation_path": node["navigation_path"],
-            "bm25_score": bm25_scores.get(node["node_id"]),
+            "doc_id": c["doc_id"],
+            "node_id": c["node_id"],
+            "title": c.get("title", ""),
+            "navigation_path": c.get("navigation_path", ""),
+            "bm25_score": c.get("bm25_score"),
             "rerank_position": pos,
         })
+
+    if not sources:
+        return {"query": query, "strategy": "hybrid", "picked_doc_ids": doc_ids,
+                "error": "Reranked refs empty after validation"}
 
     elapsed = time.time() - t_start
     stats = get_stats()
@@ -356,7 +378,9 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
         "strategy": "hybrid",
         "picked_doc_ids": doc_ids,
         "doc_search": doc_result,
-        "node_search": node_result,
+        "per_doc_candidate_counts": per_doc_candidate_counts,
+        "merged_candidate_count": len(all_candidates),
+        "llm_rerank": rerank_result,
         "sources": sources,
         "metrics": {**stats, "elapsed_s": round(elapsed, 2), "step_metrics": steps},
     }
@@ -376,15 +400,20 @@ def main():
     ap = argparse.ArgumentParser(description="Hybrid BM25+LLM retrieval for Indonesian legal QA")
     ap.add_argument("query", help="Legal question in Indonesian")
     ap.add_argument("--bm25_top_k", type=int, default=20,
-                    help="Max BM25 candidates for LLM reranking (default: 20)")
+                    help="Max BM25 candidates per doc for LLM reranking (default: 20)")
+    ap.add_argument("--top_k", type=int, default=10,
+                    help="Final number of leaves returned (default: 10)")
+    ap.add_argument("--top_k_docs", type=int, default=DOC_PICK_TOP_K,
+                    help=f"Number of docs picked at stage 1 (default: {DOC_PICK_TOP_K})")
     args = ap.parse_args()
 
-    result = retrieve(args.query, bm25_top_k=args.bm25_top_k)
+    result = retrieve(args.query, bm25_top_k=args.bm25_top_k,
+                      top_k=args.top_k, top_k_docs=args.top_k_docs)
     print(f"\n{'-'*60}")
     print(f"DASAR HUKUM:")
     for src in result.get("sources", []):
         score = src.get("bm25_score", "N/A")
-        print(f"  > {src['navigation_path']} (BM25: {score})")
+        print(f"  > [{src['doc_id']}] {src['navigation_path']} (BM25: {score})")
     print(f"{'-'*60}")
 
 
