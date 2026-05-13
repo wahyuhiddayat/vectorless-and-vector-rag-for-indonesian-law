@@ -1,13 +1,10 @@
 {
   "pasal": {
     "granularity": "pasal",
-    "n_files": 310,
+    "n_files": 308,
     "n_docs": 308,
-    "n_empty": 2,
-    "empty_docs": [
-      "peraturan-menag-10-2025",
-      "permenperin-25-2025"
-    ],
+    "n_empty": 0,
+    "empty_docs": [],
     "avg_depth": 2.59,
     "p95_depth": 4,
     "max_depth": 5,
@@ -792,14 +789,6 @@
         "total_nodes": 15
       },
       {
-        "doc_id": "peraturan-menag-10-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
-      },
-      {
         "doc_id": "peraturan-menag-12-2025",
         "depth": 4,
         "internal_nodes": 9,
@@ -1577,14 +1566,6 @@
         "total_nodes": 18
       },
       {
-        "doc_id": "permenperin-25-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
-      },
-      {
         "doc_id": "permenperin-3-2026",
         "depth": 1,
         "internal_nodes": 0,
@@ -2260,13 +2241,10 @@
   },
   "ayat": {
     "granularity": "ayat",
-    "n_files": 310,
+    "n_files": 308,
     "n_docs": 308,
-    "n_empty": 2,
-    "empty_docs": [
-      "peraturan-menag-10-2025",
-      "permenperin-25-2025"
-    ],
+    "n_empty": 0,
+    "empty_docs": [],
     "avg_depth": 3.57,
     "p95_depth": 5,
     "max_depth": 6,
@@ -3102,14 +3080,6 @@
         "total_nodes": 40
       },
       {
-        "doc_id": "peraturan-menag-10-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
-      },
-      {
         "doc_id": "peraturan-menag-12-2025",
         "depth": 5,
         "internal_nodes": 25,
@@ -3887,14 +3857,6 @@
         "total_nodes": 52
       },
       {
-        "doc_id": "permenperin-25-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
-      },
-      {
         "doc_id": "permenperin-3-2026",
         "depth": 2,
         "internal_nodes": 11,
@@ -4570,13 +4532,10 @@
   },
   "rincian": {
     "granularity": "rincian",
-    "n_files": 310,
+    "n_files": 308,
     "n_docs": 308,
-    "n_empty": 2,
-    "empty_docs": [
-      "peraturan-menag-10-2025",
-      "permenperin-25-2025"
-    ],
+    "n_empty": 0,
+    "empty_docs": [],
     "avg_depth": 4.86,
     "p95_depth": 6,
     "max_depth": 7,
@@ -5459,14 +5418,6 @@
         "total_nodes": 68
       },
       {
-        "doc_id": "peraturan-menag-10-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
-      },
-      {
         "doc_id": "peraturan-menag-12-2025",
         "depth": 6,
         "internal_nodes": 46,
@@ -6242,14 +6193,6 @@
         "internal_nodes": 29,
         "leaf_nodes": 76,
         "total_nodes": 105
-      },
-      {
-        "doc_id": "permenperin-25-2025",
-        "depth": 0,
-        "internal_nodes": 0,
-        "leaf_nodes": 0,
-        "total_nodes": 0,
-        "note": "empty_structure"
       },
       {
         "doc_id": "permenperin-3-2026",
