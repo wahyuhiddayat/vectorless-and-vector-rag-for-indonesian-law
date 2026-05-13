@@ -42,10 +42,10 @@ def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[di
     corpus = []
     for doc in catalog:
         combined = " ".join([
-            doc.get("judul", ""),
-            doc.get("bidang", ""),
-            doc.get("subjek", ""),
-            doc.get("materi_pokok", ""),
+            doc.get("judul") or "",
+            doc.get("bidang") or "",
+            doc.get("subjek") or "",
+            doc.get("materi_pokok") or "",
         ])
         corpus.append(tokenize(combined))
 
