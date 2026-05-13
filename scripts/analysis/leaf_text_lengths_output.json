@@ -1,0 +1,35 @@
+{
+  "pasal": {
+    "granularity": "pasal",
+    "n_leaves": 7271,
+    "avg": 759,
+    "median": 498,
+    "p95": 2224,
+    "p99": 4485,
+    "max": 11222,
+    "pct_above_5000": 0.7,
+    "pct_above_10000": 0.1
+  },
+  "ayat": {
+    "granularity": "ayat",
+    "n_leaves": 18205,
+    "avg": 299,
+    "median": 196,
+    "p95": 747,
+    "p99": 2242,
+    "max": 11222,
+    "pct_above_5000": 0.2,
+    "pct_above_10000": 0.0
+  },
+  "rincian": {
+    "granularity": "rincian",
+    "n_leaves": 38006,
+    "avg": 126,
+    "median": 106,
+    "p95": 309,
+    "p99": 450,
+    "max": 3128,
+    "pct_above_5000": 0.0,
+    "pct_above_10000": 0.0
+  }
+}
