@@ -102,11 +102,11 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
     return out
 
 
-def raptor_finalize(submitted_ids: list[str],
-                    visited_ids: list[str],
-                    fallback_ids: list[str],
-                    top_k: int) -> tuple[list[str], list[str]]:
-    """Finalize an agentic retrieval ranking with RAPTOR-style fallback.
+def agentic_finalize(submitted_ids: list[str],
+                     visited_ids: list[str],
+                     fallback_ids: list[str],
+                     top_k: int) -> tuple[list[str], list[str]]:
+    """Finalize an agentic retrieval ranking with three-layer fallback.
 
     Builds the final ordered list of `top_k` node_ids by stacking three layers
     in order of preference, deduplicating across layers:
@@ -114,9 +114,8 @@ def raptor_finalize(submitted_ids: list[str],
       2. visited_unsubmitted node_ids visited during navigation but not submitted
       3. bm25_fallback      ranked fallback (typically BM25 over doc leaves)
 
-    Mirrors the tree-retrieval evaluation convention used by Sarthi et al.
-    (RAPTOR, ICLR 2024) where the final retrieved set is a fixed-cardinality
-    list capped at top_k.
+    The three-layer stacking ensures the final output always has up to top_k
+    unique IDs, with the agent's explicit choices taking priority over BM25.
 
     Args:
         submitted_ids: ordered ids submitted by the agent, most relevant first.

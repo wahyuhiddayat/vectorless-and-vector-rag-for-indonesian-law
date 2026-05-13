@@ -1,14 +1,16 @@
 """Agentic LLM retrieval for Indonesian legal QA, PageIndex-style.
 
-The LLM acts as an agent. The full document outline (titles and summaries
-without leaf text) is exposed in the prompt context so the agent always
-sees the complete map of the active document. Each step the agent picks
-one of inspect_doc, expand, read, or submit, observes the result, then
-plans the next step.
+The LLM acts as an agent exploring a document tree. Only the root level
+(bab) is visible initially. The agent uses expand() to progressively
+discover child nodes, read() to inspect leaf text, and submit() to
+finalize the ranking. This mirrors PageIndex's design: the tree is
+discovered step by step, not exposed all at once.
 
-doc_search picks one document from the catalog first, then the agent
-navigates inside that document. This mirrors PageIndex, which scopes its
-agent to a single pre-selected document.
+doc_search picks one document from the catalog first (1 LLM call), then
+the agent navigates inside that document with budgeted tools. After the
+agent loop exhausts its budget or submits, a three-layer fallback fills
+remaining top-k slots: agent submit → visited nodes → BM25 (scoped to
+the primary document).
 
 Usage:
     python -m vectorless.retrieval.llm.agentic "Apa syarat penyadapan?"
@@ -25,7 +27,7 @@ from rank_bm25 import BM25Okapi
 from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
     load_catalog, load_doc, find_node, save_log,
-    raptor_finalize, tokenize,
+    agentic_finalize, tokenize,
 )
 
 
@@ -67,9 +69,8 @@ Aturan:
     return result
 
 
-MAX_ACTIONS = 25
-MAX_READS = 12
-READ_TEXT_CAP = 5000
+MAX_ACTIONS = 20
+MAX_READS = 15
 OBSERVATION_RENDER_CAP = 1800
 SCRATCHPAD_RECENT_FULL = 2
 DEFAULT_TOP_K = 10
@@ -99,8 +100,14 @@ def _tool_inspect_doc(doc: dict) -> dict:
     }
 
 
-def _render_tree_outline(nodes: list[dict], depth: int = 0) -> str:
-    """Render the full document tree as an indented outline for the prompt."""
+def _render_progressive(nodes: list[dict], expanded_ids: set[str], depth: int = 0) -> str:
+    """Render the document tree progressively — only show children of expanded nodes.
+
+    At the start, only level-1 nodes (roots) are visible. When the agent calls
+    expand(node_id), that node's children become visible in subsequent prompts.
+    This mirrors PageIndex's progressive tree exploration: the agent discovers
+    structure step by step rather than seeing the full tree upfront.
+    """
     lines: list[str] = []
     indent = "  " * depth
     for n in nodes:
@@ -112,8 +119,8 @@ def _render_tree_outline(nodes: list[dict], depth: int = 0) -> str:
             head += f" :: {summary}"
         lines.append(head)
         children = n.get("nodes") or []
-        if children:
-            lines.append(_render_tree_outline(children, depth + 1))
+        if children and node_id in expanded_ids:
+            lines.append(_render_progressive(children, expanded_ids, depth + 1))
     return "\n".join(lines)
 
 
@@ -137,21 +144,20 @@ def _tool_expand(doc: dict, node_id: str) -> dict:
 
 
 def _tool_read(doc: dict, node_id: str) -> dict:
-    """Full text of one leaf node, capped, plus penjelasan if any."""
+    """Full text of one leaf node, plus penjelasan if any."""
     node = find_node(doc.get("structure", []), node_id)
     if node is None:
         return {"error": f"node_id '{node_id}' not found in doc '{doc.get('doc_id')}'"}
-    text = (node.get("text") or "")[:READ_TEXT_CAP]
     out = {
         "doc_id": doc.get("doc_id", ""),
         "node_id": node_id,
         "title": node.get("title", ""),
         "navigation_path": node.get("navigation_path", ""),
-        "text": text,
+        "text": node.get("text") or "",
     }
     penjelasan = node.get("penjelasan")
     if penjelasan and penjelasan != "Cukup jelas.":
-        out["penjelasan"] = penjelasan[:READ_TEXT_CAP]
+        out["penjelasan"] = penjelasan
     return out
 
 
@@ -189,41 +195,50 @@ def _render_scratchpad(scratchpad: list[dict]) -> str:
 def _build_prompt(query: str, scratchpad: list[dict],
                   actions_left: int, reads_left: int,
                   primary_doc_id: str, primary_doc_title: str,
-                  tree_outline: str) -> str:
+                  visible_outline: str) -> str:
     """Build the next-step prompt for the agent."""
     tools = [
-        "- inspect_doc()                            ulang struktur lengkap dokumen aktif",
-        "- expand(node_id)                          anak satu node, berguna jika outline terlalu padat",
-        "- read(node_id)                            teks lengkap satu leaf, hemat anggaran",
-        '- submit(node_ids, reasoning)              finalisasi pilihan terurut, paling relevan dulu, hingga 10 node_ids,',
-        '                                            contoh node_ids ["pasal_3_ayat_2", "pasal_5_ayat_1", "pasal_7"]',
+        "- inspect_doc()                            reset tampilan ke level atas (bab-bab)",
+        "- expand(node_id)                          lihat anak dari satu node (pasal/ayat dalam bab)",
+        "- read(node_id)                            baca teks lengkap satu pasal/ayat",
+        '- submit(node_ids, reasoning)              finalisasi, node_ids terurut relevansi (max 10)',
     ]
 
     rules = [
-        "- Setiap balasan WAJIB JSON valid berisi field thinking, action, args.",
-        "- Outline lengkap dokumen sudah disertakan di bawah. Pakai langsung untuk memilih node.",
-        "- Pakai read hanya saat butuh memverifikasi isi sebuah leaf sebelum submit.",
-        f"- Sisa anggaran action = {actions_left}, sisa anggaran read = {reads_left}.",
-        "- Submit dengan node_ids TERURUT dari paling relevan ke paling tidak relevan.",
-        "- Submit hingga 10 node_ids. Bisa kurang jika hanya beberapa yang benar-benar relevan.",
-        "- Jangan ulangi action persis sama dengan langkah sebelumnya.",
-        "- Kembalikan HANYA JSON, tanpa teks lain.",
+        "- Setiap balasan WAJIB JSON.",
+        "- Struktur di bawah adalah pohon dokumen yang sudah dieksplorasi sejauh ini.",
+        "- Pakai expand() untuk melihat anak-anak node. Pakai inspect_doc() untuk reset ke atas.",
+        "- Pakai read() hanya untuk verifikasi isi leaf sebelum submit.",
+        f"- Sisa action = {actions_left}, sisa read = {reads_left}.",
+        "- Submit node_ids TERURUT (paling relevan pertama). Maksimal 10.",
+        "- Jangan ulangi action yang sama persis dengan langkah sebelumnya.",
+        "- Kembalikan HANYA JSON.",
     ]
 
+    strategy = (
+        "STRATEGI NAVIGASI:\n"
+        "1. Scan judul dan ringkasan bab (level 1). Pilih bab yang paling relevan.\n"
+        "2. expand(bab_terpilih) untuk melihat pasal-pasal di dalamnya.\n"
+        "3. Scan judul dan ringkasan pasal. Pilih pasal yang menjanjikan.\n"
+        "4. read(pasal_terpilih) untuk membaca teks lengkap.\n"
+        "5. Bila isi tidak sesuai, baca pasal tetangganya — relevansi sering berurutan.\n"
+        "6. submit() dengan daftar node_id paling relevan ke kurang relevan.\n"
+    )
+
     return (
-        "Kamu adalah agen retrieval dokumen hukum Indonesia. Pilih node yang paling "
-        "relevan untuk menjawab pertanyaan dari satu peraturan.\n\n"
+        "Kamu adalah agen retrieval dokumen hukum Indonesia. "
+        "Tugas: temukan pasal/ayat yang relevan untuk menjawab pertanyaan.\n\n"
         f"Pertanyaan: {query}\n\n"
-        f"Dokumen aktif: {primary_doc_id} - {primary_doc_title}. "
-        "Semua tool memakai dokumen ini secara implisit.\n\n"
-        "Struktur dokumen aktif (titles + summaries, tanpa teks isi).\n"
-        f"{tree_outline}\n\n"
+        f"Dokumen aktif: {primary_doc_id} - {primary_doc_title}\n\n"
+        f"{strategy}\n"
+        "Struktur dokumen (tampilan progresif — expand untuk melihat lebih dalam).\n"
+        f"{visible_outline}\n\n"
         "Tools.\n" + "\n".join(tools) + "\n\n"
         "Aturan.\n" + "\n".join(rules) + "\n\n"
         "Riwayat tindakan.\n" + _render_scratchpad(scratchpad) + "\n\n"
-        "Format balasan.\n"
+        "Format balasan:\n"
         "{\n"
-        '  "thinking": "<satu kalimat alasan>",\n'
+        '  "thinking": "<alasan>",\n'
         '  "action": "inspect_doc" | "expand" | "read" | "submit",\n'
         '  "args": { ... }\n'
         "}\n\n"
@@ -375,7 +390,7 @@ def retrieve(query: str,
     primary_doc_id = doc_ids[0]
     primary_doc = _get_doc(primary_doc_id)
     primary_doc_title = primary_doc.get("judul", "")
-    tree_outline = _render_tree_outline(primary_doc.get("structure", []))
+    expanded_ids: set[str] = set()
     scratchpad.append({
         "step": 0,
         "action": "doc_search",
@@ -393,13 +408,14 @@ def retrieve(query: str,
     parse_failures = 0
 
     while actions_used < max_actions and not submitted:
+        visible_outline = _render_progressive(primary_doc.get("structure", []), expanded_ids)
         prompt = _build_prompt(
             query, scratchpad,
             actions_left=max_actions - actions_used,
             reads_left=max_reads - reads_used,
             primary_doc_id=primary_doc_id,
             primary_doc_title=primary_doc_title,
-            tree_outline=tree_outline,
+            visible_outline=visible_outline,
         )
 
         try:
@@ -425,6 +441,7 @@ def retrieve(query: str,
         observation: dict = {}
 
         if action == "inspect_doc":
+            expanded_ids.clear()
             observation = _tool_inspect_doc(primary_doc)
 
         elif action == "expand":
@@ -433,7 +450,9 @@ def retrieve(query: str,
                 observation = {"error": "expand requires node_id."}
             else:
                 obs = _tool_expand(primary_doc, node_id)
-                if "error" in obs:
+                if "error" not in obs:
+                    expanded_ids.add(node_id)
+                else:
                     obs["hint_nearby"] = _siblings_hint(primary_doc, node_id)
                 observation = obs
 
@@ -515,7 +534,7 @@ def retrieve(query: str,
     visited_ids = _collect_visited_node_ids(scratchpad)
     doc_leaves = _collect_doc_leaf_ids(primary_doc)
     bm25_fallback_ids = _bm25_rank_leaves(query, doc_leaves, doc_title=primary_doc_title)
-    final_ids, slot_labels = raptor_finalize(
+    final_ids, slot_labels = agentic_finalize(
         submitted_ids=submitted_ids,
         visited_ids=visited_ids,
         fallback_ids=bm25_fallback_ids,
@@ -570,6 +589,7 @@ def retrieve(query: str,
         "agent": {
             "actions_used": actions_used,
             "reads_used": reads_used,
+            "expanded_ids": list(expanded_ids),
             "submitted": submitted,
             "submitted_count": len(submitted_ids),
             "visited_count": len(visited_ids),
