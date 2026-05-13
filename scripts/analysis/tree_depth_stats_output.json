@@ -1,0 +1,6928 @@
+{
+  "pasal": {
+    "granularity": "pasal",
+    "n_files": 310,
+    "n_docs": 308,
+    "n_empty": 2,
+    "empty_docs": [
+      "peraturan-menag-10-2025",
+      "permenperin-25-2025"
+    ],
+    "avg_depth": 2.59,
+    "p95_depth": 4,
+    "max_depth": 5,
+    "depth_distribution": {
+      "1": 47,
+      "2": 70,
+      "3": 155,
+      "4": 35,
+      "5": 1
+    },
+    "avg_branching": 17.7,
+    "p95_branching": 43,
+    "max_branching": 108,
+    "kid_count_distribution": {
+      "1": 2,
+      "2": 4,
+      "3": 12,
+      "4": 19,
+      "5": 12,
+      "6": 14,
+      "7": 14,
+      "8": 24,
+      "9": 31,
+      "10": 28,
+      "11": 22,
+      "12": 27,
+      "13": 20,
+      "14": 20,
+      "15": 27,
+      "16": 15,
+      "17": 15,
+      "18": 13,
+      "19": 9,
+      "20": 11,
+      "21": 12,
+      "22": 11,
+      "23": 13,
+      "24": 17,
+      "25": 9,
+      "26": 9,
+      "27": 5,
+      "28": 9,
+      "29": 7,
+      "30": 1,
+      "31": 4,
+      "32": 7,
+      "33": 2,
+      "34": 2,
+      "35": 4,
+      "36": 3,
+      "37": 2,
+      "38": 2,
+      "39": 1,
+      "40": 1,
+      "41": 1,
+      "42": 3,
+      "43": 5,
+      "44": 3,
+      "45": 1,
+      "46": 2,
+      "50": 1,
+      "55": 1,
+      "56": 1,
+      "60": 1,
+      "61": 1,
+      "66": 1,
+      "67": 1,
+      "69": 1,
+      "74": 1,
+      "86": 1,
+      "88": 1,
+      "89": 1,
+      "92": 1,
+      "108": 1
+    },
+    "per_doc": [
+      {
+        "doc_id": "peraturan-bi-12-2024",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 33,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "peraturan-bi-13-2023",
+        "depth": 3,
+        "internal_nodes": 34,
+        "leaf_nodes": 34,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "peraturan-bi-13-2024",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 45,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "peraturan-bi-3-2026",
+        "depth": 4,
+        "internal_nodes": 44,
+        "leaf_nodes": 112,
+        "total_nodes": 156
+      },
+      {
+        "doc_id": "peraturan-bi-4-2024",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 48,
+        "total_nodes": 67
+      },
+      {
+        "doc_id": "peraturan-bi-7-2024",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 19,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "peraturan-bi-7-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 22,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "peraturan-bi-8-2024",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 29,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "peraturan-bi-9-2024",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 33,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "peraturan-bi-9-2025",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 18,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "peraturan-bpom-12-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 15,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-bpom-13-2025",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 24,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "peraturan-bpom-18-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 26,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "peraturan-bpom-19-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 7,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "peraturan-bpom-22-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 33,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "peraturan-bpom-23-2025",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 11,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-bpom-24-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 16,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "peraturan-bpom-26-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 4,
+        "total_nodes": 4
+      },
+      {
+        "doc_id": "peraturan-bpom-31-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 20,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "peraturan-bpom-32-2025",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 17,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "peraturan-bssn-1-2025",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 32,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "peraturan-bssn-10-2023",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 12,
+        "total_nodes": 12
+      },
+      {
+        "doc_id": "peraturan-bssn-12-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 14,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "peraturan-bssn-13-2024",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 19,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "peraturan-bssn-14-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 7,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2024",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 25,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2025",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 10,
+        "total_nodes": 11
+      },
+      {
+        "doc_id": "peraturan-bssn-4-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 15,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-bssn-5-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 8,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "peraturan-bssn-9-2023",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 16,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "peraturan-kpu-13-2024",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 76,
+        "total_nodes": 104
+      },
+      {
+        "doc_id": "peraturan-kpu-14-2023",
+        "depth": 4,
+        "internal_nodes": 39,
+        "leaf_nodes": 39,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "peraturan-kpu-15-2024",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 9,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-kpu-16-2024",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 18,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2023",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 68,
+        "total_nodes": 92
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 8,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 9,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2025",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 30,
+        "total_nodes": 49
+      },
+      {
+        "doc_id": "peraturan-kpu-21-2023",
+        "depth": 3,
+        "internal_nodes": 63,
+        "leaf_nodes": 102,
+        "total_nodes": 165
+      },
+      {
+        "doc_id": "peraturan-kpu-8-2023",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 29,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "perma-1-2022",
+        "depth": 4,
+        "internal_nodes": 30,
+        "leaf_nodes": 34,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "perma-1-2024",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 23,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "perma-14-2016",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 15,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "perma-2-2019",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 12,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "perma-2-2021",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 11,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "perma-2-2022",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 25,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "perma-2-2023",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 14,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "perma-3-2023",
+        "depth": 3,
+        "internal_nodes": 16,
+        "leaf_nodes": 31,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "perma-6-2019",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 16,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "perma-7-2018",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 23,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "peraturan-ojk-1-2026",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 38,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "peraturan-ojk-12-2025",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 47,
+        "total_nodes": 67
+      },
+      {
+        "doc_id": "peraturan-ojk-19-2025",
+        "depth": 3,
+        "internal_nodes": 21,
+        "leaf_nodes": 33,
+        "total_nodes": 54
+      },
+      {
+        "doc_id": "peraturan-ojk-2-2026",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 45,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "peraturan-ojk-24-2025",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 21,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "peraturan-ojk-29-2025",
+        "depth": 3,
+        "internal_nodes": 37,
+        "leaf_nodes": 46,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "peraturan-ojk-32-2025",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 18,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "peraturan-ojk-38-2025",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 21,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "peraturan-ojk-39-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 17,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "peraturan-ojk-9-2025",
+        "depth": 3,
+        "internal_nodes": 22,
+        "leaf_nodes": 38,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "peraturan-polri-11-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 10,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "peraturan-polri-15-2024",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 43,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "peraturan-polri-2-2024",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 23,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "peraturan-polri-2-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 16,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "peraturan-polri-3-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 13,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "peraturan-polri-5-2024",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 28,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "peraturan-polri-6-2023",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 22,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "peraturan-polri-7-2023",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 29,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "peraturan-polri-7-2025",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 12,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "peraturan-polri-9-2024",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 13,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "perbup-banyuwangi-10-2026",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 4,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "perbup-banyuwangi-7-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 6,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "perbup-brebes-6-2026",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 10,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "perbup-jombang-9-2026",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 13,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "perbup-karawang-6-2026",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 9,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "perbup-karawang-9-2026",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 9,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "perbup-kediri-17-2026",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 13,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "perbup-kediri-6-2026",
+        "depth": 3,
+        "internal_nodes": 18,
+        "leaf_nodes": 24,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "perbup-kendal-6-2026",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 20,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "perbup-majalengka-38-2026",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 14,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "perda-banjarmasin-3-2026",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 51,
+        "total_nodes": 74
+      },
+      {
+        "doc_id": "perda-binjai-1-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 18,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-2-2026",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 27,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-5-2021",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 29,
+        "total_nodes": 56
+      },
+      {
+        "doc_id": "perda-kendal-1-2026",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 9,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "perda-kudus-4-2026",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 38,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "perda-madiun-1-2026",
+        "depth": 3,
+        "internal_nodes": 2,
+        "leaf_nodes": 2,
+        "total_nodes": 4
+      },
+      {
+        "doc_id": "perda-pakpak-bharat-2-2026",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 55,
+        "total_nodes": 79
+      },
+      {
+        "doc_id": "perda-pulang-pisau-1-2026",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 5,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "perda-surabaya-1-2026",
+        "depth": 2,
+        "internal_nodes": 2,
+        "leaf_nodes": 13,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "pergub-bali-44-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 40,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "pergub-banten-50-2025",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 20,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "pergub-bengkulu-45-2025",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 10,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "pergub-daerah-istimewa-yogyakarta-49-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 27,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-4-2026",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 28,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-5-2026",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 22,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-51-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 13,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-7-2026",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 15,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-9-2026",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 20,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "pergub-jawa-tengah-6-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "peraturan-menag-1-2026",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 10,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-menag-10-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "peraturan-menag-12-2025",
+        "depth": 4,
+        "internal_nodes": 9,
+        "leaf_nodes": 28,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "peraturan-menag-13-2025",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 15,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "peraturan-menag-2-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 15,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "peraturan-menag-27-2024",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 45,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "peraturan-menag-28-2024",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 38,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "peraturan-menag-4-2025",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 10,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "peraturan-menag-4-2026",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 32,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "peraturan-menag-8-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 10,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permenaker-1-2025",
+        "depth": 3,
+        "internal_nodes": 46,
+        "leaf_nodes": 56,
+        "total_nodes": 102
+      },
+      {
+        "doc_id": "permenaker-10-2024",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 30,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "permenaker-13-2024",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 11,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "permenaker-13-2025",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 17,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "permenaker-14-2025",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 39,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "permenaker-16-2024",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 15,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "permenaker-17-2024",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 18,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "permenaker-2-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 22,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "permenaker-5-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 21,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "permenaker-9-2024",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 16,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "permen-bumn-per-01-mbu-03-2020-2020",
+        "depth": 3,
+        "internal_nodes": 50,
+        "leaf_nodes": 141,
+        "total_nodes": 191
+      },
+      {
+        "doc_id": "permen-bumn-per-05-mbu-04-2021-2021",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 32,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "permen-bumn-per-06-mbu-04-2021-2021",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 14,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-01-2022-2022",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 11,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2021-2021",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 16,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2023-2023",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 42,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permen-bumn-per-11-mbu-07-2021-2021",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 24,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permen-bumn-per-4-mbu-06-2022-2022",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 12,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "permen-bumn-per-6-mbu-09-2022-2022",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 9,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "permen-bumn-per-9-mbu-06-2021-2021",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 15,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permendag-1-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 38,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "permendag-23-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 5,
+        "total_nodes": 5
+      },
+      {
+        "doc_id": "permendag-28-2024",
+        "depth": 3,
+        "internal_nodes": 26,
+        "leaf_nodes": 29,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "permendag-3-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 6,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "permendag-39-2025",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 32,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "permendag-4-2026",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 32,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "permendag-41-2025",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 15,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permendag-47-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 9,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "permendag-7-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 17,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "permendag-9-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 7,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "permendagri-1-2025",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 27,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "permendagri-13-2025",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 12,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "permendagri-16-2024",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 19,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "permendagri-19-2024",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 43,
+        "total_nodes": 65
+      },
+      {
+        "doc_id": "permendagri-2-2024",
+        "depth": 3,
+        "internal_nodes": 16,
+        "leaf_nodes": 19,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "permendagri-21-2024",
+        "depth": 3,
+        "internal_nodes": 25,
+        "leaf_nodes": 75,
+        "total_nodes": 100
+      },
+      {
+        "doc_id": "permendagri-22-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 22,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "permendagri-3-2024",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 36,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "permendagri-6-2024",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 33,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "permendagri-7-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 32,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "permendikbud-10-2021",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 22,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "permendikbud-11-2021",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 24,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "permendikbud-35-2020",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 18,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "permendikbud-38-2020",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 26,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "permendikbud-4-2021",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 9,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "permendikbud-40-2020",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permendikbud-6-2021",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 31,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "permendikbud-7-2021",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 5,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "permendikbud-8-2021",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 15,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "permendikbud-9-2021",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 28,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "permendikbudristek-36-2024",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 27,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "permendikbudristek-40-2024",
+        "depth": 3,
+        "internal_nodes": 3,
+        "leaf_nodes": 2,
+        "total_nodes": 5
+      },
+      {
+        "doc_id": "permendikbudristek-45-2024",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 10,
+        "total_nodes": 11
+      },
+      {
+        "doc_id": "permendikbudristek-46-2024",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 12,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "permendikbudristek-50-2024",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 28,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "permendikbudristek-58-2024",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 25,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "permendikbudristek-63-2024",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 37,
+        "total_nodes": 54
+      },
+      {
+        "doc_id": "permendikbudristek-66-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 19,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permendikbudristek-67-2024",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 15,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permendikbudristek-71-2024",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 24,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "permenkes-1-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permenkes-10-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 11,
+        "total_nodes": 11
+      },
+      {
+        "doc_id": "permenkes-15-2024",
+        "depth": 3,
+        "internal_nodes": 26,
+        "leaf_nodes": 52,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "permenkes-16-2024",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 28,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "permenkes-18-2024",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 29,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "permenkes-23-2023",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 12,
+        "total_nodes": 12
+      },
+      {
+        "doc_id": "permenkes-3-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 6,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "permenkes-3-2025",
+        "depth": 2,
+        "internal_nodes": 11,
+        "leaf_nodes": 36,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "permenkes-33-2023",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 35,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permenkes-7-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 5,
+        "total_nodes": 5
+      },
+      {
+        "doc_id": "permenkomdigi-1-2026",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 26,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "permenkomdigi-10-2025",
+        "depth": 3,
+        "internal_nodes": 46,
+        "leaf_nodes": 61,
+        "total_nodes": 107
+      },
+      {
+        "doc_id": "permenkomdigi-13-2025",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 13,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permenkomdigi-17-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 15,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permenkomdigi-18-2025",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 24,
+        "total_nodes": 34
+      },
+      {
+        "doc_id": "permenkomdigi-2-2026",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 26,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "permenkomdigi-20-2025",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 27,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "permenkomdigi-5-2026",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 35,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "permenkomdigi-6-2026",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 30,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "permenkomdigi-7-2026",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 34,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permenkominfo-1-2023",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 14,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "permenkominfo-1-2024",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 17,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permenkominfo-10-2023",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 16,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "permenkominfo-15-2022",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 21,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "permenkominfo-16-2022",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 32,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "permenkominfo-2-2024",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 24,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "permenkominfo-3-2023",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 14,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "permenkominfo-5-2024",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 43,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "permenkominfo-8-2023",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 18,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "permenkominfo-8-2024",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 24,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "permenkumham-10-2024",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 10,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permenkumham-11-2024",
+        "depth": 3,
+        "internal_nodes": 40,
+        "leaf_nodes": 45,
+        "total_nodes": 85
+      },
+      {
+        "doc_id": "permenkumham-13-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 19,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permenkumham-15-2024",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 38,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "permenkumham-16-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 7,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "permenkumham-17-2024",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 48,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "permenkumham-18-2024",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 15,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "permenkumham-2-2024",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 21,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "permenkumham-20-2024",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 11,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permenkumham-22-2024",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 21,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "permenperin-22-2025",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 8,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permenperin-23-2025",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 8,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permenperin-24-2025",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 9,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "permenperin-25-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "permenperin-3-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 16,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permenperin-37-2025",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 25,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "permenperin-40-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permenperin-5-2026",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 44,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "permenperin-6-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 6,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "permenperin-8-2026",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 34,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-1-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 25,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-13-2025",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 16,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-14-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-19-2024",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 8,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2022",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 18,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2025",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 12,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-5-2025",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 24,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-7-2025",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 8,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-8-2022",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 13,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-9-2022",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 10,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permen-esdm-1-2025",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 14,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "permen-esdm-10-2025",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 20,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "permen-esdm-11-2024",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 22,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "permen-esdm-13-2024",
+        "depth": 2,
+        "internal_nodes": 11,
+        "leaf_nodes": 37,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permen-esdm-14-2025",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 34,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permen-esdm-15-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 10,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permen-esdm-2-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 9,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permen-esdm-4-2025",
+        "depth": 2,
+        "internal_nodes": 12,
+        "leaf_nodes": 46,
+        "total_nodes": 58
+      },
+      {
+        "doc_id": "permen-esdm-6-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 9,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permen-esdm-8-2025",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 41,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permen-pupr-11-2023",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 14,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "permen-pupr-12-2023",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 29,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "permen-pupr-12-2024",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 37,
+        "total_nodes": 56
+      },
+      {
+        "doc_id": "permen-pupr-13-2024",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 19,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "permen-pupr-4-2022",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 14,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "permen-pupr-5-2024",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 19,
+        "total_nodes": 34
+      },
+      {
+        "doc_id": "permen-pupr-6-2024",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 24,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "permen-pupr-7-2023",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 10,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permen-pupr-8-2024",
+        "depth": 3,
+        "internal_nodes": 35,
+        "leaf_nodes": 37,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permen-pupr-9-2022",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 15,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "perpres-1-2026",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 21,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "perpres-11-2026",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 26,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "perpres-118-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 13,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "perpres-119-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 13,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "perpres-120-2025",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 34,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "perpres-14-2026",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 24,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "perpres-2-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 8,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "perpres-4-2026",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 29,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "perpres-5-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 16,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "perpres-9-2026",
+        "depth": 3,
+        "internal_nodes": 22,
+        "leaf_nodes": 58,
+        "total_nodes": 80
+      },
+      {
+        "doc_id": "perpu-1-2000",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 16,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "perpu-1-2002",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 44,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "perpu-1-2008",
+        "depth": 3,
+        "internal_nodes": 3,
+        "leaf_nodes": 3,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "perpu-1-2013",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 12,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "perpu-1-2016",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 5,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "perpu-1-2017",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "perpu-1-2020",
+        "depth": 3,
+        "internal_nodes": 16,
+        "leaf_nodes": 29,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "perpu-1-2022",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 14,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "perpu-2-1998",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 17,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "perpu-4-2008",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 31,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "perwali-bandung-11-2026",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 23,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "perwali-bandung-12-2026",
+        "depth": 2,
+        "internal_nodes": 13,
+        "leaf_nodes": 17,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "perwali-bandung-15-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 10,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "perwali-bandung-16-2026",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 9,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "perwali-bandung-7-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 6,
+        "total_nodes": 6
+      },
+      {
+        "doc_id": "perwali-batu-11-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 7,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "perwali-batu-12-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 9,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "perwali-semarang-10-2026",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 26,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "perwali-semarang-7-2026",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 19,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "perwali-surabaya-9-2026",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 15,
+        "total_nodes": 27
+      },
+      {
+        "doc_id": "pmk-102-2025",
+        "depth": 2,
+        "internal_nodes": 13,
+        "leaf_nodes": 24,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "pmk-107-2025",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 23,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "pmk-111-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 30,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "pmk-112-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 29,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "pmk-113-2025",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 20,
+        "total_nodes": 34
+      },
+      {
+        "doc_id": "pmk-118-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 16,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "pmk-15-2026",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 12,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "pmk-21-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 8,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "pmk-84-2025",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 39,
+        "total_nodes": 65
+      },
+      {
+        "doc_id": "pmk-99-2025",
+        "depth": 3,
+        "internal_nodes": 28,
+        "leaf_nodes": 34,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "pp-3-2026",
+        "depth": 3,
+        "internal_nodes": 62,
+        "leaf_nodes": 67,
+        "total_nodes": 129
+      },
+      {
+        "doc_id": "pp-35-2025",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 16,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "pp-37-2025",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 21,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "pp-38-2025",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 33,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "pp-39-2025",
+        "depth": 3,
+        "internal_nodes": 40,
+        "leaf_nodes": 73,
+        "total_nodes": 113
+      },
+      {
+        "doc_id": "pp-48-2025",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 50,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "pp-49-2025",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 27,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "pp-50-2025",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 8,
+        "total_nodes": 12
+      },
+      {
+        "doc_id": "pp-55-2025",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 23,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "pp-9-2026",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 21,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "uu-119-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 10,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "uu-13-2025",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 9,
+        "total_nodes": 12
+      },
+      {
+        "doc_id": "uu-15-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 13,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "uu-16-2025",
+        "depth": 3,
+        "internal_nodes": 84,
+        "leaf_nodes": 96,
+        "total_nodes": 180
+      },
+      {
+        "doc_id": "uu-18-2025",
+        "depth": 5,
+        "internal_nodes": 59,
+        "leaf_nodes": 107,
+        "total_nodes": 166
+      },
+      {
+        "doc_id": "uu-3-2025",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 9,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "uu-60-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 13,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "uu-62-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 53,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "uu-63-2024",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 12,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "uu-72-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 10,
+        "total_nodes": 13
+      }
+    ]
+  },
+  "ayat": {
+    "granularity": "ayat",
+    "n_files": 310,
+    "n_docs": 308,
+    "n_empty": 2,
+    "empty_docs": [
+      "peraturan-menag-10-2025",
+      "permenperin-25-2025"
+    ],
+    "avg_depth": 3.57,
+    "p95_depth": 5,
+    "max_depth": 6,
+    "depth_distribution": {
+      "1": 2,
+      "2": 45,
+      "3": 73,
+      "4": 153,
+      "5": 34,
+      "6": 1
+    },
+    "avg_branching": 29.95,
+    "p95_branching": 80,
+    "max_branching": 193,
+    "kid_count_distribution": {
+      "1": 2,
+      "2": 14,
+      "3": 6,
+      "4": 9,
+      "5": 5,
+      "6": 12,
+      "7": 18,
+      "8": 21,
+      "9": 36,
+      "10": 23,
+      "11": 23,
+      "12": 24,
+      "13": 21,
+      "14": 25,
+      "15": 26,
+      "16": 26,
+      "17": 21,
+      "18": 12,
+      "19": 18,
+      "20": 18,
+      "21": 22,
+      "22": 18,
+      "23": 18,
+      "24": 25,
+      "25": 17,
+      "26": 15,
+      "27": 10,
+      "28": 18,
+      "29": 7,
+      "30": 9,
+      "31": 11,
+      "32": 11,
+      "33": 10,
+      "34": 9,
+      "35": 11,
+      "36": 11,
+      "37": 8,
+      "38": 8,
+      "39": 10,
+      "40": 7,
+      "41": 8,
+      "42": 10,
+      "43": 9,
+      "44": 7,
+      "45": 6,
+      "46": 4,
+      "47": 6,
+      "48": 4,
+      "49": 5,
+      "50": 5,
+      "51": 1,
+      "52": 6,
+      "53": 6,
+      "54": 1,
+      "55": 5,
+      "56": 3,
+      "57": 3,
+      "58": 6,
+      "59": 3,
+      "60": 2,
+      "61": 1,
+      "62": 3,
+      "63": 3,
+      "64": 1,
+      "65": 1,
+      "66": 3,
+      "67": 3,
+      "68": 3,
+      "69": 3,
+      "70": 1,
+      "71": 1,
+      "72": 1,
+      "73": 1,
+      "74": 5,
+      "76": 2,
+      "78": 1,
+      "79": 2,
+      "80": 2,
+      "81": 1,
+      "82": 1,
+      "83": 1,
+      "84": 2,
+      "86": 2,
+      "87": 1,
+      "88": 1,
+      "89": 1,
+      "90": 1,
+      "91": 1,
+      "92": 3,
+      "93": 1,
+      "95": 1,
+      "97": 1,
+      "98": 1,
+      "101": 1,
+      "102": 1,
+      "106": 1,
+      "111": 1,
+      "116": 1,
+      "124": 1,
+      "127": 2,
+      "128": 1,
+      "131": 1,
+      "142": 1,
+      "156": 1,
+      "167": 1,
+      "188": 1,
+      "189": 1,
+      "190": 2,
+      "192": 1,
+      "193": 2
+    },
+    "per_doc": [
+      {
+        "doc_id": "peraturan-bi-12-2024",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 62,
+        "total_nodes": 89
+      },
+      {
+        "doc_id": "peraturan-bi-13-2023",
+        "depth": 4,
+        "internal_nodes": 48,
+        "leaf_nodes": 83,
+        "total_nodes": 131
+      },
+      {
+        "doc_id": "peraturan-bi-13-2024",
+        "depth": 4,
+        "internal_nodes": 43,
+        "leaf_nodes": 87,
+        "total_nodes": 130
+      },
+      {
+        "doc_id": "peraturan-bi-3-2026",
+        "depth": 5,
+        "internal_nodes": 114,
+        "leaf_nodes": 264,
+        "total_nodes": 378
+      },
+      {
+        "doc_id": "peraturan-bi-4-2024",
+        "depth": 4,
+        "internal_nodes": 46,
+        "leaf_nodes": 101,
+        "total_nodes": 147
+      },
+      {
+        "doc_id": "peraturan-bi-7-2024",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 59,
+        "total_nodes": 86
+      },
+      {
+        "doc_id": "peraturan-bi-7-2025",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 51,
+        "total_nodes": 76
+      },
+      {
+        "doc_id": "peraturan-bi-8-2024",
+        "depth": 4,
+        "internal_nodes": 35,
+        "leaf_nodes": 96,
+        "total_nodes": 131
+      },
+      {
+        "doc_id": "peraturan-bi-9-2024",
+        "depth": 4,
+        "internal_nodes": 33,
+        "leaf_nodes": 72,
+        "total_nodes": 105
+      },
+      {
+        "doc_id": "peraturan-bi-9-2025",
+        "depth": 3,
+        "internal_nodes": 18,
+        "leaf_nodes": 37,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "peraturan-bpom-12-2025",
+        "depth": 2,
+        "internal_nodes": 9,
+        "leaf_nodes": 33,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "peraturan-bpom-13-2025",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 57,
+        "total_nodes": 76
+      },
+      {
+        "doc_id": "peraturan-bpom-18-2025",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 77,
+        "total_nodes": 104
+      },
+      {
+        "doc_id": "peraturan-bpom-19-2025",
+        "depth": 4,
+        "internal_nodes": 10,
+        "leaf_nodes": 15,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "peraturan-bpom-22-2025",
+        "depth": 4,
+        "internal_nodes": 34,
+        "leaf_nodes": 73,
+        "total_nodes": 107
+      },
+      {
+        "doc_id": "peraturan-bpom-23-2025",
+        "depth": 4,
+        "internal_nodes": 6,
+        "leaf_nodes": 16,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "peraturan-bpom-24-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 56,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "peraturan-bpom-26-2025",
+        "depth": 2,
+        "internal_nodes": 2,
+        "leaf_nodes": 11,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "peraturan-bpom-31-2025",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 37,
+        "total_nodes": 54
+      },
+      {
+        "doc_id": "peraturan-bpom-32-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 51,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "peraturan-bssn-1-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 46,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "peraturan-bssn-10-2023",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 36,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "peraturan-bssn-12-2024",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 44,
+        "total_nodes": 63
+      },
+      {
+        "doc_id": "peraturan-bssn-13-2024",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 44,
+        "total_nodes": 63
+      },
+      {
+        "doc_id": "peraturan-bssn-14-2024",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 9,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2024",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 71,
+        "total_nodes": 91
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 23,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "peraturan-bssn-4-2024",
+        "depth": 2,
+        "internal_nodes": 11,
+        "leaf_nodes": 46,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "peraturan-bssn-5-2025",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 17,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "peraturan-bssn-9-2023",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 40,
+        "total_nodes": 58
+      },
+      {
+        "doc_id": "peraturan-kpu-13-2024",
+        "depth": 5,
+        "internal_nodes": 86,
+        "leaf_nodes": 253,
+        "total_nodes": 339
+      },
+      {
+        "doc_id": "peraturan-kpu-14-2023",
+        "depth": 5,
+        "internal_nodes": 69,
+        "leaf_nodes": 113,
+        "total_nodes": 182
+      },
+      {
+        "doc_id": "peraturan-kpu-15-2024",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 26,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "peraturan-kpu-16-2024",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 39,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2023",
+        "depth": 5,
+        "internal_nodes": 70,
+        "leaf_nodes": 167,
+        "total_nodes": 237
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 13,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 12,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2025",
+        "depth": 5,
+        "internal_nodes": 34,
+        "leaf_nodes": 57,
+        "total_nodes": 91
+      },
+      {
+        "doc_id": "peraturan-kpu-21-2023",
+        "depth": 4,
+        "internal_nodes": 77,
+        "leaf_nodes": 125,
+        "total_nodes": 202
+      },
+      {
+        "doc_id": "peraturan-kpu-8-2023",
+        "depth": 5,
+        "internal_nodes": 27,
+        "leaf_nodes": 60,
+        "total_nodes": 87
+      },
+      {
+        "doc_id": "perma-1-2022",
+        "depth": 5,
+        "internal_nodes": 58,
+        "leaf_nodes": 143,
+        "total_nodes": 201
+      },
+      {
+        "doc_id": "perma-1-2024",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 47,
+        "total_nodes": 67
+      },
+      {
+        "doc_id": "perma-14-2016",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 29,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "perma-2-2019",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 19,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "perma-2-2021",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 34,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "perma-2-2022",
+        "depth": 4,
+        "internal_nodes": 29,
+        "leaf_nodes": 79,
+        "total_nodes": 108
+      },
+      {
+        "doc_id": "perma-2-2023",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 25,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "perma-3-2023",
+        "depth": 4,
+        "internal_nodes": 33,
+        "leaf_nodes": 110,
+        "total_nodes": 143
+      },
+      {
+        "doc_id": "perma-6-2019",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 53,
+        "total_nodes": 80
+      },
+      {
+        "doc_id": "perma-7-2018",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 39,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "peraturan-ojk-1-2026",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 117,
+        "total_nodes": 166
+      },
+      {
+        "doc_id": "peraturan-ojk-12-2025",
+        "depth": 4,
+        "internal_nodes": 52,
+        "leaf_nodes": 172,
+        "total_nodes": 224
+      },
+      {
+        "doc_id": "peraturan-ojk-19-2025",
+        "depth": 4,
+        "internal_nodes": 49,
+        "leaf_nodes": 85,
+        "total_nodes": 134
+      },
+      {
+        "doc_id": "peraturan-ojk-2-2026",
+        "depth": 4,
+        "internal_nodes": 48,
+        "leaf_nodes": 118,
+        "total_nodes": 166
+      },
+      {
+        "doc_id": "peraturan-ojk-24-2025",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 55,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "peraturan-ojk-29-2025",
+        "depth": 4,
+        "internal_nodes": 66,
+        "leaf_nodes": 173,
+        "total_nodes": 239
+      },
+      {
+        "doc_id": "peraturan-ojk-32-2025",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 37,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "peraturan-ojk-38-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 49,
+        "total_nodes": 70
+      },
+      {
+        "doc_id": "peraturan-ojk-39-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 43,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "peraturan-ojk-9-2025",
+        "depth": 4,
+        "internal_nodes": 43,
+        "leaf_nodes": 105,
+        "total_nodes": 148
+      },
+      {
+        "doc_id": "peraturan-polri-11-2024",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 15,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "peraturan-polri-15-2024",
+        "depth": 5,
+        "internal_nodes": 55,
+        "leaf_nodes": 114,
+        "total_nodes": 169
+      },
+      {
+        "doc_id": "peraturan-polri-2-2024",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 66,
+        "total_nodes": 90
+      },
+      {
+        "doc_id": "peraturan-polri-2-2025",
+        "depth": 2,
+        "internal_nodes": 13,
+        "leaf_nodes": 42,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "peraturan-polri-3-2025",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 25,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "peraturan-polri-5-2024",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 67,
+        "total_nodes": 90
+      },
+      {
+        "doc_id": "peraturan-polri-6-2023",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 53,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "peraturan-polri-7-2023",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 64,
+        "total_nodes": 89
+      },
+      {
+        "doc_id": "peraturan-polri-7-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 39,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "peraturan-polri-9-2024",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 14,
+        "total_nodes": 28
+      },
+      {
+        "doc_id": "perbup-banyuwangi-10-2026",
+        "depth": 4,
+        "internal_nodes": 6,
+        "leaf_nodes": 13,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "perbup-banyuwangi-7-2026",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 10,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "perbup-brebes-6-2026",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 37,
+        "total_nodes": 54
+      },
+      {
+        "doc_id": "perbup-jombang-9-2026",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 46,
+        "total_nodes": 66
+      },
+      {
+        "doc_id": "perbup-karawang-6-2026",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 19,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "perbup-karawang-9-2026",
+        "depth": 4,
+        "internal_nodes": 13,
+        "leaf_nodes": 13,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "perbup-kediri-17-2026",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 35,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "perbup-kediri-6-2026",
+        "depth": 4,
+        "internal_nodes": 29,
+        "leaf_nodes": 60,
+        "total_nodes": 89
+      },
+      {
+        "doc_id": "perbup-kendal-6-2026",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 34,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "perbup-majalengka-38-2026",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 36,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "perda-banjarmasin-3-2026",
+        "depth": 4,
+        "internal_nodes": 47,
+        "leaf_nodes": 106,
+        "total_nodes": 153
+      },
+      {
+        "doc_id": "perda-binjai-1-2026",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 36,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-2-2026",
+        "depth": 5,
+        "internal_nodes": 46,
+        "leaf_nodes": 88,
+        "total_nodes": 134
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-5-2021",
+        "depth": 5,
+        "internal_nodes": 44,
+        "leaf_nodes": 77,
+        "total_nodes": 121
+      },
+      {
+        "doc_id": "perda-kendal-1-2026",
+        "depth": 4,
+        "internal_nodes": 10,
+        "leaf_nodes": 25,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "perda-kudus-4-2026",
+        "depth": 5,
+        "internal_nodes": 37,
+        "leaf_nodes": 72,
+        "total_nodes": 109
+      },
+      {
+        "doc_id": "perda-madiun-1-2026",
+        "depth": 4,
+        "internal_nodes": 3,
+        "leaf_nodes": 11,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "perda-pakpak-bharat-2-2026",
+        "depth": 4,
+        "internal_nodes": 44,
+        "leaf_nodes": 101,
+        "total_nodes": 145
+      },
+      {
+        "doc_id": "perda-pulang-pisau-1-2026",
+        "depth": 4,
+        "internal_nodes": 7,
+        "leaf_nodes": 10,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "perda-surabaya-1-2026",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 30,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "pergub-bali-44-2025",
+        "depth": 4,
+        "internal_nodes": 32,
+        "leaf_nodes": 105,
+        "total_nodes": 137
+      },
+      {
+        "doc_id": "pergub-banten-50-2025",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 56,
+        "total_nodes": 84
+      },
+      {
+        "doc_id": "pergub-bengkulu-45-2025",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 29,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "pergub-daerah-istimewa-yogyakarta-49-2025",
+        "depth": 4,
+        "internal_nodes": 29,
+        "leaf_nodes": 54,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-4-2026",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 66,
+        "total_nodes": 92
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-5-2026",
+        "depth": 5,
+        "internal_nodes": 33,
+        "leaf_nodes": 61,
+        "total_nodes": 94
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-51-2025",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 28,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-7-2026",
+        "depth": 5,
+        "internal_nodes": 24,
+        "leaf_nodes": 41,
+        "total_nodes": 65
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-9-2026",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 51,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "pergub-jawa-tengah-6-2026",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 14,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "peraturan-menag-1-2026",
+        "depth": 3,
+        "internal_nodes": 13,
+        "leaf_nodes": 27,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "peraturan-menag-10-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "peraturan-menag-12-2025",
+        "depth": 5,
+        "internal_nodes": 25,
+        "leaf_nodes": 58,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "peraturan-menag-13-2025",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 26,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "peraturan-menag-2-2025",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 30,
+        "total_nodes": 47
+      },
+      {
+        "doc_id": "peraturan-menag-27-2024",
+        "depth": 5,
+        "internal_nodes": 56,
+        "leaf_nodes": 111,
+        "total_nodes": 167
+      },
+      {
+        "doc_id": "peraturan-menag-28-2024",
+        "depth": 5,
+        "internal_nodes": 48,
+        "leaf_nodes": 76,
+        "total_nodes": 124
+      },
+      {
+        "doc_id": "peraturan-menag-4-2025",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 18,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "peraturan-menag-4-2026",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 32,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "peraturan-menag-8-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 26,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "permenaker-1-2025",
+        "depth": 4,
+        "internal_nodes": 91,
+        "leaf_nodes": 200,
+        "total_nodes": 291
+      },
+      {
+        "doc_id": "permenaker-10-2024",
+        "depth": 4,
+        "internal_nodes": 31,
+        "leaf_nodes": 65,
+        "total_nodes": 96
+      },
+      {
+        "doc_id": "permenaker-13-2024",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 14,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permenaker-13-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 44,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "permenaker-14-2025",
+        "depth": 4,
+        "internal_nodes": 38,
+        "leaf_nodes": 105,
+        "total_nodes": 143
+      },
+      {
+        "doc_id": "permenaker-16-2024",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 35,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "permenaker-17-2024",
+        "depth": 3,
+        "internal_nodes": 21,
+        "leaf_nodes": 38,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "permenaker-2-2025",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 63,
+        "total_nodes": 90
+      },
+      {
+        "doc_id": "permenaker-5-2024",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 52,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "permenaker-9-2024",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 55,
+        "total_nodes": 75
+      },
+      {
+        "doc_id": "permen-bumn-per-01-mbu-03-2020-2020",
+        "depth": 4,
+        "internal_nodes": 67,
+        "leaf_nodes": 169,
+        "total_nodes": 236
+      },
+      {
+        "doc_id": "permen-bumn-per-05-mbu-04-2021-2021",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 63,
+        "total_nodes": 91
+      },
+      {
+        "doc_id": "permen-bumn-per-06-mbu-04-2021-2021",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 40,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-01-2022-2022",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 22,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2021-2021",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 40,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2023-2023",
+        "depth": 5,
+        "internal_nodes": 38,
+        "leaf_nodes": 80,
+        "total_nodes": 118
+      },
+      {
+        "doc_id": "permen-bumn-per-11-mbu-07-2021-2021",
+        "depth": 4,
+        "internal_nodes": 38,
+        "leaf_nodes": 93,
+        "total_nodes": 131
+      },
+      {
+        "doc_id": "permen-bumn-per-4-mbu-06-2022-2022",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 22,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "permen-bumn-per-6-mbu-09-2022-2022",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 23,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "permen-bumn-per-9-mbu-06-2021-2021",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 28,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "permendag-1-2026",
+        "depth": 2,
+        "internal_nodes": 25,
+        "leaf_nodes": 115,
+        "total_nodes": 140
+      },
+      {
+        "doc_id": "permendag-23-2024",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 8,
+        "total_nodes": 9
+      },
+      {
+        "doc_id": "permendag-28-2024",
+        "depth": 4,
+        "internal_nodes": 46,
+        "leaf_nodes": 68,
+        "total_nodes": 114
+      },
+      {
+        "doc_id": "permendag-3-2026",
+        "depth": 2,
+        "internal_nodes": 2,
+        "leaf_nodes": 9,
+        "total_nodes": 11
+      },
+      {
+        "doc_id": "permendag-39-2025",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 56,
+        "total_nodes": 79
+      },
+      {
+        "doc_id": "permendag-4-2026",
+        "depth": 3,
+        "internal_nodes": 30,
+        "leaf_nodes": 102,
+        "total_nodes": 132
+      },
+      {
+        "doc_id": "permendag-41-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 40,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "permendag-47-2025",
+        "depth": 2,
+        "internal_nodes": 2,
+        "leaf_nodes": 11,
+        "total_nodes": 13
+      },
+      {
+        "doc_id": "permendag-7-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 27,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "permendag-9-2026",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 9,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permendagri-1-2025",
+        "depth": 5,
+        "internal_nodes": 39,
+        "leaf_nodes": 76,
+        "total_nodes": 115
+      },
+      {
+        "doc_id": "permendagri-13-2025",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 44,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "permendagri-16-2024",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 53,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "permendagri-19-2024",
+        "depth": 5,
+        "internal_nodes": 48,
+        "leaf_nodes": 133,
+        "total_nodes": 181
+      },
+      {
+        "doc_id": "permendagri-2-2024",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 46,
+        "total_nodes": 74
+      },
+      {
+        "doc_id": "permendagri-21-2024",
+        "depth": 4,
+        "internal_nodes": 73,
+        "leaf_nodes": 223,
+        "total_nodes": 296
+      },
+      {
+        "doc_id": "permendagri-22-2024",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 55,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "permendagri-3-2024",
+        "depth": 5,
+        "internal_nodes": 52,
+        "leaf_nodes": 97,
+        "total_nodes": 149
+      },
+      {
+        "doc_id": "permendagri-6-2024",
+        "depth": 4,
+        "internal_nodes": 36,
+        "leaf_nodes": 79,
+        "total_nodes": 115
+      },
+      {
+        "doc_id": "permendagri-7-2025",
+        "depth": 4,
+        "internal_nodes": 32,
+        "leaf_nodes": 82,
+        "total_nodes": 114
+      },
+      {
+        "doc_id": "permendikbud-10-2021",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 39,
+        "total_nodes": 58
+      },
+      {
+        "doc_id": "permendikbud-11-2021",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 60,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "permendikbud-35-2020",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 31,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "permendikbud-38-2020",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 53,
+        "total_nodes": 82
+      },
+      {
+        "doc_id": "permendikbud-4-2021",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 18,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "permendikbud-40-2020",
+        "depth": 2,
+        "internal_nodes": 2,
+        "leaf_nodes": 17,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permendikbud-6-2021",
+        "depth": 5,
+        "internal_nodes": 36,
+        "leaf_nodes": 65,
+        "total_nodes": 101
+      },
+      {
+        "doc_id": "permendikbud-7-2021",
+        "depth": 4,
+        "internal_nodes": 6,
+        "leaf_nodes": 10,
+        "total_nodes": 16
+      },
+      {
+        "doc_id": "permendikbud-8-2021",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 33,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "permendikbud-9-2021",
+        "depth": 5,
+        "internal_nodes": 30,
+        "leaf_nodes": 60,
+        "total_nodes": 90
+      },
+      {
+        "doc_id": "permendikbudristek-36-2024",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 45,
+        "total_nodes": 67
+      },
+      {
+        "doc_id": "permendikbudristek-40-2024",
+        "depth": 4,
+        "internal_nodes": 4,
+        "leaf_nodes": 3,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "permendikbudristek-45-2024",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 16,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permendikbudristek-46-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 41,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permendikbudristek-50-2024",
+        "depth": 4,
+        "internal_nodes": 30,
+        "leaf_nodes": 84,
+        "total_nodes": 114
+      },
+      {
+        "doc_id": "permendikbudristek-58-2024",
+        "depth": 3,
+        "internal_nodes": 29,
+        "leaf_nodes": 73,
+        "total_nodes": 102
+      },
+      {
+        "doc_id": "permendikbudristek-63-2024",
+        "depth": 4,
+        "internal_nodes": 44,
+        "leaf_nodes": 84,
+        "total_nodes": 128
+      },
+      {
+        "doc_id": "permendikbudristek-66-2024",
+        "depth": 2,
+        "internal_nodes": 11,
+        "leaf_nodes": 51,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "permendikbudristek-67-2024",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 26,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "permendikbudristek-71-2024",
+        "depth": 3,
+        "internal_nodes": 25,
+        "leaf_nodes": 82,
+        "total_nodes": 107
+      },
+      {
+        "doc_id": "permenkes-1-2025",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 10,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "permenkes-10-2024",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 32,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "permenkes-15-2024",
+        "depth": 4,
+        "internal_nodes": 58,
+        "leaf_nodes": 138,
+        "total_nodes": 196
+      },
+      {
+        "doc_id": "permenkes-16-2024",
+        "depth": 3,
+        "internal_nodes": 27,
+        "leaf_nodes": 71,
+        "total_nodes": 98
+      },
+      {
+        "doc_id": "permenkes-18-2024",
+        "depth": 3,
+        "internal_nodes": 27,
+        "leaf_nodes": 81,
+        "total_nodes": 108
+      },
+      {
+        "doc_id": "permenkes-23-2023",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 17,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permenkes-3-2024",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 16,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permenkes-3-2025",
+        "depth": 3,
+        "internal_nodes": 38,
+        "leaf_nodes": 107,
+        "total_nodes": 145
+      },
+      {
+        "doc_id": "permenkes-33-2023",
+        "depth": 4,
+        "internal_nodes": 37,
+        "leaf_nodes": 79,
+        "total_nodes": 116
+      },
+      {
+        "doc_id": "permenkes-7-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 11,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "permenkomdigi-1-2026",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 41,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permenkomdigi-10-2025",
+        "depth": 4,
+        "internal_nodes": 89,
+        "leaf_nodes": 194,
+        "total_nodes": 283
+      },
+      {
+        "doc_id": "permenkomdigi-13-2025",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 30,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "permenkomdigi-17-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 34,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "permenkomdigi-18-2025",
+        "depth": 3,
+        "internal_nodes": 21,
+        "leaf_nodes": 46,
+        "total_nodes": 67
+      },
+      {
+        "doc_id": "permenkomdigi-2-2026",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 41,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permenkomdigi-20-2025",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 42,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "permenkomdigi-5-2026",
+        "depth": 3,
+        "internal_nodes": 21,
+        "leaf_nodes": 54,
+        "total_nodes": 75
+      },
+      {
+        "doc_id": "permenkomdigi-6-2026",
+        "depth": 3,
+        "internal_nodes": 20,
+        "leaf_nodes": 48,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "permenkomdigi-7-2026",
+        "depth": 4,
+        "internal_nodes": 35,
+        "leaf_nodes": 102,
+        "total_nodes": 137
+      },
+      {
+        "doc_id": "permenkominfo-1-2023",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 59,
+        "total_nodes": 70
+      },
+      {
+        "doc_id": "permenkominfo-1-2024",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 53,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "permenkominfo-10-2023",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 32,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "permenkominfo-15-2022",
+        "depth": 3,
+        "internal_nodes": 27,
+        "leaf_nodes": 75,
+        "total_nodes": 102
+      },
+      {
+        "doc_id": "permenkominfo-16-2022",
+        "depth": 4,
+        "internal_nodes": 36,
+        "leaf_nodes": 103,
+        "total_nodes": 139
+      },
+      {
+        "doc_id": "permenkominfo-2-2024",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 56,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "permenkominfo-3-2023",
+        "depth": 2,
+        "internal_nodes": 10,
+        "leaf_nodes": 28,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "permenkominfo-5-2024",
+        "depth": 3,
+        "internal_nodes": 41,
+        "leaf_nodes": 140,
+        "total_nodes": 181
+      },
+      {
+        "doc_id": "permenkominfo-8-2023",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 48,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "permenkominfo-8-2024",
+        "depth": 3,
+        "internal_nodes": 22,
+        "leaf_nodes": 66,
+        "total_nodes": 88
+      },
+      {
+        "doc_id": "permenkumham-10-2024",
+        "depth": 4,
+        "internal_nodes": 13,
+        "leaf_nodes": 27,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "permenkumham-11-2024",
+        "depth": 4,
+        "internal_nodes": 79,
+        "leaf_nodes": 199,
+        "total_nodes": 278
+      },
+      {
+        "doc_id": "permenkumham-13-2024",
+        "depth": 3,
+        "internal_nodes": 16,
+        "leaf_nodes": 53,
+        "total_nodes": 69
+      },
+      {
+        "doc_id": "permenkumham-15-2024",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 100,
+        "total_nodes": 149
+      },
+      {
+        "doc_id": "permenkumham-16-2024",
+        "depth": 1,
+        "internal_nodes": 0,
+        "leaf_nodes": 7,
+        "total_nodes": 7
+      },
+      {
+        "doc_id": "permenkumham-17-2024",
+        "depth": 5,
+        "internal_nodes": 52,
+        "leaf_nodes": 113,
+        "total_nodes": 165
+      },
+      {
+        "doc_id": "permenkumham-18-2024",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 36,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permenkumham-2-2024",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 37,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "permenkumham-20-2024",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 21,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "permenkumham-22-2024",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 50,
+        "total_nodes": 74
+      },
+      {
+        "doc_id": "permenperin-22-2025",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 30,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "permenperin-23-2025",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 26,
+        "total_nodes": 40
+      },
+      {
+        "doc_id": "permenperin-24-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 36,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "permenperin-25-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "permenperin-3-2026",
+        "depth": 2,
+        "internal_nodes": 11,
+        "leaf_nodes": 43,
+        "total_nodes": 54
+      },
+      {
+        "doc_id": "permenperin-37-2025",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 91,
+        "total_nodes": 115
+      },
+      {
+        "doc_id": "permenperin-40-2025",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 15,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permenperin-5-2026",
+        "depth": 4,
+        "internal_nodes": 41,
+        "leaf_nodes": 101,
+        "total_nodes": 142
+      },
+      {
+        "doc_id": "permenperin-6-2026",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 7,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "permenperin-8-2026",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 53,
+        "total_nodes": 81
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-1-2026",
+        "depth": 3,
+        "internal_nodes": 22,
+        "leaf_nodes": 65,
+        "total_nodes": 87
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-13-2025",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 47,
+        "total_nodes": 71
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-14-2025",
+        "depth": 2,
+        "internal_nodes": 7,
+        "leaf_nodes": 29,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-19-2024",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 20,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2022",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 51,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 30,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-5-2025",
+        "depth": 5,
+        "internal_nodes": 39,
+        "leaf_nodes": 71,
+        "total_nodes": 110
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-7-2025",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 16,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-8-2022",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 44,
+        "total_nodes": 66
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-9-2022",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 39,
+        "total_nodes": 55
+      },
+      {
+        "doc_id": "permen-esdm-1-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 41,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "permen-esdm-10-2025",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 42,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "permen-esdm-11-2024",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 64,
+        "total_nodes": 88
+      },
+      {
+        "doc_id": "permen-esdm-13-2024",
+        "depth": 3,
+        "internal_nodes": 36,
+        "leaf_nodes": 95,
+        "total_nodes": 131
+      },
+      {
+        "doc_id": "permen-esdm-14-2025",
+        "depth": 4,
+        "internal_nodes": 37,
+        "leaf_nodes": 91,
+        "total_nodes": 128
+      },
+      {
+        "doc_id": "permen-esdm-15-2024",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 15,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "permen-esdm-2-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 25,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "permen-esdm-4-2025",
+        "depth": 3,
+        "internal_nodes": 35,
+        "leaf_nodes": 99,
+        "total_nodes": 134
+      },
+      {
+        "doc_id": "permen-esdm-6-2025",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 26,
+        "total_nodes": 38
+      },
+      {
+        "doc_id": "permen-esdm-8-2025",
+        "depth": 5,
+        "internal_nodes": 46,
+        "leaf_nodes": 102,
+        "total_nodes": 148
+      },
+      {
+        "doc_id": "permen-pupr-11-2023",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 52,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permen-pupr-12-2023",
+        "depth": 4,
+        "internal_nodes": 31,
+        "leaf_nodes": 74,
+        "total_nodes": 105
+      },
+      {
+        "doc_id": "permen-pupr-12-2024",
+        "depth": 4,
+        "internal_nodes": 48,
+        "leaf_nodes": 141,
+        "total_nodes": 189
+      },
+      {
+        "doc_id": "permen-pupr-13-2024",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 53,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "permen-pupr-4-2022",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 33,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permen-pupr-5-2024",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 58,
+        "total_nodes": 84
+      },
+      {
+        "doc_id": "permen-pupr-6-2024",
+        "depth": 3,
+        "internal_nodes": 19,
+        "leaf_nodes": 60,
+        "total_nodes": 79
+      },
+      {
+        "doc_id": "permen-pupr-7-2023",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 42,
+        "total_nodes": 56
+      },
+      {
+        "doc_id": "permen-pupr-8-2024",
+        "depth": 3,
+        "internal_nodes": 35,
+        "leaf_nodes": 37,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permen-pupr-9-2022",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 25,
+        "total_nodes": 29
+      },
+      {
+        "doc_id": "perpres-1-2026",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 35,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "perpres-11-2026",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 65,
+        "total_nodes": 89
+      },
+      {
+        "doc_id": "perpres-118-2025",
+        "depth": 2,
+        "internal_nodes": 8,
+        "leaf_nodes": 36,
+        "total_nodes": 44
+      },
+      {
+        "doc_id": "perpres-119-2025",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 16,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "perpres-120-2025",
+        "depth": 4,
+        "internal_nodes": 34,
+        "leaf_nodes": 66,
+        "total_nodes": 100
+      },
+      {
+        "doc_id": "perpres-14-2026",
+        "depth": 3,
+        "internal_nodes": 21,
+        "leaf_nodes": 56,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "perpres-2-2026",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 9,
+        "total_nodes": 10
+      },
+      {
+        "doc_id": "perpres-4-2026",
+        "depth": 4,
+        "internal_nodes": 31,
+        "leaf_nodes": 72,
+        "total_nodes": 103
+      },
+      {
+        "doc_id": "perpres-5-2026",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 26,
+        "total_nodes": 32
+      },
+      {
+        "doc_id": "perpres-9-2026",
+        "depth": 4,
+        "internal_nodes": 46,
+        "leaf_nodes": 117,
+        "total_nodes": 163
+      },
+      {
+        "doc_id": "perpu-1-2000",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 40,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "perpu-1-2002",
+        "depth": 3,
+        "internal_nodes": 24,
+        "leaf_nodes": 81,
+        "total_nodes": 105
+      },
+      {
+        "doc_id": "perpu-1-2008",
+        "depth": 4,
+        "internal_nodes": 4,
+        "leaf_nodes": 4,
+        "total_nodes": 8
+      },
+      {
+        "doc_id": "perpu-1-2013",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 44,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "perpu-1-2016",
+        "depth": 4,
+        "internal_nodes": 9,
+        "leaf_nodes": 25,
+        "total_nodes": 34
+      },
+      {
+        "doc_id": "perpu-1-2017",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 26,
+        "total_nodes": 31
+      },
+      {
+        "doc_id": "perpu-1-2020",
+        "depth": 4,
+        "internal_nodes": 38,
+        "leaf_nodes": 82,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "perpu-1-2022",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 35,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "perpu-2-1998",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 27,
+        "total_nodes": 39
+      },
+      {
+        "doc_id": "perpu-4-2008",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 59,
+        "total_nodes": 87
+      },
+      {
+        "doc_id": "perwali-bandung-11-2026",
+        "depth": 3,
+        "internal_nodes": 27,
+        "leaf_nodes": 62,
+        "total_nodes": 89
+      },
+      {
+        "doc_id": "perwali-bandung-12-2026",
+        "depth": 3,
+        "internal_nodes": 18,
+        "leaf_nodes": 34,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "perwali-bandung-15-2026",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 23,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "perwali-bandung-16-2026",
+        "depth": 4,
+        "internal_nodes": 11,
+        "leaf_nodes": 22,
+        "total_nodes": 33
+      },
+      {
+        "doc_id": "perwali-bandung-7-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 13,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "perwali-batu-11-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 19,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "perwali-batu-12-2026",
+        "depth": 2,
+        "internal_nodes": 6,
+        "leaf_nodes": 18,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "perwali-semarang-10-2026",
+        "depth": 5,
+        "internal_nodes": 30,
+        "leaf_nodes": 65,
+        "total_nodes": 95
+      },
+      {
+        "doc_id": "perwali-semarang-7-2026",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 70,
+        "total_nodes": 92
+      },
+      {
+        "doc_id": "perwali-surabaya-9-2026",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 40,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "pmk-102-2025",
+        "depth": 3,
+        "internal_nodes": 32,
+        "leaf_nodes": 81,
+        "total_nodes": 113
+      },
+      {
+        "doc_id": "pmk-107-2025",
+        "depth": 4,
+        "internal_nodes": 37,
+        "leaf_nodes": 72,
+        "total_nodes": 109
+      },
+      {
+        "doc_id": "pmk-111-2025",
+        "depth": 5,
+        "internal_nodes": 43,
+        "leaf_nodes": 129,
+        "total_nodes": 172
+      },
+      {
+        "doc_id": "pmk-112-2025",
+        "depth": 4,
+        "internal_nodes": 35,
+        "leaf_nodes": 110,
+        "total_nodes": 145
+      },
+      {
+        "doc_id": "pmk-113-2025",
+        "depth": 4,
+        "internal_nodes": 30,
+        "leaf_nodes": 101,
+        "total_nodes": 131
+      },
+      {
+        "doc_id": "pmk-118-2025",
+        "depth": 4,
+        "internal_nodes": 21,
+        "leaf_nodes": 27,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "pmk-15-2026",
+        "depth": 4,
+        "internal_nodes": 13,
+        "leaf_nodes": 36,
+        "total_nodes": 49
+      },
+      {
+        "doc_id": "pmk-21-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 13,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "pmk-84-2025",
+        "depth": 5,
+        "internal_nodes": 56,
+        "leaf_nodes": 174,
+        "total_nodes": 230
+      },
+      {
+        "doc_id": "pmk-99-2025",
+        "depth": 4,
+        "internal_nodes": 55,
+        "leaf_nodes": 194,
+        "total_nodes": 249
+      },
+      {
+        "doc_id": "pp-3-2026",
+        "depth": 4,
+        "internal_nodes": 109,
+        "leaf_nodes": 210,
+        "total_nodes": 319
+      },
+      {
+        "doc_id": "pp-35-2025",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 51,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "pp-37-2025",
+        "depth": 4,
+        "internal_nodes": 34,
+        "leaf_nodes": 75,
+        "total_nodes": 109
+      },
+      {
+        "doc_id": "pp-38-2025",
+        "depth": 5,
+        "internal_nodes": 37,
+        "leaf_nodes": 67,
+        "total_nodes": 104
+      },
+      {
+        "doc_id": "pp-39-2025",
+        "depth": 4,
+        "internal_nodes": 88,
+        "leaf_nodes": 213,
+        "total_nodes": 301
+      },
+      {
+        "doc_id": "pp-48-2025",
+        "depth": 5,
+        "internal_nodes": 51,
+        "leaf_nodes": 101,
+        "total_nodes": 152
+      },
+      {
+        "doc_id": "pp-49-2025",
+        "depth": 5,
+        "internal_nodes": 39,
+        "leaf_nodes": 83,
+        "total_nodes": 122
+      },
+      {
+        "doc_id": "pp-50-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 14,
+        "total_nodes": 21
+      },
+      {
+        "doc_id": "pp-55-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 48,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "pp-9-2026",
+        "depth": 2,
+        "internal_nodes": 12,
+        "leaf_nodes": 61,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "uu-119-2024",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 11,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "uu-13-2025",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 10,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "uu-15-2025",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 16,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "uu-16-2025",
+        "depth": 4,
+        "internal_nodes": 138,
+        "leaf_nodes": 232,
+        "total_nodes": 370
+      },
+      {
+        "doc_id": "uu-18-2025",
+        "depth": 6,
+        "internal_nodes": 95,
+        "leaf_nodes": 183,
+        "total_nodes": 278
+      },
+      {
+        "doc_id": "uu-3-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 27,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "uu-60-2024",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 16,
+        "total_nodes": 17
+      },
+      {
+        "doc_id": "uu-62-2024",
+        "depth": 2,
+        "internal_nodes": 40,
+        "leaf_nodes": 205,
+        "total_nodes": 245
+      },
+      {
+        "doc_id": "uu-63-2024",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 26,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "uu-72-2024",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 11,
+        "total_nodes": 15
+      }
+    ]
+  },
+  "rincian": {
+    "granularity": "rincian",
+    "n_files": 310,
+    "n_docs": 308,
+    "n_empty": 2,
+    "empty_docs": [
+      "peraturan-menag-10-2025",
+      "permenperin-25-2025"
+    ],
+    "avg_depth": 4.86,
+    "p95_depth": 6,
+    "max_depth": 7,
+    "depth_distribution": {
+      "2": 4,
+      "3": 30,
+      "4": 71,
+      "5": 118,
+      "6": 70,
+      "7": 15
+    },
+    "avg_branching": 41.31,
+    "p95_branching": 115,
+    "max_branching": 340,
+    "kid_count_distribution": {
+      "1": 2,
+      "2": 31,
+      "3": 15,
+      "4": 21,
+      "5": 19,
+      "6": 23,
+      "7": 18,
+      "8": 24,
+      "9": 35,
+      "10": 30,
+      "11": 21,
+      "12": 25,
+      "13": 25,
+      "14": 19,
+      "15": 30,
+      "16": 28,
+      "17": 21,
+      "18": 20,
+      "19": 21,
+      "20": 16,
+      "21": 19,
+      "22": 12,
+      "23": 16,
+      "24": 29,
+      "25": 19,
+      "26": 19,
+      "27": 10,
+      "28": 21,
+      "29": 17,
+      "30": 20,
+      "31": 9,
+      "32": 14,
+      "33": 14,
+      "34": 14,
+      "35": 15,
+      "36": 11,
+      "37": 14,
+      "38": 14,
+      "39": 10,
+      "40": 7,
+      "41": 6,
+      "42": 11,
+      "43": 13,
+      "44": 14,
+      "45": 6,
+      "46": 14,
+      "47": 14,
+      "48": 7,
+      "49": 10,
+      "50": 11,
+      "51": 8,
+      "52": 4,
+      "53": 8,
+      "54": 5,
+      "55": 9,
+      "56": 7,
+      "57": 10,
+      "58": 11,
+      "59": 8,
+      "60": 9,
+      "61": 5,
+      "62": 5,
+      "63": 7,
+      "64": 6,
+      "65": 7,
+      "66": 10,
+      "67": 7,
+      "68": 7,
+      "69": 3,
+      "70": 6,
+      "71": 3,
+      "72": 4,
+      "73": 6,
+      "74": 4,
+      "75": 6,
+      "76": 6,
+      "77": 4,
+      "78": 7,
+      "79": 3,
+      "80": 1,
+      "81": 3,
+      "82": 3,
+      "83": 3,
+      "84": 10,
+      "85": 3,
+      "86": 4,
+      "87": 4,
+      "88": 2,
+      "89": 5,
+      "90": 2,
+      "91": 3,
+      "92": 3,
+      "93": 3,
+      "94": 1,
+      "95": 3,
+      "96": 2,
+      "97": 2,
+      "98": 4,
+      "99": 2,
+      "100": 4,
+      "101": 1,
+      "103": 5,
+      "104": 3,
+      "105": 2,
+      "106": 1,
+      "107": 2,
+      "108": 2,
+      "109": 2,
+      "112": 1,
+      "113": 2,
+      "114": 2,
+      "115": 1,
+      "116": 1,
+      "117": 3,
+      "120": 1,
+      "123": 1,
+      "124": 1,
+      "125": 2,
+      "128": 3,
+      "130": 1,
+      "132": 1,
+      "137": 1,
+      "138": 3,
+      "139": 1,
+      "140": 1,
+      "141": 2,
+      "143": 1,
+      "151": 1,
+      "152": 1,
+      "153": 2,
+      "156": 3,
+      "157": 1,
+      "159": 1,
+      "162": 1,
+      "163": 4,
+      "166": 1,
+      "173": 1,
+      "178": 1,
+      "183": 1,
+      "187": 1,
+      "192": 1,
+      "193": 1,
+      "194": 1,
+      "200": 1,
+      "203": 1,
+      "208": 1,
+      "234": 1,
+      "237": 1,
+      "242": 1,
+      "244": 1,
+      "250": 1,
+      "253": 1,
+      "257": 1,
+      "271": 1,
+      "289": 1,
+      "290": 1,
+      "340": 1
+    },
+    "per_doc": [
+      {
+        "doc_id": "peraturan-bi-12-2024",
+        "depth": 5,
+        "internal_nodes": 51,
+        "leaf_nodes": 117,
+        "total_nodes": 168
+      },
+      {
+        "doc_id": "peraturan-bi-13-2023",
+        "depth": 6,
+        "internal_nodes": 66,
+        "leaf_nodes": 151,
+        "total_nodes": 217
+      },
+      {
+        "doc_id": "peraturan-bi-13-2024",
+        "depth": 5,
+        "internal_nodes": 72,
+        "leaf_nodes": 166,
+        "total_nodes": 238
+      },
+      {
+        "doc_id": "peraturan-bi-3-2026",
+        "depth": 7,
+        "internal_nodes": 215,
+        "leaf_nodes": 516,
+        "total_nodes": 731
+      },
+      {
+        "doc_id": "peraturan-bi-4-2024",
+        "depth": 6,
+        "internal_nodes": 85,
+        "leaf_nodes": 202,
+        "total_nodes": 287
+      },
+      {
+        "doc_id": "peraturan-bi-7-2024",
+        "depth": 5,
+        "internal_nodes": 40,
+        "leaf_nodes": 101,
+        "total_nodes": 141
+      },
+      {
+        "doc_id": "peraturan-bi-7-2025",
+        "depth": 5,
+        "internal_nodes": 51,
+        "leaf_nodes": 109,
+        "total_nodes": 160
+      },
+      {
+        "doc_id": "peraturan-bi-8-2024",
+        "depth": 5,
+        "internal_nodes": 60,
+        "leaf_nodes": 176,
+        "total_nodes": 236
+      },
+      {
+        "doc_id": "peraturan-bi-9-2024",
+        "depth": 5,
+        "internal_nodes": 62,
+        "leaf_nodes": 136,
+        "total_nodes": 198
+      },
+      {
+        "doc_id": "peraturan-bi-9-2025",
+        "depth": 4,
+        "internal_nodes": 33,
+        "leaf_nodes": 75,
+        "total_nodes": 108
+      },
+      {
+        "doc_id": "peraturan-bpom-12-2025",
+        "depth": 3,
+        "internal_nodes": 16,
+        "leaf_nodes": 69,
+        "total_nodes": 85
+      },
+      {
+        "doc_id": "peraturan-bpom-13-2025",
+        "depth": 4,
+        "internal_nodes": 33,
+        "leaf_nodes": 105,
+        "total_nodes": 138
+      },
+      {
+        "doc_id": "peraturan-bpom-18-2025",
+        "depth": 5,
+        "internal_nodes": 48,
+        "leaf_nodes": 120,
+        "total_nodes": 168
+      },
+      {
+        "doc_id": "peraturan-bpom-19-2025",
+        "depth": 5,
+        "internal_nodes": 16,
+        "leaf_nodes": 54,
+        "total_nodes": 70
+      },
+      {
+        "doc_id": "peraturan-bpom-22-2025",
+        "depth": 5,
+        "internal_nodes": 48,
+        "leaf_nodes": 161,
+        "total_nodes": 209
+      },
+      {
+        "doc_id": "peraturan-bpom-23-2025",
+        "depth": 6,
+        "internal_nodes": 12,
+        "leaf_nodes": 96,
+        "total_nodes": 108
+      },
+      {
+        "doc_id": "peraturan-bpom-24-2025",
+        "depth": 5,
+        "internal_nodes": 32,
+        "leaf_nodes": 97,
+        "total_nodes": 129
+      },
+      {
+        "doc_id": "peraturan-bpom-26-2025",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 18,
+        "total_nodes": 23
+      },
+      {
+        "doc_id": "peraturan-bpom-31-2025",
+        "depth": 6,
+        "internal_nodes": 34,
+        "leaf_nodes": 83,
+        "total_nodes": 117
+      },
+      {
+        "doc_id": "peraturan-bpom-32-2025",
+        "depth": 5,
+        "internal_nodes": 38,
+        "leaf_nodes": 92,
+        "total_nodes": 130
+      },
+      {
+        "doc_id": "peraturan-bssn-1-2025",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 83,
+        "total_nodes": 106
+      },
+      {
+        "doc_id": "peraturan-bssn-10-2023",
+        "depth": 3,
+        "internal_nodes": 23,
+        "leaf_nodes": 94,
+        "total_nodes": 117
+      },
+      {
+        "doc_id": "peraturan-bssn-12-2024",
+        "depth": 5,
+        "internal_nodes": 33,
+        "leaf_nodes": 115,
+        "total_nodes": 148
+      },
+      {
+        "doc_id": "peraturan-bssn-13-2024",
+        "depth": 5,
+        "internal_nodes": 27,
+        "leaf_nodes": 66,
+        "total_nodes": 93
+      },
+      {
+        "doc_id": "peraturan-bssn-14-2024",
+        "depth": 3,
+        "internal_nodes": 4,
+        "leaf_nodes": 18,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2024",
+        "depth": 4,
+        "internal_nodes": 43,
+        "leaf_nodes": 130,
+        "total_nodes": 173
+      },
+      {
+        "doc_id": "peraturan-bssn-2-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 54,
+        "total_nodes": 70
+      },
+      {
+        "doc_id": "peraturan-bssn-4-2024",
+        "depth": 4,
+        "internal_nodes": 29,
+        "leaf_nodes": 97,
+        "total_nodes": 126
+      },
+      {
+        "doc_id": "peraturan-bssn-5-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 41,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "peraturan-bssn-9-2023",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 68,
+        "total_nodes": 97
+      },
+      {
+        "doc_id": "peraturan-kpu-13-2024",
+        "depth": 6,
+        "internal_nodes": 157,
+        "leaf_nodes": 446,
+        "total_nodes": 603
+      },
+      {
+        "doc_id": "peraturan-kpu-14-2023",
+        "depth": 6,
+        "internal_nodes": 104,
+        "leaf_nodes": 259,
+        "total_nodes": 363
+      },
+      {
+        "doc_id": "peraturan-kpu-15-2024",
+        "depth": 5,
+        "internal_nodes": 20,
+        "leaf_nodes": 59,
+        "total_nodes": 79
+      },
+      {
+        "doc_id": "peraturan-kpu-16-2024",
+        "depth": 5,
+        "internal_nodes": 34,
+        "leaf_nodes": 81,
+        "total_nodes": 115
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2023",
+        "depth": 6,
+        "internal_nodes": 101,
+        "leaf_nodes": 282,
+        "total_nodes": 383
+      },
+      {
+        "doc_id": "peraturan-kpu-19-2024",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 57,
+        "total_nodes": 66
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2024",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 49,
+        "total_nodes": 58
+      },
+      {
+        "doc_id": "peraturan-kpu-2-2025",
+        "depth": 6,
+        "internal_nodes": 61,
+        "leaf_nodes": 154,
+        "total_nodes": 215
+      },
+      {
+        "doc_id": "peraturan-kpu-21-2023",
+        "depth": 5,
+        "internal_nodes": 122,
+        "leaf_nodes": 362,
+        "total_nodes": 484
+      },
+      {
+        "doc_id": "peraturan-kpu-8-2023",
+        "depth": 6,
+        "internal_nodes": 48,
+        "leaf_nodes": 125,
+        "total_nodes": 173
+      },
+      {
+        "doc_id": "perma-1-2022",
+        "depth": 6,
+        "internal_nodes": 78,
+        "leaf_nodes": 205,
+        "total_nodes": 283
+      },
+      {
+        "doc_id": "perma-1-2024",
+        "depth": 5,
+        "internal_nodes": 32,
+        "leaf_nodes": 94,
+        "total_nodes": 126
+      },
+      {
+        "doc_id": "perma-14-2016",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 46,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "perma-2-2019",
+        "depth": 5,
+        "internal_nodes": 16,
+        "leaf_nodes": 34,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "perma-2-2021",
+        "depth": 6,
+        "internal_nodes": 31,
+        "leaf_nodes": 93,
+        "total_nodes": 124
+      },
+      {
+        "doc_id": "perma-2-2022",
+        "depth": 6,
+        "internal_nodes": 38,
+        "leaf_nodes": 116,
+        "total_nodes": 154
+      },
+      {
+        "doc_id": "perma-2-2023",
+        "depth": 5,
+        "internal_nodes": 21,
+        "leaf_nodes": 43,
+        "total_nodes": 64
+      },
+      {
+        "doc_id": "perma-3-2023",
+        "depth": 5,
+        "internal_nodes": 41,
+        "leaf_nodes": 138,
+        "total_nodes": 179
+      },
+      {
+        "doc_id": "perma-6-2019",
+        "depth": 5,
+        "internal_nodes": 35,
+        "leaf_nodes": 106,
+        "total_nodes": 141
+      },
+      {
+        "doc_id": "perma-7-2018",
+        "depth": 4,
+        "internal_nodes": 18,
+        "leaf_nodes": 78,
+        "total_nodes": 96
+      },
+      {
+        "doc_id": "peraturan-ojk-1-2026",
+        "depth": 6,
+        "internal_nodes": 86,
+        "leaf_nodes": 236,
+        "total_nodes": 322
+      },
+      {
+        "doc_id": "peraturan-ojk-12-2025",
+        "depth": 5,
+        "internal_nodes": 101,
+        "leaf_nodes": 335,
+        "total_nodes": 436
+      },
+      {
+        "doc_id": "peraturan-ojk-19-2025",
+        "depth": 6,
+        "internal_nodes": 76,
+        "leaf_nodes": 152,
+        "total_nodes": 228
+      },
+      {
+        "doc_id": "peraturan-ojk-2-2026",
+        "depth": 6,
+        "internal_nodes": 83,
+        "leaf_nodes": 305,
+        "total_nodes": 388
+      },
+      {
+        "doc_id": "peraturan-ojk-24-2025",
+        "depth": 4,
+        "internal_nodes": 33,
+        "leaf_nodes": 87,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "peraturan-ojk-29-2025",
+        "depth": 6,
+        "internal_nodes": 111,
+        "leaf_nodes": 306,
+        "total_nodes": 417
+      },
+      {
+        "doc_id": "peraturan-ojk-32-2025",
+        "depth": 5,
+        "internal_nodes": 33,
+        "leaf_nodes": 61,
+        "total_nodes": 94
+      },
+      {
+        "doc_id": "peraturan-ojk-38-2025",
+        "depth": 5,
+        "internal_nodes": 38,
+        "leaf_nodes": 92,
+        "total_nodes": 130
+      },
+      {
+        "doc_id": "peraturan-ojk-39-2025",
+        "depth": 5,
+        "internal_nodes": 27,
+        "leaf_nodes": 67,
+        "total_nodes": 94
+      },
+      {
+        "doc_id": "peraturan-ojk-9-2025",
+        "depth": 5,
+        "internal_nodes": 64,
+        "leaf_nodes": 165,
+        "total_nodes": 229
+      },
+      {
+        "doc_id": "peraturan-polri-11-2024",
+        "depth": 5,
+        "internal_nodes": 21,
+        "leaf_nodes": 38,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "peraturan-polri-15-2024",
+        "depth": 7,
+        "internal_nodes": 100,
+        "leaf_nodes": 279,
+        "total_nodes": 379
+      },
+      {
+        "doc_id": "peraturan-polri-2-2024",
+        "depth": 6,
+        "internal_nodes": 62,
+        "leaf_nodes": 178,
+        "total_nodes": 240
+      },
+      {
+        "doc_id": "peraturan-polri-2-2025",
+        "depth": 3,
+        "internal_nodes": 26,
+        "leaf_nodes": 101,
+        "total_nodes": 127
+      },
+      {
+        "doc_id": "peraturan-polri-3-2025",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 49,
+        "total_nodes": 66
+      },
+      {
+        "doc_id": "peraturan-polri-5-2024",
+        "depth": 4,
+        "internal_nodes": 48,
+        "leaf_nodes": 183,
+        "total_nodes": 231
+      },
+      {
+        "doc_id": "peraturan-polri-6-2023",
+        "depth": 5,
+        "internal_nodes": 40,
+        "leaf_nodes": 127,
+        "total_nodes": 167
+      },
+      {
+        "doc_id": "peraturan-polri-7-2023",
+        "depth": 6,
+        "internal_nodes": 59,
+        "leaf_nodes": 151,
+        "total_nodes": 210
+      },
+      {
+        "doc_id": "peraturan-polri-7-2025",
+        "depth": 5,
+        "internal_nodes": 23,
+        "leaf_nodes": 83,
+        "total_nodes": 106
+      },
+      {
+        "doc_id": "peraturan-polri-9-2024",
+        "depth": 5,
+        "internal_nodes": 25,
+        "leaf_nodes": 55,
+        "total_nodes": 80
+      },
+      {
+        "doc_id": "perbup-banyuwangi-10-2026",
+        "depth": 5,
+        "internal_nodes": 10,
+        "leaf_nodes": 32,
+        "total_nodes": 42
+      },
+      {
+        "doc_id": "perbup-banyuwangi-7-2026",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 29,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "perbup-brebes-6-2026",
+        "depth": 6,
+        "internal_nodes": 29,
+        "leaf_nodes": 83,
+        "total_nodes": 112
+      },
+      {
+        "doc_id": "perbup-jombang-9-2026",
+        "depth": 5,
+        "internal_nodes": 27,
+        "leaf_nodes": 71,
+        "total_nodes": 98
+      },
+      {
+        "doc_id": "perbup-karawang-6-2026",
+        "depth": 5,
+        "internal_nodes": 28,
+        "leaf_nodes": 79,
+        "total_nodes": 107
+      },
+      {
+        "doc_id": "perbup-karawang-9-2026",
+        "depth": 5,
+        "internal_nodes": 26,
+        "leaf_nodes": 50,
+        "total_nodes": 76
+      },
+      {
+        "doc_id": "perbup-kediri-17-2026",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 66,
+        "total_nodes": 86
+      },
+      {
+        "doc_id": "perbup-kediri-6-2026",
+        "depth": 6,
+        "internal_nodes": 49,
+        "leaf_nodes": 208,
+        "total_nodes": 257
+      },
+      {
+        "doc_id": "perbup-kendal-6-2026",
+        "depth": 5,
+        "internal_nodes": 26,
+        "leaf_nodes": 83,
+        "total_nodes": 109
+      },
+      {
+        "doc_id": "perbup-majalengka-38-2026",
+        "depth": 5,
+        "internal_nodes": 34,
+        "leaf_nodes": 77,
+        "total_nodes": 111
+      },
+      {
+        "doc_id": "perda-banjarmasin-3-2026",
+        "depth": 5,
+        "internal_nodes": 100,
+        "leaf_nodes": 336,
+        "total_nodes": 436
+      },
+      {
+        "doc_id": "perda-binjai-1-2026",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 79,
+        "total_nodes": 99
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-2-2026",
+        "depth": 6,
+        "internal_nodes": 68,
+        "leaf_nodes": 141,
+        "total_nodes": 209
+      },
+      {
+        "doc_id": "perda-daerah-khusus-ibukota-jakarta-5-2021",
+        "depth": 6,
+        "internal_nodes": 61,
+        "leaf_nodes": 184,
+        "total_nodes": 245
+      },
+      {
+        "doc_id": "perda-kendal-1-2026",
+        "depth": 6,
+        "internal_nodes": 16,
+        "leaf_nodes": 97,
+        "total_nodes": 113
+      },
+      {
+        "doc_id": "perda-kudus-4-2026",
+        "depth": 7,
+        "internal_nodes": 60,
+        "leaf_nodes": 192,
+        "total_nodes": 252
+      },
+      {
+        "doc_id": "perda-madiun-1-2026",
+        "depth": 5,
+        "internal_nodes": 4,
+        "leaf_nodes": 32,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "perda-pakpak-bharat-2-2026",
+        "depth": 5,
+        "internal_nodes": 95,
+        "leaf_nodes": 286,
+        "total_nodes": 381
+      },
+      {
+        "doc_id": "perda-pulang-pisau-1-2026",
+        "depth": 5,
+        "internal_nodes": 9,
+        "leaf_nodes": 27,
+        "total_nodes": 36
+      },
+      {
+        "doc_id": "perda-surabaya-1-2026",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 70,
+        "total_nodes": 87
+      },
+      {
+        "doc_id": "pergub-bali-44-2025",
+        "depth": 5,
+        "internal_nodes": 54,
+        "leaf_nodes": 208,
+        "total_nodes": 262
+      },
+      {
+        "doc_id": "pergub-banten-50-2025",
+        "depth": 5,
+        "internal_nodes": 40,
+        "leaf_nodes": 116,
+        "total_nodes": 156
+      },
+      {
+        "doc_id": "pergub-bengkulu-45-2025",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 75,
+        "total_nodes": 99
+      },
+      {
+        "doc_id": "pergub-daerah-istimewa-yogyakarta-49-2025",
+        "depth": 5,
+        "internal_nodes": 50,
+        "leaf_nodes": 243,
+        "total_nodes": 293
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-4-2026",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 141,
+        "total_nodes": 190
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-5-2026",
+        "depth": 6,
+        "internal_nodes": 45,
+        "leaf_nodes": 89,
+        "total_nodes": 134
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-51-2025",
+        "depth": 5,
+        "internal_nodes": 30,
+        "leaf_nodes": 68,
+        "total_nodes": 98
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-7-2026",
+        "depth": 7,
+        "internal_nodes": 33,
+        "leaf_nodes": 82,
+        "total_nodes": 115
+      },
+      {
+        "doc_id": "pergub-daerah-khusus-ibukota-jakarta-9-2026",
+        "depth": 6,
+        "internal_nodes": 41,
+        "leaf_nodes": 111,
+        "total_nodes": 152
+      },
+      {
+        "doc_id": "pergub-jawa-tengah-6-2026",
+        "depth": 3,
+        "internal_nodes": 6,
+        "leaf_nodes": 31,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "peraturan-menag-1-2026",
+        "depth": 4,
+        "internal_nodes": 20,
+        "leaf_nodes": 48,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "peraturan-menag-10-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "peraturan-menag-12-2025",
+        "depth": 6,
+        "internal_nodes": 46,
+        "leaf_nodes": 106,
+        "total_nodes": 152
+      },
+      {
+        "doc_id": "peraturan-menag-13-2025",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 56,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "peraturan-menag-2-2025",
+        "depth": 5,
+        "internal_nodes": 23,
+        "leaf_nodes": 45,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "peraturan-menag-27-2024",
+        "depth": 7,
+        "internal_nodes": 94,
+        "leaf_nodes": 235,
+        "total_nodes": 329
+      },
+      {
+        "doc_id": "peraturan-menag-28-2024",
+        "depth": 6,
+        "internal_nodes": 78,
+        "leaf_nodes": 182,
+        "total_nodes": 260
+      },
+      {
+        "doc_id": "peraturan-menag-4-2025",
+        "depth": 4,
+        "internal_nodes": 13,
+        "leaf_nodes": 48,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "peraturan-menag-4-2026",
+        "depth": 4,
+        "internal_nodes": 15,
+        "leaf_nodes": 108,
+        "total_nodes": 123
+      },
+      {
+        "doc_id": "peraturan-menag-8-2025",
+        "depth": 5,
+        "internal_nodes": 22,
+        "leaf_nodes": 44,
+        "total_nodes": 66
+      },
+      {
+        "doc_id": "permenaker-1-2025",
+        "depth": 7,
+        "internal_nodes": 147,
+        "leaf_nodes": 403,
+        "total_nodes": 550
+      },
+      {
+        "doc_id": "permenaker-10-2024",
+        "depth": 5,
+        "internal_nodes": 58,
+        "leaf_nodes": 182,
+        "total_nodes": 240
+      },
+      {
+        "doc_id": "permenaker-13-2024",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 29,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "permenaker-13-2025",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 90,
+        "total_nodes": 119
+      },
+      {
+        "doc_id": "permenaker-14-2025",
+        "depth": 6,
+        "internal_nodes": 80,
+        "leaf_nodes": 229,
+        "total_nodes": 309
+      },
+      {
+        "doc_id": "permenaker-16-2024",
+        "depth": 5,
+        "internal_nodes": 26,
+        "leaf_nodes": 46,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permenaker-17-2024",
+        "depth": 4,
+        "internal_nodes": 35,
+        "leaf_nodes": 99,
+        "total_nodes": 134
+      },
+      {
+        "doc_id": "permenaker-2-2025",
+        "depth": 6,
+        "internal_nodes": 43,
+        "leaf_nodes": 93,
+        "total_nodes": 136
+      },
+      {
+        "doc_id": "permenaker-5-2024",
+        "depth": 5,
+        "internal_nodes": 47,
+        "leaf_nodes": 158,
+        "total_nodes": 205
+      },
+      {
+        "doc_id": "permenaker-9-2024",
+        "depth": 5,
+        "internal_nodes": 46,
+        "leaf_nodes": 155,
+        "total_nodes": 201
+      },
+      {
+        "doc_id": "permen-bumn-per-01-mbu-03-2020-2020",
+        "depth": 5,
+        "internal_nodes": 116,
+        "leaf_nodes": 319,
+        "total_nodes": 435
+      },
+      {
+        "doc_id": "permen-bumn-per-05-mbu-04-2021-2021",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 128,
+        "total_nodes": 177
+      },
+      {
+        "doc_id": "permen-bumn-per-06-mbu-04-2021-2021",
+        "depth": 6,
+        "internal_nodes": 26,
+        "leaf_nodes": 66,
+        "total_nodes": 92
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-01-2022-2022",
+        "depth": 4,
+        "internal_nodes": 14,
+        "leaf_nodes": 39,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2021-2021",
+        "depth": 4,
+        "internal_nodes": 27,
+        "leaf_nodes": 70,
+        "total_nodes": 97
+      },
+      {
+        "doc_id": "permen-bumn-per-1-mbu-03-2023-2023",
+        "depth": 5,
+        "internal_nodes": 69,
+        "leaf_nodes": 174,
+        "total_nodes": 243
+      },
+      {
+        "doc_id": "permen-bumn-per-11-mbu-07-2021-2021",
+        "depth": 6,
+        "internal_nodes": 64,
+        "leaf_nodes": 206,
+        "total_nodes": 270
+      },
+      {
+        "doc_id": "permen-bumn-per-4-mbu-06-2022-2022",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 52,
+        "total_nodes": 75
+      },
+      {
+        "doc_id": "permen-bumn-per-6-mbu-09-2022-2022",
+        "depth": 5,
+        "internal_nodes": 24,
+        "leaf_nodes": 39,
+        "total_nodes": 63
+      },
+      {
+        "doc_id": "permen-bumn-per-9-mbu-06-2021-2021",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 67,
+        "total_nodes": 93
+      },
+      {
+        "doc_id": "permendag-1-2026",
+        "depth": 4,
+        "internal_nodes": 64,
+        "leaf_nodes": 245,
+        "total_nodes": 309
+      },
+      {
+        "doc_id": "permendag-23-2024",
+        "depth": 4,
+        "internal_nodes": 10,
+        "leaf_nodes": 38,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permendag-28-2024",
+        "depth": 5,
+        "internal_nodes": 63,
+        "leaf_nodes": 148,
+        "total_nodes": 211
+      },
+      {
+        "doc_id": "permendag-3-2026",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 41,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permendag-39-2025",
+        "depth": 6,
+        "internal_nodes": 59,
+        "leaf_nodes": 232,
+        "total_nodes": 291
+      },
+      {
+        "doc_id": "permendag-4-2026",
+        "depth": 5,
+        "internal_nodes": 67,
+        "leaf_nodes": 227,
+        "total_nodes": 294
+      },
+      {
+        "doc_id": "permendag-41-2025",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 61,
+        "total_nodes": 86
+      },
+      {
+        "doc_id": "permendag-47-2025",
+        "depth": 3,
+        "internal_nodes": 7,
+        "leaf_nodes": 36,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "permendag-7-2026",
+        "depth": 3,
+        "internal_nodes": 15,
+        "leaf_nodes": 58,
+        "total_nodes": 73
+      },
+      {
+        "doc_id": "permendag-9-2026",
+        "depth": 3,
+        "internal_nodes": 3,
+        "leaf_nodes": 19,
+        "total_nodes": 22
+      },
+      {
+        "doc_id": "permendagri-1-2025",
+        "depth": 6,
+        "internal_nodes": 63,
+        "leaf_nodes": 161,
+        "total_nodes": 224
+      },
+      {
+        "doc_id": "permendagri-13-2025",
+        "depth": 5,
+        "internal_nodes": 31,
+        "leaf_nodes": 90,
+        "total_nodes": 121
+      },
+      {
+        "doc_id": "permendagri-16-2024",
+        "depth": 4,
+        "internal_nodes": 40,
+        "leaf_nodes": 132,
+        "total_nodes": 172
+      },
+      {
+        "doc_id": "permendagri-19-2024",
+        "depth": 6,
+        "internal_nodes": 79,
+        "leaf_nodes": 210,
+        "total_nodes": 289
+      },
+      {
+        "doc_id": "permendagri-2-2024",
+        "depth": 5,
+        "internal_nodes": 35,
+        "leaf_nodes": 69,
+        "total_nodes": 104
+      },
+      {
+        "doc_id": "permendagri-21-2024",
+        "depth": 5,
+        "internal_nodes": 128,
+        "leaf_nodes": 437,
+        "total_nodes": 565
+      },
+      {
+        "doc_id": "permendagri-22-2024",
+        "depth": 6,
+        "internal_nodes": 31,
+        "leaf_nodes": 129,
+        "total_nodes": 160
+      },
+      {
+        "doc_id": "permendagri-3-2024",
+        "depth": 6,
+        "internal_nodes": 67,
+        "leaf_nodes": 199,
+        "total_nodes": 266
+      },
+      {
+        "doc_id": "permendagri-6-2024",
+        "depth": 5,
+        "internal_nodes": 56,
+        "leaf_nodes": 143,
+        "total_nodes": 199
+      },
+      {
+        "doc_id": "permendagri-7-2025",
+        "depth": 5,
+        "internal_nodes": 55,
+        "leaf_nodes": 162,
+        "total_nodes": 217
+      },
+      {
+        "doc_id": "permendikbud-10-2021",
+        "depth": 6,
+        "internal_nodes": 38,
+        "leaf_nodes": 99,
+        "total_nodes": 137
+      },
+      {
+        "doc_id": "permendikbud-11-2021",
+        "depth": 6,
+        "internal_nodes": 34,
+        "leaf_nodes": 102,
+        "total_nodes": 136
+      },
+      {
+        "doc_id": "permendikbud-35-2020",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 66,
+        "total_nodes": 95
+      },
+      {
+        "doc_id": "permendikbud-38-2020",
+        "depth": 7,
+        "internal_nodes": 56,
+        "leaf_nodes": 122,
+        "total_nodes": 178
+      },
+      {
+        "doc_id": "permendikbud-4-2021",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 27,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "permendikbud-40-2020",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 40,
+        "total_nodes": 48
+      },
+      {
+        "doc_id": "permendikbud-6-2021",
+        "depth": 6,
+        "internal_nodes": 58,
+        "leaf_nodes": 159,
+        "total_nodes": 217
+      },
+      {
+        "doc_id": "permendikbud-7-2021",
+        "depth": 4,
+        "internal_nodes": 7,
+        "leaf_nodes": 19,
+        "total_nodes": 26
+      },
+      {
+        "doc_id": "permendikbud-8-2021",
+        "depth": 5,
+        "internal_nodes": 32,
+        "leaf_nodes": 88,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "permendikbud-9-2021",
+        "depth": 6,
+        "internal_nodes": 53,
+        "leaf_nodes": 136,
+        "total_nodes": 189
+      },
+      {
+        "doc_id": "permendikbudristek-36-2024",
+        "depth": 5,
+        "internal_nodes": 35,
+        "leaf_nodes": 85,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "permendikbudristek-40-2024",
+        "depth": 5,
+        "internal_nodes": 6,
+        "leaf_nodes": 8,
+        "total_nodes": 14
+      },
+      {
+        "doc_id": "permendikbudristek-45-2024",
+        "depth": 4,
+        "internal_nodes": 12,
+        "leaf_nodes": 41,
+        "total_nodes": 53
+      },
+      {
+        "doc_id": "permendikbudristek-46-2024",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 81,
+        "total_nodes": 100
+      },
+      {
+        "doc_id": "permendikbudristek-50-2024",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 164,
+        "total_nodes": 213
+      },
+      {
+        "doc_id": "permendikbudristek-58-2024",
+        "depth": 4,
+        "internal_nodes": 41,
+        "leaf_nodes": 127,
+        "total_nodes": 168
+      },
+      {
+        "doc_id": "permendikbudristek-63-2024",
+        "depth": 5,
+        "internal_nodes": 76,
+        "leaf_nodes": 189,
+        "total_nodes": 265
+      },
+      {
+        "doc_id": "permendikbudristek-66-2024",
+        "depth": 3,
+        "internal_nodes": 43,
+        "leaf_nodes": 127,
+        "total_nodes": 170
+      },
+      {
+        "doc_id": "permendikbudristek-67-2024",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 72,
+        "total_nodes": 95
+      },
+      {
+        "doc_id": "permendikbudristek-71-2024",
+        "depth": 4,
+        "internal_nodes": 46,
+        "leaf_nodes": 135,
+        "total_nodes": 181
+      },
+      {
+        "doc_id": "permenkes-1-2025",
+        "depth": 2,
+        "internal_nodes": 1,
+        "leaf_nodes": 14,
+        "total_nodes": 15
+      },
+      {
+        "doc_id": "permenkes-10-2024",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 87,
+        "total_nodes": 110
+      },
+      {
+        "doc_id": "permenkes-15-2024",
+        "depth": 6,
+        "internal_nodes": 83,
+        "leaf_nodes": 201,
+        "total_nodes": 284
+      },
+      {
+        "doc_id": "permenkes-16-2024",
+        "depth": 4,
+        "internal_nodes": 48,
+        "leaf_nodes": 136,
+        "total_nodes": 184
+      },
+      {
+        "doc_id": "permenkes-18-2024",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 145,
+        "total_nodes": 194
+      },
+      {
+        "doc_id": "permenkes-23-2023",
+        "depth": 3,
+        "internal_nodes": 8,
+        "leaf_nodes": 51,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "permenkes-3-2024",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 20,
+        "total_nodes": 25
+      },
+      {
+        "doc_id": "permenkes-3-2025",
+        "depth": 4,
+        "internal_nodes": 66,
+        "leaf_nodes": 207,
+        "total_nodes": 273
+      },
+      {
+        "doc_id": "permenkes-33-2023",
+        "depth": 5,
+        "internal_nodes": 53,
+        "leaf_nodes": 127,
+        "total_nodes": 180
+      },
+      {
+        "doc_id": "permenkes-7-2024",
+        "depth": 3,
+        "internal_nodes": 5,
+        "leaf_nodes": 15,
+        "total_nodes": 20
+      },
+      {
+        "doc_id": "permenkomdigi-1-2026",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 50,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permenkomdigi-10-2025",
+        "depth": 7,
+        "internal_nodes": 178,
+        "leaf_nodes": 499,
+        "total_nodes": 677
+      },
+      {
+        "doc_id": "permenkomdigi-13-2025",
+        "depth": 5,
+        "internal_nodes": 23,
+        "leaf_nodes": 49,
+        "total_nodes": 72
+      },
+      {
+        "doc_id": "permenkomdigi-17-2025",
+        "depth": 5,
+        "internal_nodes": 24,
+        "leaf_nodes": 57,
+        "total_nodes": 81
+      },
+      {
+        "doc_id": "permenkomdigi-18-2025",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 59,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "permenkomdigi-2-2026",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 54,
+        "total_nodes": 77
+      },
+      {
+        "doc_id": "permenkomdigi-20-2025",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 59,
+        "total_nodes": 82
+      },
+      {
+        "doc_id": "permenkomdigi-5-2026",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 79,
+        "total_nodes": 107
+      },
+      {
+        "doc_id": "permenkomdigi-6-2026",
+        "depth": 4,
+        "internal_nodes": 25,
+        "leaf_nodes": 78,
+        "total_nodes": 103
+      },
+      {
+        "doc_id": "permenkomdigi-7-2026",
+        "depth": 7,
+        "internal_nodes": 66,
+        "leaf_nodes": 171,
+        "total_nodes": 237
+      },
+      {
+        "doc_id": "permenkominfo-1-2023",
+        "depth": 4,
+        "internal_nodes": 24,
+        "leaf_nodes": 117,
+        "total_nodes": 141
+      },
+      {
+        "doc_id": "permenkominfo-1-2024",
+        "depth": 5,
+        "internal_nodes": 39,
+        "leaf_nodes": 122,
+        "total_nodes": 161
+      },
+      {
+        "doc_id": "permenkominfo-10-2023",
+        "depth": 5,
+        "internal_nodes": 24,
+        "leaf_nodes": 59,
+        "total_nodes": 83
+      },
+      {
+        "doc_id": "permenkominfo-15-2022",
+        "depth": 5,
+        "internal_nodes": 50,
+        "leaf_nodes": 130,
+        "total_nodes": 180
+      },
+      {
+        "doc_id": "permenkominfo-16-2022",
+        "depth": 5,
+        "internal_nodes": 64,
+        "leaf_nodes": 188,
+        "total_nodes": 252
+      },
+      {
+        "doc_id": "permenkominfo-2-2024",
+        "depth": 6,
+        "internal_nodes": 51,
+        "leaf_nodes": 164,
+        "total_nodes": 215
+      },
+      {
+        "doc_id": "permenkominfo-3-2023",
+        "depth": 3,
+        "internal_nodes": 17,
+        "leaf_nodes": 68,
+        "total_nodes": 85
+      },
+      {
+        "doc_id": "permenkominfo-5-2024",
+        "depth": 5,
+        "internal_nodes": 87,
+        "leaf_nodes": 290,
+        "total_nodes": 377
+      },
+      {
+        "doc_id": "permenkominfo-8-2023",
+        "depth": 6,
+        "internal_nodes": 36,
+        "leaf_nodes": 88,
+        "total_nodes": 124
+      },
+      {
+        "doc_id": "permenkominfo-8-2024",
+        "depth": 5,
+        "internal_nodes": 46,
+        "leaf_nodes": 153,
+        "total_nodes": 199
+      },
+      {
+        "doc_id": "permenkumham-10-2024",
+        "depth": 6,
+        "internal_nodes": 20,
+        "leaf_nodes": 43,
+        "total_nodes": 63
+      },
+      {
+        "doc_id": "permenkumham-11-2024",
+        "depth": 7,
+        "internal_nodes": 206,
+        "leaf_nodes": 619,
+        "total_nodes": 825
+      },
+      {
+        "doc_id": "permenkumham-13-2024",
+        "depth": 4,
+        "internal_nodes": 30,
+        "leaf_nodes": 90,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "permenkumham-15-2024",
+        "depth": 6,
+        "internal_nodes": 74,
+        "leaf_nodes": 200,
+        "total_nodes": 274
+      },
+      {
+        "doc_id": "permenkumham-16-2024",
+        "depth": 2,
+        "internal_nodes": 3,
+        "leaf_nodes": 15,
+        "total_nodes": 18
+      },
+      {
+        "doc_id": "permenkumham-17-2024",
+        "depth": 6,
+        "internal_nodes": 81,
+        "leaf_nodes": 212,
+        "total_nodes": 293
+      },
+      {
+        "doc_id": "permenkumham-18-2024",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 76,
+        "total_nodes": 102
+      },
+      {
+        "doc_id": "permenkumham-2-2024",
+        "depth": 4,
+        "internal_nodes": 26,
+        "leaf_nodes": 70,
+        "total_nodes": 96
+      },
+      {
+        "doc_id": "permenkumham-20-2024",
+        "depth": 4,
+        "internal_nodes": 17,
+        "leaf_nodes": 46,
+        "total_nodes": 63
+      },
+      {
+        "doc_id": "permenkumham-22-2024",
+        "depth": 5,
+        "internal_nodes": 37,
+        "leaf_nodes": 99,
+        "total_nodes": 136
+      },
+      {
+        "doc_id": "permenperin-22-2025",
+        "depth": 5,
+        "internal_nodes": 18,
+        "leaf_nodes": 73,
+        "total_nodes": 91
+      },
+      {
+        "doc_id": "permenperin-23-2025",
+        "depth": 5,
+        "internal_nodes": 17,
+        "leaf_nodes": 42,
+        "total_nodes": 59
+      },
+      {
+        "doc_id": "permenperin-24-2025",
+        "depth": 6,
+        "internal_nodes": 29,
+        "leaf_nodes": 76,
+        "total_nodes": 105
+      },
+      {
+        "doc_id": "permenperin-25-2025",
+        "depth": 0,
+        "internal_nodes": 0,
+        "leaf_nodes": 0,
+        "total_nodes": 0,
+        "note": "empty_structure"
+      },
+      {
+        "doc_id": "permenperin-3-2026",
+        "depth": 5,
+        "internal_nodes": 31,
+        "leaf_nodes": 118,
+        "total_nodes": 149
+      },
+      {
+        "doc_id": "permenperin-37-2025",
+        "depth": 6,
+        "internal_nodes": 56,
+        "leaf_nodes": 198,
+        "total_nodes": 254
+      },
+      {
+        "doc_id": "permenperin-40-2025",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 40,
+        "total_nodes": 51
+      },
+      {
+        "doc_id": "permenperin-5-2026",
+        "depth": 7,
+        "internal_nodes": 84,
+        "leaf_nodes": 220,
+        "total_nodes": 304
+      },
+      {
+        "doc_id": "permenperin-6-2026",
+        "depth": 2,
+        "internal_nodes": 4,
+        "leaf_nodes": 15,
+        "total_nodes": 19
+      },
+      {
+        "doc_id": "permenperin-8-2026",
+        "depth": 6,
+        "internal_nodes": 59,
+        "leaf_nodes": 207,
+        "total_nodes": 266
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-1-2026",
+        "depth": 4,
+        "internal_nodes": 54,
+        "leaf_nodes": 169,
+        "total_nodes": 223
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-13-2025",
+        "depth": 5,
+        "internal_nodes": 43,
+        "leaf_nodes": 120,
+        "total_nodes": 163
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-14-2025",
+        "depth": 4,
+        "internal_nodes": 16,
+        "leaf_nodes": 74,
+        "total_nodes": 90
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-19-2024",
+        "depth": 5,
+        "internal_nodes": 17,
+        "leaf_nodes": 40,
+        "total_nodes": 57
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2022",
+        "depth": 5,
+        "internal_nodes": 28,
+        "leaf_nodes": 111,
+        "total_nodes": 139
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-2-2025",
+        "depth": 6,
+        "internal_nodes": 45,
+        "leaf_nodes": 73,
+        "total_nodes": 118
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-5-2025",
+        "depth": 7,
+        "internal_nodes": 76,
+        "leaf_nodes": 154,
+        "total_nodes": 230
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-7-2025",
+        "depth": 5,
+        "internal_nodes": 16,
+        "leaf_nodes": 66,
+        "total_nodes": 82
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-8-2022",
+        "depth": 5,
+        "internal_nodes": 32,
+        "leaf_nodes": 91,
+        "total_nodes": 123
+      },
+      {
+        "doc_id": "permen-atr-kepala-bpn-9-2022",
+        "depth": 5,
+        "internal_nodes": 30,
+        "leaf_nodes": 81,
+        "total_nodes": 111
+      },
+      {
+        "doc_id": "permen-esdm-1-2025",
+        "depth": 6,
+        "internal_nodes": 30,
+        "leaf_nodes": 67,
+        "total_nodes": 97
+      },
+      {
+        "doc_id": "permen-esdm-10-2025",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 82,
+        "total_nodes": 111
+      },
+      {
+        "doc_id": "permen-esdm-11-2024",
+        "depth": 5,
+        "internal_nodes": 43,
+        "leaf_nodes": 107,
+        "total_nodes": 150
+      },
+      {
+        "doc_id": "permen-esdm-13-2024",
+        "depth": 6,
+        "internal_nodes": 68,
+        "leaf_nodes": 199,
+        "total_nodes": 267
+      },
+      {
+        "doc_id": "permen-esdm-14-2025",
+        "depth": 6,
+        "internal_nodes": 59,
+        "leaf_nodes": 188,
+        "total_nodes": 247
+      },
+      {
+        "doc_id": "permen-esdm-15-2024",
+        "depth": 5,
+        "internal_nodes": 24,
+        "leaf_nodes": 32,
+        "total_nodes": 56
+      },
+      {
+        "doc_id": "permen-esdm-2-2025",
+        "depth": 5,
+        "internal_nodes": 21,
+        "leaf_nodes": 47,
+        "total_nodes": 68
+      },
+      {
+        "doc_id": "permen-esdm-4-2025",
+        "depth": 5,
+        "internal_nodes": 63,
+        "leaf_nodes": 191,
+        "total_nodes": 254
+      },
+      {
+        "doc_id": "permen-esdm-6-2025",
+        "depth": 5,
+        "internal_nodes": 19,
+        "leaf_nodes": 41,
+        "total_nodes": 60
+      },
+      {
+        "doc_id": "permen-esdm-8-2025",
+        "depth": 6,
+        "internal_nodes": 72,
+        "leaf_nodes": 181,
+        "total_nodes": 253
+      },
+      {
+        "doc_id": "permen-pupr-11-2023",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 82,
+        "total_nodes": 111
+      },
+      {
+        "doc_id": "permen-pupr-12-2023",
+        "depth": 5,
+        "internal_nodes": 44,
+        "leaf_nodes": 123,
+        "total_nodes": 167
+      },
+      {
+        "doc_id": "permen-pupr-12-2024",
+        "depth": 5,
+        "internal_nodes": 69,
+        "leaf_nodes": 208,
+        "total_nodes": 277
+      },
+      {
+        "doc_id": "permen-pupr-13-2024",
+        "depth": 5,
+        "internal_nodes": 42,
+        "leaf_nodes": 106,
+        "total_nodes": 148
+      },
+      {
+        "doc_id": "permen-pupr-4-2022",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 69,
+        "total_nodes": 98
+      },
+      {
+        "doc_id": "permen-pupr-5-2024",
+        "depth": 5,
+        "internal_nodes": 45,
+        "leaf_nodes": 111,
+        "total_nodes": 156
+      },
+      {
+        "doc_id": "permen-pupr-6-2024",
+        "depth": 4,
+        "internal_nodes": 35,
+        "leaf_nodes": 105,
+        "total_nodes": 140
+      },
+      {
+        "doc_id": "permen-pupr-7-2023",
+        "depth": 5,
+        "internal_nodes": 30,
+        "leaf_nodes": 93,
+        "total_nodes": 123
+      },
+      {
+        "doc_id": "permen-pupr-8-2024",
+        "depth": 4,
+        "internal_nodes": 44,
+        "leaf_nodes": 92,
+        "total_nodes": 136
+      },
+      {
+        "doc_id": "permen-pupr-9-2022",
+        "depth": 3,
+        "internal_nodes": 11,
+        "leaf_nodes": 47,
+        "total_nodes": 58
+      },
+      {
+        "doc_id": "perpres-1-2026",
+        "depth": 4,
+        "internal_nodes": 28,
+        "leaf_nodes": 77,
+        "total_nodes": 105
+      },
+      {
+        "doc_id": "perpres-11-2026",
+        "depth": 4,
+        "internal_nodes": 42,
+        "leaf_nodes": 121,
+        "total_nodes": 163
+      },
+      {
+        "doc_id": "perpres-118-2025",
+        "depth": 4,
+        "internal_nodes": 22,
+        "leaf_nodes": 88,
+        "total_nodes": 110
+      },
+      {
+        "doc_id": "perpres-119-2025",
+        "depth": 4,
+        "internal_nodes": 9,
+        "leaf_nodes": 26,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "perpres-120-2025",
+        "depth": 5,
+        "internal_nodes": 47,
+        "leaf_nodes": 108,
+        "total_nodes": 155
+      },
+      {
+        "doc_id": "perpres-14-2026",
+        "depth": 4,
+        "internal_nodes": 42,
+        "leaf_nodes": 134,
+        "total_nodes": 176
+      },
+      {
+        "doc_id": "perpres-2-2026",
+        "depth": 2,
+        "internal_nodes": 5,
+        "leaf_nodes": 19,
+        "total_nodes": 24
+      },
+      {
+        "doc_id": "perpres-4-2026",
+        "depth": 5,
+        "internal_nodes": 58,
+        "leaf_nodes": 160,
+        "total_nodes": 218
+      },
+      {
+        "doc_id": "perpres-5-2026",
+        "depth": 3,
+        "internal_nodes": 12,
+        "leaf_nodes": 40,
+        "total_nodes": 52
+      },
+      {
+        "doc_id": "perpres-9-2026",
+        "depth": 4,
+        "internal_nodes": 57,
+        "leaf_nodes": 165,
+        "total_nodes": 222
+      },
+      {
+        "doc_id": "perpu-1-2000",
+        "depth": 4,
+        "internal_nodes": 19,
+        "leaf_nodes": 42,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "perpu-1-2002",
+        "depth": 4,
+        "internal_nodes": 41,
+        "leaf_nodes": 154,
+        "total_nodes": 195
+      },
+      {
+        "doc_id": "perpu-1-2008",
+        "depth": 6,
+        "internal_nodes": 7,
+        "leaf_nodes": 38,
+        "total_nodes": 45
+      },
+      {
+        "doc_id": "perpu-1-2013",
+        "depth": 5,
+        "internal_nodes": 28,
+        "leaf_nodes": 84,
+        "total_nodes": 112
+      },
+      {
+        "doc_id": "perpu-1-2016",
+        "depth": 4,
+        "internal_nodes": 9,
+        "leaf_nodes": 25,
+        "total_nodes": 34
+      },
+      {
+        "doc_id": "perpu-1-2017",
+        "depth": 3,
+        "internal_nodes": 14,
+        "leaf_nodes": 47,
+        "total_nodes": 61
+      },
+      {
+        "doc_id": "perpu-1-2020",
+        "depth": 6,
+        "internal_nodes": 61,
+        "leaf_nodes": 146,
+        "total_nodes": 207
+      },
+      {
+        "doc_id": "perpu-1-2022",
+        "depth": 5,
+        "internal_nodes": 19,
+        "leaf_nodes": 57,
+        "total_nodes": 76
+      },
+      {
+        "doc_id": "perpu-2-1998",
+        "depth": 4,
+        "internal_nodes": 23,
+        "leaf_nodes": 62,
+        "total_nodes": 85
+      },
+      {
+        "doc_id": "perpu-4-2008",
+        "depth": 5,
+        "internal_nodes": 38,
+        "leaf_nodes": 82,
+        "total_nodes": 120
+      },
+      {
+        "doc_id": "perwali-bandung-11-2026",
+        "depth": 5,
+        "internal_nodes": 52,
+        "leaf_nodes": 145,
+        "total_nodes": 197
+      },
+      {
+        "doc_id": "perwali-bandung-12-2026",
+        "depth": 4,
+        "internal_nodes": 30,
+        "leaf_nodes": 100,
+        "total_nodes": 130
+      },
+      {
+        "doc_id": "perwali-bandung-15-2026",
+        "depth": 5,
+        "internal_nodes": 16,
+        "leaf_nodes": 59,
+        "total_nodes": 75
+      },
+      {
+        "doc_id": "perwali-bandung-16-2026",
+        "depth": 5,
+        "internal_nodes": 20,
+        "leaf_nodes": 58,
+        "total_nodes": 78
+      },
+      {
+        "doc_id": "perwali-bandung-7-2026",
+        "depth": 5,
+        "internal_nodes": 10,
+        "leaf_nodes": 36,
+        "total_nodes": 46
+      },
+      {
+        "doc_id": "perwali-batu-11-2026",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 34,
+        "total_nodes": 43
+      },
+      {
+        "doc_id": "perwali-batu-12-2026",
+        "depth": 3,
+        "internal_nodes": 9,
+        "leaf_nodes": 32,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "perwali-semarang-10-2026",
+        "depth": 6,
+        "internal_nodes": 47,
+        "leaf_nodes": 125,
+        "total_nodes": 172
+      },
+      {
+        "doc_id": "perwali-semarang-7-2026",
+        "depth": 6,
+        "internal_nodes": 43,
+        "leaf_nodes": 180,
+        "total_nodes": 223
+      },
+      {
+        "doc_id": "perwali-surabaya-9-2026",
+        "depth": 5,
+        "internal_nodes": 33,
+        "leaf_nodes": 86,
+        "total_nodes": 119
+      },
+      {
+        "doc_id": "pmk-102-2025",
+        "depth": 4,
+        "internal_nodes": 51,
+        "leaf_nodes": 191,
+        "total_nodes": 242
+      },
+      {
+        "doc_id": "pmk-107-2025",
+        "depth": 6,
+        "internal_nodes": 60,
+        "leaf_nodes": 166,
+        "total_nodes": 226
+      },
+      {
+        "doc_id": "pmk-111-2025",
+        "depth": 7,
+        "internal_nodes": 107,
+        "leaf_nodes": 357,
+        "total_nodes": 464
+      },
+      {
+        "doc_id": "pmk-112-2025",
+        "depth": 6,
+        "internal_nodes": 89,
+        "leaf_nodes": 242,
+        "total_nodes": 331
+      },
+      {
+        "doc_id": "pmk-113-2025",
+        "depth": 6,
+        "internal_nodes": 64,
+        "leaf_nodes": 163,
+        "total_nodes": 227
+      },
+      {
+        "doc_id": "pmk-118-2025",
+        "depth": 6,
+        "internal_nodes": 46,
+        "leaf_nodes": 142,
+        "total_nodes": 188
+      },
+      {
+        "doc_id": "pmk-15-2026",
+        "depth": 5,
+        "internal_nodes": 23,
+        "leaf_nodes": 70,
+        "total_nodes": 93
+      },
+      {
+        "doc_id": "pmk-21-2026",
+        "depth": 4,
+        "internal_nodes": 11,
+        "leaf_nodes": 30,
+        "total_nodes": 41
+      },
+      {
+        "doc_id": "pmk-84-2025",
+        "depth": 7,
+        "internal_nodes": 121,
+        "leaf_nodes": 343,
+        "total_nodes": 464
+      },
+      {
+        "doc_id": "pmk-99-2025",
+        "depth": 6,
+        "internal_nodes": 110,
+        "leaf_nodes": 298,
+        "total_nodes": 408
+      },
+      {
+        "doc_id": "pp-3-2026",
+        "depth": 6,
+        "internal_nodes": 167,
+        "leaf_nodes": 418,
+        "total_nodes": 585
+      },
+      {
+        "doc_id": "pp-35-2025",
+        "depth": 5,
+        "internal_nodes": 39,
+        "leaf_nodes": 117,
+        "total_nodes": 156
+      },
+      {
+        "doc_id": "pp-37-2025",
+        "depth": 5,
+        "internal_nodes": 49,
+        "leaf_nodes": 142,
+        "total_nodes": 191
+      },
+      {
+        "doc_id": "pp-38-2025",
+        "depth": 6,
+        "internal_nodes": 61,
+        "leaf_nodes": 143,
+        "total_nodes": 204
+      },
+      {
+        "doc_id": "pp-39-2025",
+        "depth": 6,
+        "internal_nodes": 201,
+        "leaf_nodes": 538,
+        "total_nodes": 739
+      },
+      {
+        "doc_id": "pp-48-2025",
+        "depth": 6,
+        "internal_nodes": 80,
+        "leaf_nodes": 186,
+        "total_nodes": 266
+      },
+      {
+        "doc_id": "pp-49-2025",
+        "depth": 6,
+        "internal_nodes": 58,
+        "leaf_nodes": 121,
+        "total_nodes": 179
+      },
+      {
+        "doc_id": "pp-50-2025",
+        "depth": 4,
+        "internal_nodes": 10,
+        "leaf_nodes": 20,
+        "total_nodes": 30
+      },
+      {
+        "doc_id": "pp-55-2025",
+        "depth": 5,
+        "internal_nodes": 29,
+        "leaf_nodes": 77,
+        "total_nodes": 106
+      },
+      {
+        "doc_id": "pp-9-2026",
+        "depth": 4,
+        "internal_nodes": 51,
+        "leaf_nodes": 216,
+        "total_nodes": 267
+      },
+      {
+        "doc_id": "uu-119-2024",
+        "depth": 4,
+        "internal_nodes": 8,
+        "leaf_nodes": 29,
+        "total_nodes": 37
+      },
+      {
+        "doc_id": "uu-13-2025",
+        "depth": 4,
+        "internal_nodes": 8,
+        "leaf_nodes": 27,
+        "total_nodes": 35
+      },
+      {
+        "doc_id": "uu-15-2025",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 52,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "uu-16-2025",
+        "depth": 6,
+        "internal_nodes": 184,
+        "leaf_nodes": 421,
+        "total_nodes": 605
+      },
+      {
+        "doc_id": "uu-18-2025",
+        "depth": 7,
+        "internal_nodes": 131,
+        "leaf_nodes": 368,
+        "total_nodes": 499
+      },
+      {
+        "doc_id": "uu-3-2025",
+        "depth": 6,
+        "internal_nodes": 27,
+        "leaf_nodes": 68,
+        "total_nodes": 95
+      },
+      {
+        "doc_id": "uu-60-2024",
+        "depth": 3,
+        "internal_nodes": 10,
+        "leaf_nodes": 52,
+        "total_nodes": 62
+      },
+      {
+        "doc_id": "uu-62-2024",
+        "depth": 4,
+        "internal_nodes": 84,
+        "leaf_nodes": 386,
+        "total_nodes": 470
+      },
+      {
+        "doc_id": "uu-63-2024",
+        "depth": 5,
+        "internal_nodes": 21,
+        "leaf_nodes": 29,
+        "total_nodes": 50
+      },
+      {
+        "doc_id": "uu-72-2024",
+        "depth": 4,
+        "internal_nodes": 8,
+        "leaf_nodes": 23,
+        "total_nodes": 31
+      }
+    ]
+  }
+}
