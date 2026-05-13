@@ -47,10 +47,11 @@ def flat_search(query: str, leaves: list[dict], top_k: int = 10,
     query_tokens = tokenize(query)
     scores = bm25.get_scores(query_tokens)
 
-    # Rank and filter
+    # Rank and filter (scan past top_k if some have score <= 0)
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    target = max(top_k, 10)
     results = []
-    for idx, score in ranked[:top_k]:
+    for idx, score in ranked:
         if score <= 0:
             continue
         leaf = leaves[idx]
@@ -64,6 +65,8 @@ def flat_search(query: str, leaves: list[dict], top_k: int = 10,
             "penjelasan": leaf.get("penjelasan"),
             "score": round(float(score), 4),
         })
+        if len(results) >= target:
+            break
 
     if verbose:
         print(f"\n[Flat BM25 Search] Top {len(results)} results:")

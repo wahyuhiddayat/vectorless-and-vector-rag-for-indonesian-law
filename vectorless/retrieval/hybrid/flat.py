@@ -1,10 +1,12 @@
 """Hybrid flat retrieval for Indonesian legal QA.
 
-BM25 global search across all leaf nodes, followed by LLM reranking.
+BM25 global search across all leaf nodes, followed by LLM listwise reranking.
 No tree structure is used. This is the flat variant of hybrid retrieval.
 
 Stage 1: BM25 search across ALL leaf nodes (same corpus as bm25-flat).
-Stage 2: LLM reranks top-K BM25 candidates using full leaf text (capped at 5000 chars).
+Stage 2: LLM ranks all BM25 candidates from most to least relevant.
+         Candidates are shuffled before prompting to avoid anchor bias
+         (LLM receiving candidates in BM25 order tends to preserve that order).
 
 Unlike the tree-based hybrid strategy that navigates within a selected doc,
 this variant searches the full leaf node corpus directly, eliminating the
@@ -17,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import random
 import time
 
 from rank_bm25 import BM25Okapi
@@ -42,8 +45,9 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
     scores = bm25.get_scores(tokenize(query))
 
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    target = max(top_k, 10)  # ensure at least 10 candidates for stable evaluation
     candidates = []
-    for idx, score in ranked[:top_k]:
+    for idx, score in ranked:
         if score <= 0:
             continue
         leaf = leaves[idx]
@@ -58,6 +62,8 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
             "summary": leaf.get("summary", ""),
             "bm25_score": round(float(score), 4),
         })
+        if len(candidates) >= target:
+            break
 
     if verbose:
         print(f"\n[Hybrid-Flat BM25] Top {len(candidates)} candidates:")
@@ -68,19 +74,14 @@ def flat_bm25_candidates(query: str, leaves: list[dict], top_k: int = 20,
     return candidates
 
 
-CANDIDATE_TEXT_CAP = 5000
-
-
 def llm_rerank(query: str, candidates: list[dict]) -> dict:
     """Ask the LLM to rank all candidates from most to least relevant.
 
-    Uses RankGPT-style full permutation generation (Sun et al. 2023, EMNLP) so
-    the output is a complete ordering over the input set. Each candidate
-    exposes summary plus full text and penjelasan (capped at 5000 chars to
-    match agentic read budget) so the reranker has access to the same content
-    that BM25 stage 1 scored over, ensuring fair stage-1 vs stage-2 comparison.
-    The caller validates via `validate_llm_ranking` to drop hallucinations
-    and append missing IDs.
+    Listwise reranking: the LLM sees all candidates (full text, title,
+    navigation path, penjelasan) in a single prompt and produces a complete
+    ordering. Candidates are shuffled before this call to mitigate anchor
+    bias from the BM25 ordering. The caller validates via
+    `validate_llm_ranking` to drop hallucinations and append missing IDs.
     """
     candidates_for_prompt = []
     for c in candidates:
@@ -89,12 +90,11 @@ def llm_rerank(query: str, candidates: list[dict]) -> dict:
             "doc_title": c["doc_title"],
             "title": c["title"],
             "navigation_path": c["navigation_path"],
-            "summary": c.get("summary", ""),
-            "text": (c.get("text") or "")[:CANDIDATE_TEXT_CAP],
+            "text": c.get("text") or "",
         }
         penjelasan = c.get("penjelasan")
         if penjelasan and penjelasan != "Cukup jelas.":
-            entry["penjelasan"] = penjelasan[:CANDIDATE_TEXT_CAP]
+            entry["penjelasan"] = penjelasan
         candidates_for_prompt.append(entry)
 
     candidates_text = json.dumps(candidates_for_prompt, ensure_ascii=False, indent=2)
@@ -102,11 +102,11 @@ def llm_rerank(query: str, candidates: list[dict]) -> dict:
 
     prompt = f"""\
 Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari berbagai Undang-Undang.
-Setiap kandidat memiliki ringkasan (summary), isi teks (text), dan penjelasan resmi (jika ada).
+Setiap kandidat memiliki isi teks (text), dan penjelasan resmi (jika ada).
 
 Pertanyaan: {query}
 
-Kandidat Pasal (diurutkan berdasarkan kecocokan kata kunci awal):
+Kandidat Pasal:
 {candidates_text}
 
 Tugas: Urutkan SELURUH {n_candidates} kandidat dari paling relevan ke paling tidak relevan
@@ -124,7 +124,7 @@ Aturan:
 - "ranking" tidak boleh ada duplikat
 - Setiap node_id harus muncul di input (tidak boleh hallucinate)
 - Urutan menentukan ranking (index 0 = paling relevan)
-- Pertimbangkan ISI text dan penjelasan, summary, sumber UU (doc_title), dan navigation_path
+- Pertimbangkan isi text, penjelasan, sumber UU (doc_title), dan navigation_path
 - Kembalikan HANYA JSON
 """
 
@@ -160,12 +160,23 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     snap = snapshot_counters()
     t_step = time.time()
 
-    rerank_result = llm_rerank(query, candidates)
+    # Shuffle to mitigate anchor bias: LLM receives BM25 order by default
+    # and tends to preserve it (see listwise reranking literature).
+    shuffled = list(candidates)
+    random.shuffle(shuffled)
+
+    rerank_result = llm_rerank(query, shuffled)
+
+    # Track hallucinations before validation
     raw_ranking = rerank_result.get("ranking", [])
+    valid_ids = {c["node_id"] for c in candidates}
+    n_hallucinated = sum(1 for nid in raw_ranking if nid not in valid_ids)
+
     ranked_ids = validate_llm_ranking(raw_ranking, candidates)
     rerank_result["validated_ranking"] = ranked_ids
     rerank_result["llm_ranking_length"] = len(raw_ranking)
     rerank_result["validated_ranking_length"] = len(ranked_ids)
+    rerank_result["n_hallucinated"] = n_hallucinated
 
     steps["rerank"] = step_metrics(t_step, snap)
 

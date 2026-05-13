@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import random
 import time
 
 from rank_bm25 import BM25Okapi
@@ -162,8 +163,9 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
     scores = bm25.get_scores(tokenize(query))
 
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    target = max(top_k, 10)
     candidates = []
-    for idx, score in ranked[:top_k]:
+    for idx, score in ranked:
         if score > 0:
             leaf = leaves[idx]
             candidates.append({
@@ -175,21 +177,19 @@ def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
                 "summary": leaf.get("summary", ""),
                 "bm25_score": round(float(score), 4),
             })
+        if len(candidates) >= target:
+            break
     return candidates
-
-
-CANDIDATE_TEXT_CAP = 5000
 
 
 def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
     """Ask the LLM to rank all candidates from most to least relevant.
 
-    RankGPT-style full permutation generation (Sun et al. 2023, EMNLP). Each
-    candidate exposes summary plus full text and penjelasan (capped at 5000
-    chars to match agentic read budget) so the reranker has access to the
-    same content that BM25 stage 1 scored over, ensuring fair stage-1 vs
-    stage-2 comparison. Caller validates via `validate_llm_ranking` to drop
-    hallucinations and append missing IDs.
+    Listwise reranking: the LLM sees all candidates (full text, title,
+    navigation path, penjelasan) in a single prompt and produces a complete
+    ordering. Candidates are shuffled before this call to mitigate anchor
+    bias from the BM25 ordering. The caller validates via
+    `validate_llm_ranking` to drop hallucinations and append missing IDs.
     """
     candidates_for_prompt = []
     for c in candidates:
@@ -197,12 +197,11 @@ def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
             "node_id": c["node_id"],
             "title": c["title"],
             "navigation_path": c["navigation_path"],
-            "summary": c.get("summary", ""),
-            "text": (c.get("text") or "")[:CANDIDATE_TEXT_CAP],
+            "text": c.get("text") or "",
         }
         penjelasan = c.get("penjelasan")
         if penjelasan and penjelasan != "Cukup jelas.":
-            entry["penjelasan"] = penjelasan[:CANDIDATE_TEXT_CAP]
+            entry["penjelasan"] = penjelasan
         candidates_for_prompt.append(entry)
 
     candidates_text = json.dumps(candidates_for_prompt, ensure_ascii=False, indent=2)
@@ -210,11 +209,11 @@ def _llm_rerank(query: str, candidates: list[dict], doc_title: str) -> dict:
 
     prompt = f"""\
 Kamu diberi pertanyaan hukum dan {n_candidates} Pasal kandidat dari "{doc_title}".
-Setiap kandidat memiliki ringkasan (summary), isi teks (text), dan penjelasan resmi (jika ada).
+Setiap kandidat memiliki isi teks (text), dan penjelasan resmi (jika ada).
 
 Pertanyaan: {query}
 
-Kandidat Pasal (diurutkan berdasarkan kecocokan kata kunci awal):
+Kandidat Pasal:
 {candidates_text}
 
 Tugas: Urutkan SELURUH {n_candidates} kandidat dari paling relevan ke paling tidak relevan
@@ -232,7 +231,7 @@ Aturan:
 - "ranking" tidak boleh ada duplikat
 - Setiap node_id harus muncul di input (tidak boleh hallucinate)
 - Urutan menentukan ranking (index 0 = paling relevan)
-- Pertimbangkan ISI text dan penjelasan, summary, dan navigation_path
+- Pertimbangkan isi text, penjelasan, dan navigation_path
 - Kembalikan HANYA JSON
 """
 
@@ -253,12 +252,22 @@ def node_search(query: str, doc: dict, bm25_top_k: int = 20,
             print(f"  {c['node_id']} {c['title']} (BM25: {c['bm25_score']:.4f})")
             print(f"    path: {c['navigation_path']}")
 
-    rerank_result = _llm_rerank(query, candidates, doc.get("judul", ""))
+    # Shuffle to mitigate anchor bias from BM25 order
+    shuffled = list(candidates)
+    random.shuffle(shuffled)
+
+    rerank_result = _llm_rerank(query, shuffled, doc.get("judul", ""))
+
+    # Track hallucinations before validation
     raw_ranking = rerank_result.get("ranking", [])
+    valid_ids = {c["node_id"] for c in candidates}
+    n_hallucinated = sum(1 for nid in raw_ranking if nid not in valid_ids)
+
     ranked_ids = validate_llm_ranking(raw_ranking, candidates)
     rerank_result["validated_ranking"] = ranked_ids
     rerank_result["llm_ranking_length"] = len(raw_ranking)
     rerank_result["validated_ranking_length"] = len(ranked_ids)
+    rerank_result["n_hallucinated"] = n_hallucinated
 
     if verbose:
         print(f"\n[Node Search - LLM Rerank] Ranked {len(ranked_ids)} candidates")
