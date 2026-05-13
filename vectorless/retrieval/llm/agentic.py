@@ -201,34 +201,35 @@ def _build_prompt(query: str, scratchpad: list[dict],
     The agent inspects it, uses expand() to focus on a subtree,
     read() to verify leaf content, and submit() to finalize.
     """
-    tools = [
-        "- inspect_doc()                             lihat ulang struktur lengkap dokumen",
-        "- expand(node_id)                           fokus ke anak-anak satu node",
-        "- read(node_id)                             baca teks lengkap satu pasal/ayat",
-        '- submit(node_ids, reasoning)               finalisasi urutan node_id (max 10, terurut relevansi)',
-    ]
-
     return (
-        "Kamu adalah agen retrieval dokumen hukum Indonesia.\n"
-        f"Pertanyaan: {query}\n\n"
-        f"Dokumen aktif: {primary_doc_id} - {primary_doc_title}\n\n"
-        "Struktur dokumen lengkap (title + ringkasan, tanpa teks isi):\n"
+        "Kamu adalah agen retrieval dokumen hukum.\n"
+        "Tugas: temukan pasal/ayat paling relevan untuk menjawab pertanyaan.\n\n"
+        f"Pertanyaan: {query}\n"
+        f"Dokumen: {primary_doc_id} — {primary_doc_title}\n\n"
+        "── STRUKTUR DOKUMEN ──\n"
         f"{tree_outline}\n\n"
-        "Tools:\n" + "\n".join(tools) + "\n\n"
-        "Aturan:\n"
-        f"- Sisa action = {actions_left}, sisa read = {reads_left}.\n"
-        "- SCAN struktur dulu untuk identifikasi node relevan.\n"
-        "- Pakai read() sebelum submit untuk verifikasi isi leaf.\n"
-        "- Submit node_ids dari paling relevan ke kurang relevan.\n"
-        "- Kembalikan HANYA JSON.\n\n"
-        "Riwayat tindakan:\n" + _render_scratchpad(scratchpad) + "\n\n"
-        "Format:\n"
+        "── TOOLS ──\n"
+        "- inspect_doc()       lihat struktur lengkap (title + ringkasan)\n"
+        "- expand(node_id)     lihat anak-anak node, fokus pada satu cabang\n"
+        "- read(node_id)       baca teks LENGKAP satu pasal/ayat\n"
+        "- submit(node_ids)    finalisasi ranking [paling relevan, ..., kurang relevan] (max 10)\n\n"
+        "── ALUR KERJA ──\n"
+        "1. Scan struktur → identifikasi cabang/bab yang tematis relevan\n"
+        "2. expand() → lihat pasal/ayat dalam cabang itu\n"
+        "3. read() → baca teks lengkap untuk verifikasi\n"
+        "4. submit() → kirimkan node_ids terurut (paling relevan pertama)\n\n"
+        f"── SISA ANGGARAN ──\n"
+        f"Action: {actions_left} | Read: {reads_left}\n"
+        "Gunakan read() secara selektif — hanya untuk verifikasi.\n\n"
+        "── RIWAYAT TINDAKAN ──\n"
+        f"{_render_scratchpad(scratchpad)}\n\n"
+        "── FORMAT ──\n"
         "{\n"
         '  "thinking": "...",\n'
         '  "action": "inspect_doc" | "expand" | "read" | "submit",\n'
         '  "args": { ... }\n'
         "}\n\n"
-        "Tindakan berikutnya?\n"
+        "Apa langkah selanjutnya?\n"
     )
 
 
