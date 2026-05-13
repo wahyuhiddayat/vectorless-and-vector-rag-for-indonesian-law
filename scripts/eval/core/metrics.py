@@ -225,6 +225,72 @@ def score_ranked_retrieval(
 
 
 # ----------------------------------------------------------------------
+# Tree-paradigm stage-1 vs stage-2 attribution diagnostics
+# ----------------------------------------------------------------------
+
+def compute_doc_pick_diagnostics(
+    retrieved_sources: list[dict],
+    picked_doc_ids: list[str],
+    gold_doc_ids: list[str] | set[str],
+    relevant_ids: set[str],
+    cutoffs: list[int],
+) -> dict:
+    """Attribute tree-method failures to stage-1 (doc-pick) versus stage-2.
+
+    For tree retrieval (bm25-tree, hybrid-tree, llm-agentic-doc), a failed
+    query can fail either because doc-pick missed the gold doc (stage-1
+    cascade fail) or because within-doc navigation missed the gold node
+    even after doc-pick was correct (stage-2 weakness). The 2026-05-13 pilot
+    could not distinguish these. These per-query fields make the next pilot
+    measurable.
+
+    Fields:
+        doc_pick_hit: 1.0 if any picked doc is in the gold doc set, else 0.0.
+        doc_pick_hit_count: number of picked docs that are in the gold set.
+        within_doc_hit@k, within_doc_recall@k, within_doc_mrr@k: standard
+            ranked-retrieval metrics computed on the subset of the retrieval
+            output whose source.doc_id is in the gold doc set. When the
+            picked docs miss the gold doc, the subset is empty and all values
+            are zero. The aggregator then masks these to compute the
+            oracle-conditional R@k by averaging only over rows where
+            doc_pick_hit == 1.0.
+
+    Flat methods that do not have an explicit stage-1 doc-pick (bm25-flat,
+    hybrid-flat, llm-flat) leave `picked_doc_ids` as []. For those rows the
+    diagnostic fields are still emitted but doc_pick_hit will always be 0
+    (vacuously) and within_doc metrics use the full ranked list filtered by
+    gold doc, which is semantically equivalent to recall@k restricted to
+    the gold doc and therefore still informative for flat-vs-tree analysis.
+    """
+    gold_set = set(gold_doc_ids) if gold_doc_ids else set()
+    picked = list(picked_doc_ids or [])
+    doc_pick_hit_count = sum(1 for d in picked if d in gold_set)
+    doc_pick_hit = 1.0 if doc_pick_hit_count > 0 else 0.0
+
+    within_ids: list[str] = []
+    if gold_set:
+        for src in retrieved_sources:
+            if src.get("doc_id") in gold_set:
+                nid = src.get("node_id")
+                if nid:
+                    within_ids.append(nid)
+    within_metrics = score_ranked_retrieval(within_ids, relevant_ids, cutoffs)
+
+    out: dict = {
+        "doc_pick_hit": doc_pick_hit,
+        "doc_pick_hit_count": doc_pick_hit_count,
+        "doc_pick_count": len(picked),
+        "within_doc_num_retrieved": within_metrics["num_retrieved"],
+        "within_doc_first_relevant_rank": within_metrics["first_relevant_rank"],
+    }
+    for k in cutoffs:
+        out[f"within_doc_hit@{k}"] = within_metrics[f"hit@{k}"]
+        out[f"within_doc_recall@{k}"] = within_metrics[f"recall@{k}"]
+        out[f"within_doc_mrr@{k}"] = within_metrics[f"mrr@{k}"]
+    return out
+
+
+# ----------------------------------------------------------------------
 # Rank-distribution descriptive stats over a population of records
 # ----------------------------------------------------------------------
 

@@ -28,26 +28,24 @@ from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counter
 from ..common import (
     tokenize, load_catalog, load_doc, find_node, extract_nodes,
     save_log, validate_llm_ranking, DATA_INDEX,
+    doc_corpus_string, catalog_for_llm_prompt,
 )
 
 
 def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
-    """Rank catalog entries with BM25 over the metadata fields.
+    """Rank catalog entries with BM25 over the doc corpus string.
+
+    Corpus per doc comes from `doc_corpus_string` (metadata + the aggregated
+    `doc_summary_text` from indexing.build) so doc-level signal is rich
+    enough to actually rank docs by topical match instead of the 15-20
+    token metadata baseline.
 
     Returns a single doc by default because the downstream pipeline picks
     `doc_ids[0]` from the merged (LLM picks, BM25 picks) list. LLM picks
     take precedence; BM25 only matters as a fallback when the LLM returns
     no docs. A wider BM25 top_k would be dead code under that merge rule.
     """
-    corpus = []
-    for doc in catalog:
-        combined = " ".join([
-            doc.get("judul") or "",
-            doc.get("bidang") or "",
-            doc.get("subjek") or "",
-            doc.get("materi_pokok") or "",
-        ])
-        corpus.append(tokenize(combined))
+    corpus = [tokenize(doc_corpus_string(doc)) for doc in catalog]
 
     bm25 = BM25Okapi(corpus)
     scores = bm25.get_scores(tokenize(query))
@@ -65,12 +63,19 @@ def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[di
 
 
 def _llm_doc_search(query: str, catalog: list[dict]) -> list[dict]:
-    """Ask the LLM to pick relevant documents from the catalog."""
-    docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
+    """Ask the LLM to pick relevant documents from the catalog.
+
+    The catalog is projected through `catalog_for_llm_prompt` to truncate
+    each doc's aggregated summary to a manageable per-doc budget. Full
+    summaries would inflate the prompt past a comfortable budget at 308
+    docs in scope.
+    """
+    slim_catalog = catalog_for_llm_prompt(catalog)
+    docs_text = json.dumps(slim_catalog, ensure_ascii=False, indent=2)
 
     prompt = f"""\
-Kamu diberi daftar Undang-Undang Indonesia beserta metadata-nya.
-Pilih UU yang relevan untuk menjawab pertanyaan hukum berikut.
+Kamu diberi daftar Undang-Undang Indonesia beserta metadata dan ringkasan isi-nya.
+Pilih UU yang paling mungkin mengandung jawaban untuk pertanyaan hukum berikut.
 
 Pertanyaan: {query}
 
@@ -79,15 +84,16 @@ Daftar UU:
 
 Balas dalam format JSON:
 {{
-  "thinking": "<penalaran singkat mengapa UU tersebut relevan>",
+  "thinking": "<penalaran singkat mengapa UU tersebut kemungkinan relevan>",
   "doc_ids": ["doc_id_1", "doc_id_2"]
 }}
 
 Aturan:
-- Pilih hanya UU yang benar-benar relevan (biasanya 1-2 saja)
-- Jika tidak ada yang relevan, kembalikan doc_ids kosong: []
-- Perhatikan bidang, subjek, dan materi_pokok untuk menentukan relevansi
-- Kembalikan HANYA JSON, tanpa teks lain
+- Pilih 1 sampai 3 UU yang paling mungkin mengandung jawaban (recall-oriented).
+- Lebih baik over-include sedikit daripada miss UU yang relevan.
+- Pertimbangkan judul, bidang, subjek, materi_pokok, dan doc_summary_text (kalau tersedia).
+- Hanya kembalikan doc_ids kosong [] jika benar-benar tidak ada satupun yang dekat dengan topik pertanyaan.
+- Kembalikan HANYA JSON, tanpa teks lain.
 """
     return llm_call(prompt)
 
@@ -146,17 +152,22 @@ def _collect_leaf_nodes(nodes: list[dict]) -> list[dict]:
 
 
 def _bm25_node_candidates(query: str, doc: dict, top_k: int = 20) -> list[dict]:
-    """Return the top leaf candidates scored by BM25."""
+    """Return the top leaf candidates scored by BM25.
+
+    Corpus enrichment mirrors `vectorless/retrieval/bm25/flat.py`
+    (doc_title + navigation_path + text + penjelasan) so within-doc BM25
+    ranking is comparable across flat and hybrid-tree variants.
+    """
     leaves = _collect_leaf_nodes(doc["structure"])
     if not leaves:
         return []
 
+    doc_title = doc.get("judul", "")
     corpus = []
     for leaf in leaves:
-        combined = leaf["text"]
+        combined = doc_title + " " + leaf.get("navigation_path", "") + " " + leaf["text"]
         if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
             combined += " " + leaf["penjelasan"]
-        combined += " " + leaf.get("navigation_path", "")
         corpus.append(tokenize(combined))
 
     bm25 = BM25Okapi(corpus)
@@ -302,7 +313,8 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_ids:
-        return {"query": query, "strategy": "hybrid", "error": "No relevant documents found"}
+        return {"query": query, "strategy": "hybrid", "picked_doc_ids": [],
+                "error": "No relevant documents found"}
 
     snap = snapshot_counters()
     t_step = time.time()
@@ -315,13 +327,13 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     steps["node_search"] = step_metrics(t_step, snap)
 
     if not node_ids:
-        return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
+        return {"query": query, "strategy": "hybrid", "picked_doc_ids": doc_ids,
                 "error": "No relevant nodes found"}
 
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
-        return {"query": query, "strategy": "hybrid", "doc_ids": doc_ids,
+        return {"query": query, "strategy": "hybrid", "picked_doc_ids": doc_ids,
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
 
     bm25_scores = {c["node_id"]: c["bm25_score"] for c in node_result.get("bm25_candidates", [])}
@@ -342,6 +354,7 @@ def retrieve(query: str, bm25_top_k: int = 20, verbose: bool = True) -> dict:
     result = {
         "query": query,
         "strategy": "hybrid",
+        "picked_doc_ids": doc_ids,
         "doc_search": doc_result,
         "node_search": node_result,
         "sources": sources,

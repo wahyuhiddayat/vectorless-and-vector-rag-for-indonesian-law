@@ -75,6 +75,34 @@ def aggregate_records(records: list[dict], cutoffs: list[int]) -> dict:
 
     summary["exact_top1_hit_rate"] = safe_mean([float(row.get("exact_top1_hit", False)) for row in records])
 
+    # Tree-paradigm stage-1 vs stage-2 attribution. For flat methods these
+    # fields are vacuously zero (no doc-pick stage), for tree methods they
+    # let us distinguish doc-pick failure from within-doc nav failure.
+    summary["doc_pick_hit_rate"] = safe_mean(
+        [float(row.get("doc_pick_hit", 0.0)) for row in records]
+    )
+    summary["avg_doc_pick_count"] = safe_mean(
+        [float(row.get("doc_pick_count", 0)) for row in records]
+    )
+    for k in cutoffs:
+        summary[f"within_doc_hit@{k}"] = safe_mean(
+            [row.get(f"within_doc_hit@{k}", 0.0) for row in records]
+        )
+        summary[f"within_doc_recall@{k}"] = safe_mean(
+            [row.get(f"within_doc_recall@{k}", 0.0) for row in records]
+        )
+        summary[f"within_doc_mrr@{k}"] = safe_mean(
+            [row.get(f"within_doc_mrr@{k}", 0.0) for row in records]
+        )
+        # Oracle-conditional: average over rows where doc-pick actually hit,
+        # so this isolates within-doc retrieval quality from stage-1 failure.
+        oracle_rows = [
+            row.get(f"within_doc_recall@{k}", 0.0)
+            for row in records
+            if float(row.get("doc_pick_hit", 0.0)) > 0.0
+        ]
+        summary[f"oracle_within_doc_recall@{k}"] = safe_mean(oracle_rows)
+
     rank_stats = rank_distribution_stats(records)
     summary["mean_rank_on_hit"] = rank_stats["mean_rank_on_hit"]
     summary["median_rank_on_hit"] = rank_stats["median_rank_on_hit"]

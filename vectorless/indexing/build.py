@@ -74,17 +74,47 @@ def resplit_one(pasal_doc: dict, granularity: str) -> dict:
     return doc
 
 
+def _collect_leaf_summaries(structure: list[dict]) -> list[str]:
+    """Walk the tree, return non-empty `summary` text from every leaf node.
+
+    Used by `build_catalog` to enrich each catalog entry with a
+    `doc_summary_text` aggregation. This makes the doc-level BM25 corpus
+    used by tree retrieval methods (bm25-tree, hybrid-tree, llm-agentic)
+    richer than the original 15-20 token metadata-only baseline that
+    caused stage-1 doc-pick to fail in the 2026-05-13 pilot.
+    """
+    summaries: list[str] = []
+    for node in structure:
+        children = node.get("nodes") or []
+        if children:
+            summaries.extend(_collect_leaf_summaries(children))
+        else:
+            text = (node.get("summary") or "").strip()
+            if text:
+                summaries.append(text)
+    return summaries
+
+
 def build_catalog(index_dir: Path) -> list[dict]:
-    """Build the compact catalog stored beside each index."""
+    """Build the compact catalog stored beside each index.
+
+    Each entry copies the metadata fields in `CATALOG_FIELDS` from the
+    source doc, plus a `doc_summary_text` field aggregating every leaf
+    node's `summary` (joined with newlines). The aggregated field is the
+    primary signal for tree-retrieval stage-1 doc-pick.
+    """
     catalog = []
     for path in sorted(index_dir.rglob("*.json")):
-        if path.name == "catalog.json":
+        if path.name.startswith("catalog"):
             continue
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
         if not isinstance(doc, dict) or "doc_id" not in doc:
             continue
-        catalog.append({f: doc.get(f) for f in CATALOG_FIELDS})
+        entry = {f: doc.get(f) for f in CATALOG_FIELDS}
+        leaf_summaries = _collect_leaf_summaries(doc.get("structure") or [])
+        entry["doc_summary_text"] = "\n".join(leaf_summaries)
+        catalog.append(entry)
     return catalog
 
 
@@ -250,7 +280,19 @@ def main() -> None:
                     help="Preview LLM-parse only; do not overwrite any index file")
     ap.add_argument("--skip-existing", action="store_true",
                     help="Skip docs already fully indexed across all 3 granularities")
+    ap.add_argument("--rebuild-catalog-only", action="store_true",
+                    help="Skip per-doc indexing; only rebuild catalog.json for all granularities")
     args = ap.parse_args()
+
+    if args.rebuild_catalog_only:
+        for gran, idx_dir in GRANULARITY_INDEX_MAP.items():
+            if not idx_dir.exists():
+                continue
+            catalog = build_catalog(idx_dir)
+            with open(idx_dir / "catalog.json", "w", encoding="utf-8") as f:
+                json.dump(catalog, f, ensure_ascii=False, indent=2)
+            log.info(f"catalog ({gran})  {len(catalog)} docs  {idx_dir / 'catalog.json'}")
+        return
 
     targets = resolve_targets(list(args.doc_ids), args.category)
     if args.skip_existing:

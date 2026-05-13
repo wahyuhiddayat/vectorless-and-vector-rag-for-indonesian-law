@@ -23,12 +23,18 @@ from rank_bm25 import BM25Okapi
 
 from ...llm import reset_counters, get_stats, snapshot_counters, step_metrics
 from ..common import (
-    tokenize, load_catalog, load_doc, extract_nodes, save_log,
+    tokenize, load_catalog, load_doc, extract_nodes, save_log, doc_corpus_string,
 )
 
 
 def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[dict]:
-    """Rank catalog entries with BM25 over the metadata fields.
+    """Rank catalog entries with BM25 over the doc corpus string.
+
+    Corpus per doc comes from `doc_corpus_string` (metadata + the aggregated
+    `doc_summary_text` from indexing.build). The summary aggregation makes
+    the doc-pick BM25 signal comparable in scale to the leaf-level BM25 used
+    in stage 2 instead of the 15-20 token metadata-only baseline that caused
+    the 2026-05-13 pilot cascade failure.
 
     Args:
         query: Legal question in Indonesian.
@@ -38,15 +44,7 @@ def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = 1) -> list[di
     Returns:
         List of dicts with doc_id, judul, and bm25_score.
     """
-    corpus = []
-    for doc in catalog:
-        combined = " ".join([
-            doc.get("judul") or "",
-            doc.get("bidang") or "",
-            doc.get("subjek") or "",
-            doc.get("materi_pokok") or "",
-        ])
-        corpus.append(tokenize(combined))
+    corpus = [tokenize(doc_corpus_string(doc)) for doc in catalog]
 
     bm25 = BM25Okapi(corpus)
     scores = bm25.get_scores(tokenize(query))
@@ -307,7 +305,7 @@ def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
     steps["doc_search"] = step_metrics(t_step, snap)
 
     if not doc_results:
-        return {"query": query, "strategy": "bm25-tree",
+        return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [],
                 "error": "No relevant documents found"}
 
     if verbose:
@@ -327,13 +325,13 @@ def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
     steps["tree_search"] = step_metrics(t_step, snap)
 
     if not node_ids:
-        return {"query": query, "strategy": "bm25-tree", "doc_ids": [doc_id],
+        return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [doc_id],
                 "error": "No relevant nodes found"}
 
     nodes = extract_nodes(doc, node_ids)
 
     if not nodes:
-        return {"query": query, "strategy": "bm25-tree", "doc_ids": [doc_id],
+        return {"query": query, "strategy": "bm25-tree", "picked_doc_ids": [doc_id],
                 "node_ids": node_ids, "error": "Selected nodes not found in tree"}
 
     sources = []
@@ -351,6 +349,7 @@ def retrieve(query: str, top_k_per_level: int = 3, top_k: int = 10,
     result = {
         "query": query,
         "strategy": "bm25-tree",
+        "picked_doc_ids": [doc_id],
         "doc_search": {"rankings": doc_results},
         "tree_search": tree_result,
         "sources": sources,

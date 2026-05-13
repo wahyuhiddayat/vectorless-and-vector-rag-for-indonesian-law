@@ -28,16 +28,47 @@ from ...llm import call as llm_call, reset_counters, get_stats, snapshot_counter
 from ..common import (
     load_catalog, load_doc, find_node, save_log,
     agentic_finalize, tokenize,
+    doc_corpus_string, catalog_for_llm_prompt,
 )
 
 
-def doc_search(query: str, catalog: list[dict], verbose: bool = True) -> dict:
-    """Ask the LLM to pick relevant documents from the catalog."""
-    docs_text = json.dumps(catalog, ensure_ascii=False, indent=2)
+DOC_PICK_TOP_K = 3
+
+
+def _bm25_doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K) -> list[str]:
+    """Rank catalog entries with BM25 over the doc corpus string, return doc_ids.
+
+    Uses `doc_corpus_string` from common so the BM25 fallback in doc_search
+    benefits from the same aggregated-summary corpus used by bm25-tree and
+    hybrid-tree. Returns the top-K doc_ids that score above zero.
+    """
+    corpus = [tokenize(doc_corpus_string(doc)) for doc in catalog]
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(tokenize(query))
+    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    return [catalog[idx]["doc_id"] for idx, score in ranked[:top_k] if score > 0]
+
+
+def doc_search(query: str, catalog: list[dict], top_k: int = DOC_PICK_TOP_K,
+               verbose: bool = True) -> dict:
+    """Pick up to `top_k` relevant documents via recall-oriented LLM plus BM25 fallback.
+
+    The LLM is asked to lean over-inclusive (1-3 docs) rather than refuse,
+    because the previous strict prompt caused 2/7 queries to hard-fail in
+    the 2026-05-13 pilot. BM25 picks are always merged in as a safety net,
+    so single-doc cascade failures (the tree-paradigm Achilles heel) are
+    softened by giving the agent loop multiple doc candidates.
+
+    Returns:
+        Dict with `doc_ids` (merged, capped at top_k), `llm_doc_ids`,
+        `bm25_doc_ids`, `thinking`, and `merge_source` per doc for telemetry.
+    """
+    slim_catalog = catalog_for_llm_prompt(catalog)
+    docs_text = json.dumps(slim_catalog, ensure_ascii=False, indent=2)
 
     prompt = f"""\
-Kamu diberi daftar Undang-Undang Indonesia beserta metadata-nya.
-Pilih UU yang relevan untuk menjawab pertanyaan hukum berikut.
+Kamu diberi daftar Undang-Undang Indonesia beserta metadata dan ringkasan isi-nya.
+Pilih UU yang paling mungkin mengandung jawaban untuk pertanyaan hukum berikut.
 
 Pertanyaan: {query}
 
@@ -46,25 +77,53 @@ Daftar UU:
 
 Balas dalam format JSON:
 {{
-  "thinking": "<penalaran singkat mengapa UU tersebut relevan>",
-  "doc_ids": ["doc_id_1", "doc_id_2"]
+  "thinking": "<penalaran singkat mengapa UU tersebut kemungkinan relevan>",
+  "doc_ids": ["doc_id_1", "doc_id_2", "doc_id_3"]
 }}
 
 Aturan:
-- Pilih hanya UU yang benar-benar relevan (biasanya 1-2 saja)
-- Jika tidak ada yang relevan, kembalikan doc_ids kosong: []
-- Perhatikan bidang, subjek, dan materi_pokok untuk menentukan relevansi
-- Kembalikan HANYA JSON, tanpa teks lain
+- Pilih 1 sampai {top_k} UU yang paling mungkin mengandung jawaban (recall-oriented).
+- Lebih baik over-include sedikit daripada miss UU yang relevan.
+- Pertimbangkan judul, bidang, subjek, materi_pokok, dan doc_summary_text (kalau tersedia).
+- Hanya kembalikan doc_ids kosong [] jika benar-benar tidak ada satupun yang dekat dengan topik pertanyaan.
+- Kembalikan HANYA JSON, tanpa teks lain.
 """
 
-    result = llm_call(prompt)
+    llm_result = llm_call(prompt)
 
     valid_ids = {d["doc_id"] for d in catalog}
-    result["doc_ids"] = [doc_id for doc_id in result.get("doc_ids", []) if doc_id in valid_ids]
+    llm_doc_ids = [doc_id for doc_id in llm_result.get("doc_ids", []) if doc_id in valid_ids]
+    bm25_doc_ids = _bm25_doc_search(query, catalog, top_k=top_k)
+
+    merged: list[str] = []
+    merge_source: dict[str, str] = {}
+    for doc_id in llm_doc_ids:
+        if doc_id not in merge_source:
+            merged.append(doc_id)
+            merge_source[doc_id] = "llm"
+        if len(merged) >= top_k:
+            break
+    for doc_id in bm25_doc_ids:
+        if len(merged) >= top_k:
+            break
+        if doc_id not in merge_source:
+            merged.append(doc_id)
+            merge_source[doc_id] = "bm25"
+
+    result = {
+        "doc_ids": merged,
+        "llm_doc_ids": llm_doc_ids,
+        "bm25_doc_ids": bm25_doc_ids,
+        "merge_source": merge_source,
+        "thinking": llm_result.get("thinking", ""),
+    }
 
     if verbose:
-        print(f"\n[Doc Search] Selected: {result.get('doc_ids', [])}")
-        print(f"  Reasoning: {result.get('thinking', '')[:200]}")
+        print(f"\n[Doc Search] LLM picks: {llm_doc_ids}")
+        print(f"             BM25 picks: {bm25_doc_ids}")
+        print(f"             Merged: {merged}")
+        if llm_result.get("thinking"):
+            print(f"  Reasoning: {llm_result['thinking'][:200]}")
 
     return result
 
@@ -369,6 +428,7 @@ def retrieve(query: str,
         return {
             "query": query,
             "strategy": "llm-agentic-doc",
+            "picked_doc_ids": [],
             "doc_search": doc_result,
             "error": "No relevant documents found",
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
@@ -528,6 +588,7 @@ def retrieve(query: str,
         return {
             "query": query,
             "strategy": "llm-agentic-doc",
+            "picked_doc_ids": doc_ids,
             "doc_search": doc_result,
             "agent": {
                 "actions_used": actions_used,
@@ -568,6 +629,7 @@ def retrieve(query: str,
     result = {
         "query": query,
         "strategy": "llm-agentic-doc",
+        "picked_doc_ids": doc_ids,
         "doc_search": doc_result,
         "agent": {
             "actions_used": actions_used,
