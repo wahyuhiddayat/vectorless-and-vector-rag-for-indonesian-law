@@ -23,7 +23,7 @@ def tokenize(text: str) -> list[str]:
     Table 5: both preprocessing techniques decrease BM25 EM on Indonesian
     legal QA. BM25 IDF naturally downweights common terms.
     """
-    return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 1]
+    return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 1 or t.isdigit()]
 
 
 def load_catalog() -> list[dict]:
