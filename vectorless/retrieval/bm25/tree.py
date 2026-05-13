@@ -5,8 +5,11 @@ At each level, nodes are scored by their title and summary, and top-k are
 selected for drilling down. This is expected to perform poorly because
 node titles and summaries have limited keyword coverage compared to full text.
 
-This module exists to empirically prove that BM25 cannot effectively use
-tree structure for navigation, unlike LLM-based approaches.
+The beam search uses title and summary for node scoring at intermediate
+levels, then re-ranks all collected leaves with full-text BM25 using the
+same enrichment as bm25-flat (doc_title + navigation_path + text + penjelasan).
+Summaries are LLM-generated at indexing time, not per query (0 LLM calls
+per query).
 
 Usage:
     python -m vectorless.retrieval.bm25.tree "Apa syarat penyadapan?"
@@ -110,8 +113,8 @@ def _bm25_leaf_search(query: str, leaves: list[dict], doc_title: str,
     Leaf nodes are the decision-point of bm25-tree (the final ranking output).
     To preserve decision-point fairness with bm25-flat, leaves are scored over
     `doc_title + navigation_path + text + penjelasan`, the same fields that
-    bm25-flat uses per leaf. Excludes summary (LLM-generated, kept distinct
-    from pure lexical paradigm) and title (subset of navigation_path).
+    bm25-flat uses per leaf. Summary is excluded by design (already consumed
+    in the beam navigation stage).
 
     Args:
         query: Legal question in Indonesian.
