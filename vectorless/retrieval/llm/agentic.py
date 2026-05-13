@@ -293,21 +293,78 @@ def _render_scratchpad(scratchpad: list[dict]) -> str:
     return "\n".join(lines) if lines else "(belum ada tindakan)"
 
 
+def _anti_loop_hints(scratchpad: list[dict], actions_used: int, reads_used: int,
+                     max_actions: int, max_reads: int) -> list[str]:
+    """Return adaptive steering hints when the agent shows signs of stalling.
+
+    Watches for three failure modes observed in run03 outliers:
+    1. Repeated identical action+args in last 3 steps (agent stuck in loop).
+    2. Budget approaching exhaustion without a submit (action_used > 60%).
+    3. Read budget mostly spent (reads_used > 70%) without submit.
+
+    Hints get rendered as a prompt section so the agent sees them next turn.
+    Empty list when nothing fires.
+    """
+    hints: list[str] = []
+    submitted = any(e.get("action") == "submit"
+                    and not (e.get("observation") or {}).get("error")
+                    for e in scratchpad)
+
+    # 1. Repeated identical (action, args) detection
+    recent = [e for e in scratchpad[-3:]
+              if e.get("action") in ("expand", "read", "inspect_doc")]
+    if len(recent) >= 3:
+        sig = (recent[0].get("action"),
+               json.dumps(recent[0].get("args") or {}, sort_keys=True))
+        if all(
+            (e.get("action"), json.dumps(e.get("args") or {}, sort_keys=True)) == sig
+            for e in recent
+        ):
+            hints.append(
+                "Kamu sudah melakukan action yang sama 3 kali berturut-turut. "
+                "Ganti strategi: pilih node lain, atau submit ranking final sekarang."
+            )
+
+    # 2. Action budget warning (no submit yet)
+    if not submitted and actions_used >= int(max_actions * 0.6):
+        remaining = max_actions - actions_used
+        hints.append(
+            f"Sudah {actions_used}/{max_actions} actions tanpa submit, sisa {remaining}. "
+            "Submit ranking final sekarang berdasarkan info yang ada."
+        )
+
+    # 3. Read budget warning
+    if not submitted and reads_used >= int(max_reads * 0.7):
+        remaining = max_reads - reads_used
+        hints.append(
+            f"Anggaran read tersisa {remaining}/{max_reads}. "
+            "Stop reading, mulai pertimbangkan submit ranking."
+        )
+
+    return hints
+
+
 def _build_prompt(query: str, scratchpad: list[dict],
                   actions_left: int, reads_left: int,
                   picked_docs: dict[str, dict],
-                  multidoc_outline: str) -> str:
+                  multidoc_outline: str,
+                  steering_hints: list[str] | None = None) -> str:
     """Build the next-step prompt for the agent in multi-doc mode.
 
     The agent sees K=3 picked docs upfront (full hierarchical outlines)
     and must include `doc_id` in every tool args. Submit accepts
     `doc_id/node_id` ref strings so the final ranking can mix nodes from
-    any of the picked docs.
+    any of the picked docs. Steering hints, if provided, are surfaced in
+    their own section to nudge the agent out of stalled patterns.
     """
     doc_headers = "\n".join(
         f"  - {did} -- {doc.get('judul', '')}"
         for did, doc in picked_docs.items()
     )
+    hints_block = ""
+    if steering_hints:
+        hints_text = "\n".join(f"  - {h}" for h in steering_hints)
+        hints_block = f"── PERINGATAN ──\n{hints_text}\n\n"
     return (
         "Kamu adalah agen retrieval dokumen hukum.\n"
         "Tugas: temukan node paling relevan (pasal/ayat/rincian) untuk menjawab pertanyaan.\n"
@@ -333,6 +390,7 @@ def _build_prompt(query: str, scratchpad: list[dict],
         f"── SISA ANGGARAN ──\n"
         f"Action: {actions_left} | Read: {reads_left}\n"
         "Gunakan read() secara selektif — hanya untuk verifikasi.\n\n"
+        f"{hints_block}"
         "── RIWAYAT TINDAKAN ──\n"
         f"{_render_scratchpad(scratchpad)}\n\n"
         "── FORMAT ──\n"
@@ -525,12 +583,16 @@ def retrieve(query: str,
     parse_failures = 0
 
     while actions_used < max_actions and not submitted:
+        steering_hints = _anti_loop_hints(
+            scratchpad, actions_used, reads_used, max_actions, max_reads,
+        )
         prompt = _build_prompt(
             query, scratchpad,
             actions_left=max_actions - actions_used,
             reads_left=max_reads - reads_used,
             picked_docs=picked_docs,
             multidoc_outline=multidoc_outline,
+            steering_hints=steering_hints,
         )
 
         try:

@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -139,6 +140,153 @@ def invoke_worker(
 
 
 # ----------------------------------------------------------------------
+# Module-level combo execution helpers (pickleable for ProcessPoolExecutor)
+# ----------------------------------------------------------------------
+
+def _run_one_query_with_retry_standalone(
+    *,
+    repo_root: Path,
+    worker_script: Path,
+    system: str,
+    granularity: str,
+    qid: str,
+    item: dict,
+    top_k: int,
+    cutoffs: list[int],
+    timeout_s: int,
+    max_retries: int,
+) -> tuple[dict, float, list[str]]:
+    """Run one query with retry, return (record, elapsed_s, log_lines).
+
+    Standalone equivalent of `EvalRunner._run_one_query_with_retry` minus
+    the `self` dependency, so this is picklable for ProcessPoolExecutor.
+    Retry log messages are accumulated in `log_lines` for the parent to
+    flush in combo order.
+    """
+    retry_count = 0
+    error_category = ""
+    log_lines: list[str] = []
+    total_t0 = time.time()
+
+    while True:
+        payload, worker_stdout, worker_stderr = invoke_worker(
+            worker_script, repo_root, system, granularity,
+            item["query"], top_k, timeout_s,
+        )
+        normalized = normalize_worker_payload(payload)
+        err = normalized.get("error", "")
+        if not err and normalized.get("worker_ok"):
+            error_category = ""
+            break
+        error_category = categorise_error(err or worker_stderr or "")
+        if retry_count >= max_retries or not is_retryable(error_category):
+            break
+        retry_count += 1
+        wait = retry_backoff(error_category, retry_count)
+        log_lines.append(
+            f"  .. {qid} transient error ({error_category}), retry "
+            f"{retry_count}/{max_retries} after {wait:.0f}s"
+        )
+        time.sleep(wait)
+
+    elapsed = time.time() - total_t0
+    record = build_per_query_record(
+        qid=qid, item=item, system=system, granularity=granularity,
+        cutoffs=cutoffs, normalized=normalized,
+        worker_stdout=worker_stdout, worker_stderr=worker_stderr,
+        retry_count=retry_count, error_category=error_category,
+    )
+    return record, elapsed, log_lines
+
+
+def _execute_one_combo(
+    *,
+    repo_root: Path,
+    worker_script: Path,
+    records_dir: Path,
+    system: str,
+    granularity: str,
+    selected_queries: list[tuple[str, dict]],
+    top_k: int,
+    cutoffs: list[int],
+    timeout_s: int,
+    max_retries: int,
+    llm_systems: set[str],
+    inter_query_delay_s: float,
+    resume: bool,
+) -> dict:
+    """Execute one (system, granularity) combo as a standalone unit.
+
+    Returns a dict with `records`, `elapsed_s`, `error_categories`, and
+    accumulated `log_lines`. Designed to be picklable for parallel
+    submission via ProcessPoolExecutor. Per-combo JSONL writes happen
+    inside this function; no cross-combo file contention because each
+    combo owns one JSONL filename.
+    """
+    combo_path = records_dir / eval_io.combo_filename(system, granularity)
+    completed = (
+        eval_io.completed_qids_for_combo(records_dir, system, granularity)
+        if resume else set()
+    )
+    invalid = getattr(eval_io.read_records_file, "last_invalid_count", 0)
+
+    log_lines: list[str] = []
+    if invalid:
+        log_lines.append(
+            f"  resume: skipped {invalid} truncated/invalid record(s) in "
+            f"{system} x {granularity}, those queries will be re-run"
+        )
+        eval_io.read_records_file.last_invalid_count = 0  # type: ignore[attr-defined]
+    if completed:
+        log_lines.append(
+            f"  resume: {len(completed)}/{len(selected_queries)} already done, skipping"
+        )
+
+    mode = "a" if (resume and completed) else "w"
+    combo_records: list[dict] = []
+    error_categories: dict[str, int] = {}
+    query_lines: list[tuple[dict, float]] = []
+
+    combo_t0 = time.time()
+    combo_fh = combo_path.open(mode, encoding="utf-8")
+    try:
+        if completed:
+            combo_records.extend(eval_io.read_records_file(combo_path))
+        for qid, item in selected_queries:
+            if qid in completed:
+                continue
+            record, elapsed, retry_log = _run_one_query_with_retry_standalone(
+                repo_root=repo_root, worker_script=worker_script,
+                system=system, granularity=granularity, qid=qid, item=item,
+                top_k=top_k, cutoffs=cutoffs, timeout_s=timeout_s,
+                max_retries=max_retries,
+            )
+            log_lines.extend(retry_log)
+            combo_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            combo_fh.flush()
+            combo_records.append(record)
+            query_lines.append((record, elapsed))
+            if record.get("error"):
+                cat = record.get("error_category", "other") or "other"
+                error_categories[cat] = error_categories.get(cat, 0) + 1
+            if system in llm_systems and inter_query_delay_s > 0:
+                time.sleep(inter_query_delay_s)
+    finally:
+        combo_fh.close()
+
+    combo_elapsed = time.time() - combo_t0
+    return {
+        "system": system,
+        "granularity": granularity,
+        "records": combo_records,
+        "elapsed_s": combo_elapsed,
+        "error_categories": error_categories,
+        "log_lines": log_lines,
+        "query_lines": query_lines,
+    }
+
+
+# ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
 
@@ -172,6 +320,8 @@ class EvalRunner:
         qdrant_url: str | None = None,
         run_kind: str = "vectorless",
         split: str | None = None,
+        system_timeouts: dict[str, int] | None = None,
+        parallel_combos: int = 1,
     ):
         self.repo_root = repo_root
         self.worker_script = worker_script
@@ -185,6 +335,7 @@ class EvalRunner:
         self.selected_queries = selected_queries
         self.testset = testset
         self.worker_timeout_s = worker_timeout_s
+        self.system_timeouts = system_timeouts or {s: worker_timeout_s for s in systems}
         self.inter_query_delay_s = inter_query_delay_s
         self.llm_systems = llm_systems
         self.resume = resume
@@ -198,6 +349,7 @@ class EvalRunner:
         self.qdrant_url = qdrant_url
         self.run_kind = run_kind
         self.split = split
+        self.parallel_combos = max(1, parallel_combos)
 
         self.logger = ProgressLogger(run_dir / "progress.log")
         self.started_at = datetime.now()
@@ -226,8 +378,10 @@ class EvalRunner:
             "num_queries": len(self.selected_queries),
             "worker_script": str(self.worker_script.relative_to(self.repo_root)),
             "worker_timeout_s": self.worker_timeout_s,
+            "system_timeouts": dict(self.system_timeouts),
             "inter_query_delay_s": self.inter_query_delay_s,
             "max_retries": self.max_retries,
+            "parallel_combos": self.parallel_combos,
             "resume": self.resume,
             "qdrant_path": self.qdrant_path,
             "qdrant_url": self.qdrant_url,
@@ -372,115 +526,78 @@ class EvalRunner:
 
     # ------------------------------------------------------------------
 
-    def _run_one_query_with_retry(
-        self, system: str, granularity: str, qid: str, item: dict,
-    ) -> tuple[dict, float]:
-        """Execute one query, retrying transient errors. Returns (record, elapsed_s)."""
-        retry_count = 0
-        error_category = ""
-        total_t0 = time.time()
-
-        while True:
-            payload, worker_stdout, worker_stderr = invoke_worker(
-                self.worker_script,
-                self.repo_root,
-                system,
-                granularity,
-                item["query"],
-                self.top_k,
-                self.worker_timeout_s,
-            )
-            normalized = normalize_worker_payload(payload)
-            err = normalized.get("error", "")
-            if not err and normalized.get("worker_ok"):
-                error_category = ""
-                break
-            error_category = categorise_error(err or worker_stderr or "")
-            if retry_count >= self.max_retries or not is_retryable(error_category):
-                break
-            retry_count += 1
-            wait = retry_backoff(error_category, retry_count)
-            self.logger.info(
-                f"  .. {qid} transient error ({error_category}), retry {retry_count}/"
-                f"{self.max_retries} after {wait:.0f}s"
-            )
-            time.sleep(wait)
-
-        elapsed = time.time() - total_t0
-        record = build_per_query_record(
-            qid=qid,
-            item=item,
+    def _combo_task_kwargs(self, system: str, granularity: str) -> dict:
+        """Build kwargs for `_execute_one_combo` for one (system, granularity)."""
+        return dict(
+            repo_root=self.repo_root,
+            worker_script=self.worker_script,
+            records_dir=self.records_dir,
             system=system,
             granularity=granularity,
+            selected_queries=self.selected_queries,
+            top_k=self.top_k,
             cutoffs=self.cutoffs,
-            normalized=normalized,
-            worker_stdout=worker_stdout,
-            worker_stderr=worker_stderr,
-            retry_count=retry_count,
-            error_category=error_category,
+            timeout_s=self.system_timeouts.get(system, self.worker_timeout_s),
+            max_retries=self.max_retries,
+            llm_systems=self.llm_systems,
+            inter_query_delay_s=self.inter_query_delay_s,
+            resume=self.resume,
         )
-        return record, elapsed
+
+    def _absorb_combo_result(self, result: dict) -> None:
+        """Merge one finished combo's result into runner state and emit logs."""
+        for line in result.get("log_lines", []) or []:
+            self.logger.info(line)
+        for record, elapsed in result.get("query_lines", []) or []:
+            self.logger.query_line(record, elapsed)
+        for cat, n in (result.get("error_categories") or {}).items():
+            self.error_categories[cat] = self.error_categories.get(cat, 0) + n
+        self.logger.combo_summary(
+            result["system"], result["granularity"],
+            result.get("records") or [], result.get("elapsed_s", 0.0),
+        )
 
     # ------------------------------------------------------------------
 
     def execute(self) -> None:
-        total_combos = len(self.systems) * len(self.granularities)
-        combo_idx = 0
+        combos = [(s, g) for s in self.systems for g in self.granularities]
+        total_combos = len(combos)
 
-        for system in self.systems:
-            for granularity in self.granularities:
-                combo_idx += 1
+        if self.parallel_combos <= 1 or total_combos <= 1:
+            # Serial path. Used when explicitly requested or with a single combo.
+            for combo_idx, (system, granularity) in enumerate(combos, 1):
                 self.logger.combo_start(combo_idx, total_combos, system, granularity)
+                result = _execute_one_combo(**self._combo_task_kwargs(system, granularity))
+                self._absorb_combo_result(result)
+            return
 
-                combo_path = self.records_dir / eval_io.combo_filename(system, granularity)
-                completed = (
-                    eval_io.completed_qids_for_combo(self.records_dir, system, granularity)
-                    if self.resume else set()
-                )
-                invalid = getattr(eval_io.read_records_file, "last_invalid_count", 0)
-                if invalid:
-                    self.logger.warn(
-                        f"  resume: skipped {invalid} truncated/invalid record(s) in "
-                        f"{system} x {granularity}, those queries will be re-run"
-                    )
-                    eval_io.read_records_file.last_invalid_count = 0  # type: ignore[attr-defined]
-                if completed:
-                    self.logger.info(
-                        f"  resume: {len(completed)}/{len(self.selected_queries)} "
-                        f"already done, skipping"
-                    )
-
-                mode = "a" if (self.resume and completed) else "w"
-                combo_fh = combo_path.open(mode, encoding="utf-8")
-                combo_t0 = time.time()
-                combo_records: list[dict] = []
+        # Parallel path. Submit each combo to its own subprocess in the pool.
+        # Each combo writes to its own JSONL file so there is no file-write
+        # contention across workers. Log lines, error categories, and combo
+        # summaries are returned and merged back into runner state in
+        # completion order (not submission order).
+        self.logger.info(
+            f"Parallel execution: {self.parallel_combos} workers, "
+            f"{total_combos} combos total."
+        )
+        done_idx = 0
+        with ProcessPoolExecutor(max_workers=self.parallel_combos) as executor:
+            futures = {
+                executor.submit(_execute_one_combo, **self._combo_task_kwargs(s, g)): (s, g)
+                for s, g in combos
+            }
+            for future in as_completed(futures):
+                system, granularity = futures[future]
+                done_idx += 1
                 try:
-                    # Include already-completed rows in combo-summary aggregation
-                    if completed:
-                        combo_records.extend(eval_io.read_records_file(combo_path))
-
-                    for qid, item in self.selected_queries:
-                        if qid in completed:
-                            continue
-                        record, elapsed = self._run_one_query_with_retry(
-                            system, granularity, qid, item
-                        )
-                        combo_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-                        combo_fh.flush()
-                        combo_records.append(record)
-                        self.logger.query_line(record, elapsed)
-
-                        if record.get("error"):
-                            cat = record.get("error_category", "other") or "other"
-                            self.error_categories[cat] = self.error_categories.get(cat, 0) + 1
-
-                        if system in self.llm_systems and self.inter_query_delay_s > 0:
-                            time.sleep(self.inter_query_delay_s)
-                finally:
-                    combo_fh.close()
-
-                combo_elapsed = time.time() - combo_t0
-                self.logger.combo_summary(system, granularity, combo_records, combo_elapsed)
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - operational
+                    self.logger.warn(
+                        f"Combo {system} x {granularity} crashed: {exc!r}"
+                    )
+                    continue
+                self.logger.combo_start(done_idx, total_combos, system, granularity)
+                self._absorb_combo_result(result)
 
     # ------------------------------------------------------------------
 

@@ -56,7 +56,21 @@ LLM_SYSTEMS = {
 }
 LLM_INTER_QUERY_DELAY_S = 3.0
 PROCESS_TIMEOUT_S = 900
-DEFAULT_MAX_RETRIES = 2
+DEFAULT_MAX_RETRIES = 1
+DEFAULT_PARALLEL_COMBOS = 6
+
+# Per-system timeout caps (seconds). Justified by 7q run03 p95 timings.
+# Outlier queries (mis. q194 yang stuck 1263s di run03 pasal) sekarang
+# di-abort lebih cepat supaya tidak menggentungkan throughput eval.
+# CLI --worker-timeout-s tetap override semuanya.
+PER_SYSTEM_TIMEOUT_S = {
+    "bm25-flat": 30,
+    "bm25-tree": 30,
+    "hybrid-flat": 120,
+    "hybrid-tree": 180,
+    "llm-flat": 600,
+    "llm-agentic-doc": 300,
+}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -80,10 +94,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "Test split requires EVAL_ALLOW_TEST=1.")
     ap.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR),
                     help="Base directory for eval runs")
-    ap.add_argument("--worker-timeout-s", type=int, default=PROCESS_TIMEOUT_S,
-                    help="Per-query worker timeout in seconds")
+    ap.add_argument("--worker-timeout-s", type=int, default=None,
+                    help="Per-query worker timeout in seconds. Overrides PER_SYSTEM_TIMEOUT_S.")
     ap.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
                     help="Number of auto-retries for transient errors (network, 5xx, worker crash)")
+    ap.add_argument("--parallel-combos", type=int, default=DEFAULT_PARALLEL_COMBOS,
+                    help=f"Number of (system, granularity) combos to run in parallel (default: {DEFAULT_PARALLEL_COMBOS}, set 1 for serial)")
     ap.add_argument("--resume", action="store_true",
                     help="Continue a previous run: skip queries already recorded")
     ap.add_argument("--overwrite", action="store_true",
@@ -143,6 +159,23 @@ def main() -> int:
 
     eval_io.prepare_run_dir(run_dir, resume=args.resume, overwrite=args.overwrite)
 
+    parallel_combos = max(1, args.parallel_combos)
+    # Scale inter-query sleep down when running parallel: total LLM RPM is
+    # already higher due to concurrent workers, so per-worker pacing can relax.
+    inter_query_delay_s = (
+        LLM_INTER_QUERY_DELAY_S / parallel_combos
+        if parallel_combos > 1 else LLM_INTER_QUERY_DELAY_S
+    )
+
+    # Resolve per-system timeouts. CLI override wins; otherwise use the
+    # per-system caps justified by 7q empirical p95 timings.
+    if args.worker_timeout_s is not None:
+        system_timeouts = {s: args.worker_timeout_s for s in systems}
+        fallback_timeout = args.worker_timeout_s
+    else:
+        system_timeouts = {s: PER_SYSTEM_TIMEOUT_S.get(s, PROCESS_TIMEOUT_S) for s in systems}
+        fallback_timeout = PROCESS_TIMEOUT_S
+
     runner = EvalRunner(
         repo_root=REPO_ROOT,
         worker_script=WORKER_SCRIPT,
@@ -154,8 +187,9 @@ def main() -> int:
         top_k=args.top_k,
         selected_queries=selected_queries,
         testset=testset,
-        worker_timeout_s=args.worker_timeout_s,
-        inter_query_delay_s=LLM_INTER_QUERY_DELAY_S,
+        worker_timeout_s=fallback_timeout,
+        system_timeouts=system_timeouts,
+        inter_query_delay_s=inter_query_delay_s,
         llm_systems=LLM_SYSTEMS,
         resume=args.resume,
         strict=args.strict,
@@ -166,6 +200,7 @@ def main() -> int:
         label=label,
         run_kind="vectorless",
         split=args.split,
+        parallel_combos=parallel_combos,
     )
 
     runner.preflight()
