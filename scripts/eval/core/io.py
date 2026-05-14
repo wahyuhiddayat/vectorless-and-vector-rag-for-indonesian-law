@@ -50,7 +50,7 @@ def load_testset(path: Path) -> dict[str, dict]:
 
 
 def load_split_qids(split: str, splits_dir: Path | None = None) -> list[str]:
-    """Read the qid list for one of train, val, test from data/splits/."""
+    """Read the qid list for one of dev, val, test from data/splits/."""
     base = splits_dir if splits_dir is not None else SPLITS_DIR
     path = base / f"{split}_qids.json"
     if not path.exists():
@@ -88,8 +88,8 @@ def select_queries(
     """
     items = sorted(testset.items(), key=lambda kv: kv[0])
     if split:
-        if split not in {"train", "val", "test"}:
-            raise SystemExit(f"Unknown split, {split}. Choose train, val, or test.")
+        if split not in {"dev", "val", "test"}:
+            raise SystemExit(f"Unknown split, {split}. Choose dev, val, or test.")
         if split == "test" and os.environ.get(TEST_SEAL_ENV) != "1":
             raise SystemExit(
                 "Test split is sealed. Set EVAL_ALLOW_TEST=1 to confirm "

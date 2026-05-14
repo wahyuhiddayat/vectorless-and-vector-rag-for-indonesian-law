@@ -247,10 +247,10 @@ python scripts/gt/split_dataset.py --verify
 
 Outputs:
 
-- `data/splits/train_qids.json`
+- `data/splits/dev_qids.json`
 - `data/splits/val_qids.json`
 - `data/splits/test_qids.json`
-- `data/splits/train.jsonl`
+- `data/splits/dev.jsonl`
 - `data/splits/val.jsonl`
 - `data/splits/test.jsonl`
 - `data/splits/split_manifest.json`
