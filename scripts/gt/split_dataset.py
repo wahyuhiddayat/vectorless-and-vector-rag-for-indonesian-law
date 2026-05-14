@@ -1,9 +1,24 @@
-"""Stratified 70/15/15 train/val/test split of the GT testset.
+"""Stratified 40/30/30 train/val/test split of the GT testset.
 
 Reads data/validated_testset.pkl and assigns each query to one of three
 splits via per-cell allocation, where a cell is a (category, query_type)
 pair. Per-cell seeds are derived from f"{seed}-{category}-{query_type}"
 so the assignment is deterministic and independent across cells.
+
+Ratio rationale (retrieval-eval, not model training):
+  - train (40%, ~285q): Stage 1 broad scan over all 18 (method, gran) cells.
+    Largest because Stage 1 runs every method and needs statistical power to
+    rank them reliably (Delta R@10 ~0.04 detection threshold).
+  - val (30%, ~214q): Stage 2 hyperparameter tuning of the Stage 1 winner.
+    Sized to discriminate 3-9 HP configs of a single method plus headroom
+    for sub-group analysis.
+  - test (30%, ~214q): Stage 3 final report. Sized for publication-quality
+    bootstrap CI on R@10 (~ +/- 0.03) and RQ3 paired randomization test
+    (n >= 100 threshold).
+
+This deviates from the ML default 70/15/15 because there is no model
+training here. LLMs are frozen, BM25 is deterministic; "train" is really
+HP search, which needs less data than the broad method scan.
 
 Outputs:
     data/splits/train_qids.json   list of qids
@@ -40,7 +55,7 @@ if sys.stdout.encoding != "utf-8":
 TESTSET_FILE = Path("data/validated_testset.pkl")
 SPLITS_DIR = Path("data/splits")
 DEFAULT_SEED = 42
-DEFAULT_RATIO = (0.70, 0.15, 0.15)
+DEFAULT_RATIO = (0.40, 0.30, 0.30)
 
 
 def load_testset() -> dict:
