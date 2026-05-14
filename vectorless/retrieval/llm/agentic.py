@@ -387,6 +387,11 @@ def _build_prompt(query: str, scratchpad: list[dict],
         "2. read(doc_id, node_id) -> verifikasi teks lengkap kandidat utama\n"
         "3. expand(doc_id, node_id) -> jika butuh lihat sub-node\n"
         "4. submit([\"doc_id/node_id\", ...]) -> kirim ranking final ASAP\n\n"
+        "── CATATAN PENTING SUBMIT ──\n"
+        "Output retrieval kamu HANYALAH apa yang kamu submit, tidak ada padding otomatis.\n"
+        "Submit beberapa kandidat (sampai 10) jika ada lebih dari satu node yang relevan\n"
+        "atau jika kamu tidak yakin mana yang paling tepat. Urutkan paling yakin dulu.\n"
+        "Tetap selektif, jangan submit node yang jelas tidak relevan hanya untuk mengisi slot.\n\n"
         f"── SISA ANGGARAN ──\n"
         f"Action: {actions_left} | Read: {reads_left}\n"
         "Gunakan read() secara selektif — hanya untuk verifikasi.\n\n"
@@ -425,90 +430,6 @@ def _siblings_hint_multidoc(picked_docs: dict[str, dict], doc_id: str,
     return near[:limit] if near else all_ids[:limit]
 
 
-def _collect_visited_refs(scratchpad: list[dict]) -> list[str]:
-    """Collect refs (doc_id/node_id) the agent visited, most-recent first.
-
-    Read targets and expanded children are both treated as visited. Used as
-    the second layer of the agentic_finalize fallback when the agent's
-    submit list does not fill the top_k slots. Refs are encoded as
-    "doc_id/node_id" strings to disambiguate across multi-doc navigation.
-    """
-    visited: list[str] = []
-    seen: set[str] = set()
-    for entry in reversed(scratchpad):
-        action = entry.get("action")
-        obs = entry.get("observation") or {}
-        if "error" in obs:
-            continue
-        doc_id = obs.get("doc_id", "")
-        if action == "read":
-            nid = obs.get("node_id")
-            if nid and doc_id:
-                ref = f"{doc_id}/{nid}"
-                if ref not in seen:
-                    visited.append(ref)
-                    seen.add(ref)
-        elif action == "expand":
-            for child in obs.get("children") or []:
-                nid = child.get("node_id")
-                if nid and doc_id:
-                    ref = f"{doc_id}/{nid}"
-                    if ref not in seen:
-                        visited.append(ref)
-                        seen.add(ref)
-    return visited
-
-
-def _collect_doc_leaf_ids(doc: dict) -> list[dict]:
-    """Flatten doc tree to leaf nodes carrying text, preserving traversal order."""
-    leaves: list[dict] = []
-
-    def _walk(nodes):
-        for n in nodes:
-            children = n.get("nodes") or []
-            if children:
-                _walk(children)
-            elif n.get("text"):
-                leaves.append({
-                    "node_id": n.get("node_id", ""),
-                    "title": n.get("title", ""),
-                    "text": n.get("text", ""),
-                    "navigation_path": n.get("navigation_path", ""),
-                    "penjelasan": n.get("penjelasan"),
-                })
-
-    _walk(doc.get("structure") or [])
-    return leaves
-
-
-def _bm25_rank_multidoc_refs(query: str, picked_docs: dict[str, dict]) -> list[str]:
-    """BM25-rank leaves across all picked docs. Returns refs `doc_id/node_id`.
-
-    Enrichment per leaf = doc_title + navigation_path + text + penjelasan,
-    consistent with bm25-flat for cross-paradigm fairness. The rank spans
-    every leaf in every picked doc as one cross-doc corpus, so the layer-3
-    fallback never blames stage-1 doc-pick for missed leaves.
-    """
-    leaf_records: list[tuple[str, str, dict]] = []  # (ref, doc_title, leaf)
-    for doc_id, doc in picked_docs.items():
-        title = doc.get("judul", "")
-        for leaf in _collect_doc_leaf_ids(doc):
-            ref = f"{doc_id}/{leaf['node_id']}"
-            leaf_records.append((ref, title, leaf))
-    if not leaf_records:
-        return []
-    corpus = []
-    for _, title, leaf in leaf_records:
-        enriched = title + " " + (leaf.get("navigation_path") or "") + " " + (leaf.get("text") or "")
-        if leaf.get("penjelasan") and leaf["penjelasan"] != "Cukup jelas.":
-            enriched += " " + leaf["penjelasan"]
-        corpus.append(tokenize(enriched))
-    bm25 = BM25Okapi(corpus)
-    scores = bm25.get_scores(tokenize(query))
-    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
-    return [leaf_records[i][0] for i, _ in ranked]
-
-
 def retrieve(query: str,
              max_actions: int = MAX_ACTIONS, max_reads: int = MAX_READS,
              top_k: int = DEFAULT_TOP_K, top_k_docs: int = DOC_PICK_TOP_K,
@@ -518,8 +439,10 @@ def retrieve(query: str,
     Stage 1: LLM + BM25 merged doc-pick (top-K=3 by default).
     Stage 2: agent loop, full outline of all picked docs exposed upfront,
         tools require `doc_id` arg, submit accepts `doc_id/node_id` refs.
-    Stage 3: agentic_finalize 3-layer fallback (submit, visited, BM25
-        ranked across ALL picked docs' leaves) pads to top_k.
+    Stage 3: agentic_finalize returns the agent's submitted refs only,
+        deduplicated and truncated to top_k. Output may be shorter than
+        top_k when the agent submits fewer candidates. No BM25 or visited
+        padding, see common.agentic_finalize for rationale.
     """
     reset_counters()
     t_start = time.time()
@@ -712,13 +635,9 @@ def retrieve(query: str,
     timings["agent_loop"] = step_metrics(t_step, snap)
 
     submitted_refs = [f"{s['doc_id']}/{s['node_id']}" for s in selected]
-    visited_refs = _collect_visited_refs(scratchpad)
-    bm25_fallback_refs = _bm25_rank_multidoc_refs(query, picked_docs)
 
     final_refs, slot_labels = agentic_finalize(
         submitted_ids=submitted_refs,
-        visited_ids=visited_refs,
-        fallback_ids=bm25_fallback_refs,
         top_k=top_k,
     )
 
@@ -735,8 +654,8 @@ def retrieve(query: str,
                 "scratchpad": scratchpad,
             },
             "error": (
-                f"Agent submitted no valid node and BM25 fallback returned no leaves "
-                f"(submitted={len(submitted_refs)}, visited={len(visited_refs)})"
+                f"Agent submitted no valid node "
+                f"(submitted_refs={len(submitted_refs)})"
             ),
             "metrics": {**get_stats(), "elapsed_s": round(time.time() - t_start, 2),
                         "step_metrics": timings},
@@ -758,12 +677,9 @@ def retrieve(query: str,
 
     final_ids = [s["node_id"] for s in sources]
     submitted_ids = [s["node_id"] for s in selected]
-    visited_ids = [r.split("/", 1)[1] for r in visited_refs if "/" in r]
 
     submission_source_counts = {
         "agent_submit": slot_labels.count("agent_submit"),
-        "visited_unsubmitted": slot_labels.count("visited_unsubmitted"),
-        "bm25_fallback": slot_labels.count("bm25_fallback"),
     }
 
     elapsed = time.time() - t_start
@@ -779,7 +695,6 @@ def retrieve(query: str,
             "reads_used": reads_used,
             "submitted": submitted,
             "submitted_count": len(submitted_ids),
-            "visited_count": len(visited_ids),
             "submission_source_counts": submission_source_counts,
             "scratchpad": scratchpad,
         },

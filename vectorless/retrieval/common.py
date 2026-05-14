@@ -159,33 +159,24 @@ def extract_nodes(doc: dict, node_ids: list[str]) -> list[dict]:
 
 
 def agentic_finalize(submitted_ids: list[str],
-                     visited_ids: list[str],
-                     fallback_ids: list[str],
                      top_k: int) -> tuple[list[str], list[str]]:
-    """Finalize an agentic retrieval ranking with three-layer fallback.
+    """Finalize an agentic retrieval ranking from the agent's submitted ids.
 
-    Builds the final ordered list of `top_k` node_ids by stacking three layers
-    in order of preference, deduplicating across layers:
-      1. agent_submit       node_ids the agent explicitly submitted
-      2. visited_unsubmitted node_ids visited during navigation but not submitted
-      3. bm25_fallback      ranked fallback (typically BM25 over doc leaves)
-
-    The three-layer stacking ensures the final output always has up to top_k
-    unique IDs, with the agent's explicit choices taking priority over BM25.
+    Returns the agent's submitted ids deduplicated and truncated to top_k.
+    The output may be shorter than top_k when the agent chooses to submit
+    fewer candidates. This is intentional. The method is the agent, padding
+    the output with BM25 or visited nodes would conflate paradigms and the
+    7q audit showed both layers added negligible recall while inflating the
+    BM25 share of slots to roughly 70 percent.
 
     Args:
         submitted_ids: ordered ids submitted by the agent, most relevant first.
-        visited_ids:   ordered ids the agent inspected but did not submit, in
-            descending visit recency.
-        fallback_ids:  deterministic fallback ordering (e.g. BM25 leaves of the
-            primary doc) used to fill remaining slots.
-        top_k: target output length.
+        top_k: maximum output length.
 
     Returns:
         Tuple `(final_ranking, sources_per_slot)`. `final_ranking` has length
-        min(top_k, total unique ids). `sources_per_slot` is a parallel list
-        labelling each slot as `agent_submit`, `visited_unsubmitted`, or
-        `bm25_fallback`, used for telemetry.
+        min(top_k, unique submitted ids). `sources_per_slot` is a parallel
+        list labelling each slot as `agent_submit`.
     """
     seen: set[str] = set()
     final: list[str] = []
@@ -196,21 +187,7 @@ def agentic_finalize(submitted_ids: list[str],
             labels.append("agent_submit")
             seen.add(nid)
             if len(final) >= top_k:
-                return final, labels
-    for nid in visited_ids:
-        if nid and nid not in seen:
-            final.append(nid)
-            labels.append("visited_unsubmitted")
-            seen.add(nid)
-            if len(final) >= top_k:
-                return final, labels
-    for nid in fallback_ids:
-        if nid and nid not in seen:
-            final.append(nid)
-            labels.append("bm25_fallback")
-            seen.add(nid)
-            if len(final) >= top_k:
-                return final, labels
+                break
     return final, labels
 
 
