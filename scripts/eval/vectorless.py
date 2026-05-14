@@ -68,7 +68,11 @@ PER_SYSTEM_TIMEOUT_S = {
     "bm25-tree": 30,
     "hybrid-flat": 120,
     "hybrid-tree": 180,
-    "llm-flat": 600,
+    # llm-flat: chunked tournament fan-out is large at rincian (213 calls
+    # at top-K survivor selection ~3-5s per call) so a single query can
+    # legitimately need 20-30 min wall time when run in parallel with
+    # other workers sharing API bandwidth. 2400s = 40 min headroom.
+    "llm-flat": 2400,
     "llm-agentic-doc": 300,
 }
 
