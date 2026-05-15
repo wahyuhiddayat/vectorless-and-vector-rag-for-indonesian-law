@@ -56,6 +56,12 @@ def run_retrieval(system: str, query: str, top_k: int) -> dict:
         module.save_log = lambda _result: None
         return module.retrieve(query, bm25_top_k=max(top_k, 20), verbose=False)
 
+    if system == "hybrid-flat-rrf":
+        from vectorless.retrieval.hybrid import flat_rrf as module
+
+        module.save_log = lambda _result: None
+        return module.retrieve(query, bm25_top_k=max(top_k, 20), top_k=top_k, verbose=False)
+
     if system == "hybrid-tree":
         from vectorless.retrieval.hybrid import tree as module
 
@@ -95,7 +101,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Run one vectorless retrieval call in a fresh process.")
     ap.add_argument("--system", required=True, choices=[
         "bm25-flat", "bm25-tree",
-        "hybrid-flat", "hybrid-tree",
+        "hybrid-flat", "hybrid-flat-rrf", "hybrid-tree",
         "llm-flat", "llm-agentic-doc",
     ])
     ap.add_argument("--granularity", required=True, choices=["pasal", "ayat", "rincian"])

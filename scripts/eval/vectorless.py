@@ -46,12 +46,12 @@ WORKER_SCRIPT = REPO_ROOT / "scripts/eval/vectorless_worker.py"
 # RQ1 matrix per ADR Notes/06-decisions/vectorless-llm-retrieval.md.
 SYSTEMS = [
     "bm25-flat", "bm25-tree",
-    "hybrid-flat", "hybrid-tree",
+    "hybrid-flat", "hybrid-flat-rrf", "hybrid-tree",
     "llm-flat", "llm-agentic-doc",
 ]
 GRANULARITIES = ["pasal", "ayat", "rincian"]
 LLM_SYSTEMS = {
-    "hybrid-flat", "hybrid-tree",
+    "hybrid-flat", "hybrid-flat-rrf", "hybrid-tree",
     "llm-flat", "llm-agentic-doc",
 }
 LLM_INTER_QUERY_DELAY_S = 3.0
@@ -67,6 +67,7 @@ PER_SYSTEM_TIMEOUT_S = {
     "bm25-flat": 30,
     "bm25-tree": 30,
     "hybrid-flat": 120,
+    "hybrid-flat-rrf": 120,
     "hybrid-tree": 360,
     # llm-flat: chunked tournament fan-out is large at rincian (213 calls
     # at top-K survivor selection ~3-5s per call) so a single query can
