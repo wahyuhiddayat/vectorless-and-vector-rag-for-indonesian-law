@@ -192,7 +192,10 @@ def score_ranked_retrieval(
         top_k = ranked[:k]
         retrieved_relevant = [node_id for node_id in top_k if node_id in relevant]
         hit = bool(retrieved_relevant)
-        recall = (len(set(retrieved_relevant)) / len(relevant)) if relevant else 0.0
+        n_relevant_in_top_k = len(set(retrieved_relevant))
+        recall = (n_relevant_in_top_k / len(relevant)) if relevant else 0.0
+        precision = (n_relevant_in_top_k / k) if k else 0.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
         dcg = 0.0
         for rank, node_id in enumerate(top_k, start=1):
@@ -216,7 +219,10 @@ def score_ranked_retrieval(
 
         out[f"hit@{k}"] = float(hit)
         out[f"recall@{k}"] = recall
+        out[f"precision@{k}"] = precision
+        out[f"f1@{k}"] = f1
         out[f"ndcg@{k}"] = ndcg
+        out[f"dcg@{k}"] = dcg
         out[f"map@{k}"] = ap
         out[f"mrr@{k}"] = mrr_k
         out[f"sibling_hit@{k}"] = sibling_hit_at_k(ranked, relevant, k)

@@ -7,6 +7,24 @@ import random
 from .metrics import SLICE_FIELDS, rank_distribution_stats, safe_mean
 
 
+def _pct(values: list[float], p: float) -> float:
+    """Percentile via linear interpolation between order statistics.
+
+    Reports tail behaviour (p95, p99) that the mean hides. Useful for cost
+    metrics where a few outlier queries dominate the worst case, e.g. an
+    agentic retriever that occasionally burns its full action budget on a
+    single query.
+    """
+    if not values:
+        return 0.0
+    s = sorted(values)
+    idx = (p / 100.0) * (len(s) - 1)
+    lo = int(idx)
+    hi = min(lo + 1, len(s) - 1)
+    frac = idx - lo
+    return float(s[lo] * (1 - frac) + s[hi] * frac)
+
+
 # Bootstrap configuration. 1000 resamples, percentile interval, seed-locked.
 BOOTSTRAP_RESAMPLES = 1000
 BOOTSTRAP_SEED = 42
@@ -61,17 +79,34 @@ def aggregate_records(records: list[dict], cutoffs: list[int]) -> dict:
     }
 
     # Headline metrics for the thesis: hit@k, recall@k, mrr@k.
-    # Completeness only: ndcg@k, map@k (monotone-equivalent under single-gold).
+    # Completeness: precision@k, f1@k, ndcg@k, dcg@k, map@k.
     # Diagnostic: sibling_hit@k (failure analysis, see metrics module N4).
     for k in cutoffs:
         summary[f"hit@{k}"] = safe_mean([row.get(f"hit@{k}", 0.0) for row in records])
         summary[f"recall@{k}"] = safe_mean([row.get(f"recall@{k}", 0.0) for row in records])
+        summary[f"precision@{k}"] = safe_mean([row.get(f"precision@{k}", 0.0) for row in records])
+        summary[f"f1@{k}"] = safe_mean([row.get(f"f1@{k}", 0.0) for row in records])
         summary[f"mrr@{k}"] = safe_mean([row.get(f"mrr@{k}", 0.0) for row in records])
         summary[f"ndcg@{k}"] = safe_mean([row.get(f"ndcg@{k}", 0.0) for row in records])
+        summary[f"dcg@{k}"] = safe_mean([row.get(f"dcg@{k}", 0.0) for row in records])
         summary[f"map@{k}"] = safe_mean([row.get(f"map@{k}", 0.0) for row in records])
         summary[f"sibling_hit@{k}"] = safe_mean(
             [row.get(f"sibling_hit@{k}", 0.0) for row in records]
         )
+
+    # Cost/latency distribution percentiles. avg + total alone hide outliers;
+    # p50/p95/p99 give the typical query, headroom, and worst-case tail.
+    elapsed_vals = [float(row.get("elapsed_s", 0.0)) for row in records]
+    token_vals = [float(row.get("total_tokens", 0)) for row in records]
+    input_token_vals = [float(row.get("input_tokens", 0)) for row in records]
+    output_token_vals = [float(row.get("output_tokens", 0)) for row in records]
+    llm_call_vals = [float(row.get("llm_calls", 0)) for row in records]
+    for p in (50, 95, 99):
+        summary[f"p{p}_elapsed_s"] = _pct(elapsed_vals, p)
+        summary[f"p{p}_total_tokens"] = _pct(token_vals, p)
+        summary[f"p{p}_input_tokens"] = _pct(input_token_vals, p)
+        summary[f"p{p}_output_tokens"] = _pct(output_token_vals, p)
+        summary[f"p{p}_llm_calls"] = _pct(llm_call_vals, p)
 
     summary["exact_top1_hit_rate"] = safe_mean([float(row.get("exact_top1_hit", False)) for row in records])
 
