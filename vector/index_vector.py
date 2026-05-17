@@ -146,21 +146,11 @@ def build_index(
     all_chunks: list[dict] = []
     for doc_meta in catalog:
         doc_id = doc_meta["doc_id"]
-        low = doc_id.lower()
-        if low.startswith("peraturan-bssn-"):
-            category = "PERATURAN_BSSN"
-        elif low.startswith("peraturan-ojk-"):
-            category = "PERATURAN_OJK"
-        elif low.startswith("peraturan-bi-"):
-            category = "PERATURAN_BI"
-        elif low.startswith("perma-"):
-            category = "PERATURAN_MA"
-        else:
-            category = doc_id.split("-")[0].upper()
-        doc_path = source_dir / category / f"{doc_id}.json"
-        if not doc_path.exists():
+        matches = list(source_dir.glob(f"*/{doc_id}.json"))
+        if not matches:
             print(f"  SKIP: {doc_id} — index file not found")
             continue
+        doc_path = matches[0]
 
         with open(doc_path, encoding="utf-8") as f:
             doc = json.load(f)
